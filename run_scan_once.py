@@ -37,10 +37,17 @@ def load_model():
 
 
 def get_data(symbol, interval):
-    url    = "https://api.binance.com/api/v3/klines"
+    # Using Binance's public data endpoint to bypass GitHub Actions US geo-blocks
+    url    = "https://data-api.binance.vision/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": LIVE_LIMIT}
     resp   = requests.get(url, params=params, timeout=15)
-    df     = pd.DataFrame(resp.json()).iloc[:, :6]
+    data   = resp.json()
+
+    # Safety Catch: If Binance returns an error dictionary instead of price data
+    if isinstance(data, dict):
+        raise ValueError(f"Binance API Error/Block: {data}")
+
+    df     = pd.DataFrame(data).iloc[:, :6]
     df.columns = ["open_time", "open", "high", "low", "close", "volume"]
     for c in ["open", "high", "low", "close", "volume"]:
         df[c] = pd.to_numeric(df[c])
