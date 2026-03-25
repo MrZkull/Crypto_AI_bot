@@ -12,20 +12,11 @@ jobs:
     timeout-minutes: 12    # safety: kill if hangs before next 15m window
 
     steps:
-      # 1. Checkout your repo
+      # 1. Checkout your repo (LFS disabled to avoid bandwidth limits)
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          lfs: true
-          
-      # 2. Force download the actual AI model (Fixes KeyError 118)
-      - name: Pull LFS files
-        run: git lfs pull
 
-      # 3. Setup Python (or whatever your next step is named)
-       - name: Set up Python
-
-      # 2. Set up Python
+      # 2. Set up Python 3.11
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -43,15 +34,11 @@ jobs:
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
           echo "CRYPTOPANIC_KEY=${{ secrets.CRYPTOPANIC_KEY }}" >> .env
 
-      # 5. Download the trained model from GitHub Releases (or cache)
-      - name: Restore cached model
-        id: cache-model
-        uses: actions/cache@v4
-        with:
-          path: pro_crypto_ai_model.pkl
-          key: model-${{ hashFiles('model_performance.json') }}
+      # 5. Download the actual AI model from GitHub Releases (Fixes KeyError 118)
+      - name: Download AI Model
+        run: wget -O pro_crypto_ai_model.pkl "https://github.com/Elliot14R/Crypto_AI_bot/releases/download/v1.0-model/pro_crypto_ai_model.pkl"
 
-      # 6. Run a SINGLE scan (not the infinite loop version)
+      # 6. Run a SINGLE scan
       - name: Run live scan
         run: python run_scan_once.py
 
