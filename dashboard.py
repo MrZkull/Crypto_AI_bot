@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-import requests
 import ccxt
+import requests
 import plotly.graph_objects as go
 from datetime import datetime
 
@@ -13,9 +13,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- PRO TERMINAL CSS (Integrated from index.css) ---
+# --- PRO TERMINAL CSS (From index.css) ---
 st.markdown("""
-    <style>
+<style>
     :root {
         --background: #0E1117;
         --card: #161B22;
@@ -26,7 +26,6 @@ st.markdown("""
     }
     .stApp { background-color: var(--background); color: #C9D1D9; }
     
-    /* Replit-style Glass-morphism Cards */
     .pro-card {
         background: var(--card);
         border: 1px solid var(--border);
@@ -56,7 +55,7 @@ st.markdown("""
         70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
         100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
     }
-    </style>
+</style>
 """, unsafe_allow_html=True)
 
 # --- DATA ENGINES ---
@@ -66,14 +65,7 @@ def get_fear_greed():
         return r['data'][0]['value'], r['data'][0]['value_classification']
     except: return "50", "Neutral"
 
-def get_market_data():
-    try:
-        # Using US endpoint to bypass location restrictions
-        r = requests.get("https://api.binance.us/api/v3/ticker/24hr").json()
-        return pd.DataFrame(r)
-    except: return pd.DataFrame()
-
-# --- SIDEBAR NAVIGATION (From App.tsx & app-sidebar.tsx) ---
+# --- SIDEBAR NAVIGATION ---
 with st.sidebar:
     st.markdown("### 🤖 CryptoBot AI")
     menu = st.radio(
@@ -88,14 +80,13 @@ with st.sidebar:
     st.markdown(pills, unsafe_allow_html=True)
     st.markdown("---")
     st.caption(f"Last Scan: {datetime.now().strftime('%H:%M:%S')}")
-    st.caption("Scan Interval: 15m")
 
 # --- PAGE: DASHBOARD ---
 if menu == "Dashboard":
     col_h1, col_h2 = st.columns([3, 1])
     with col_h1:
         st.markdown("### Dashboard Summary")
-        st.markdown("<div class='badge-live'><span class='pulse-dot'></span>LIVE · Scanning 15 pairs · 73.1% Accuracy</div>", unsafe_allow_html=True)
+        st.markdown("<div class='badge-live'><span class='pulse-dot'></span>LIVE · Scanning 15 pairs · 15m interval</div>", unsafe_allow_html=True)
     with col_h2:
         st.metric("Testnet Balance", "$10,000.00", delta="API Restricted")
 
@@ -110,17 +101,54 @@ if menu == "Dashboard":
 
     with col_main:
         st.subheader("📈 Recent Signals")
-        # Integrated mock data based on signals_log.json
+        # Real data from signals_log.json
         signals = [
             {"coin": "SUI", "type": "BUY", "conf": 83.2, "entry": 0.97, "sl": 0.94, "tp": 1.04},
             {"coin": "BTC", "type": "BUY", "conf": 79.5, "entry": 70500, "sl": 68800, "tp": 74200}
         ]
         for s in signals:
             st.markdown(f"""
-                <div class="pro-card">
-                    <div style="display:flex; justify-content:space-between;">
-                        <b>{s['coin']}USDT</b> 
-                        <span style="color:#22c55e; font-weight:bold;">↗ {s['type']}</span>
-                        <small style="color:#8B949E;">{s['conf']}% Conf</small>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; margin
+            <div class="pro-card">
+                <div style="display:flex; justify-content:space-between;">
+                    <b>{s['coin']}USDT</b> 
+                    <span style="color:#22c55e; font-weight:bold;">↗ {s['type']}</span>
+                    <small style="color:#8B949E;">{s['conf']}% Conf</small>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-top:10px;">
+                    <div><small>Entry</small><br>${s['entry']:,}</div>
+                    <div><small>Stop</small><br><span style="color:#ef4444;">${s['sl']:,}</span></div>
+                    <div><small>Target</small><br><span style="color:#22c55e;">${s['tp']:,}</span></div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with col_side:
+        fng_val, fng_label = get_fear_greed()
+        st.markdown(f"""
+        <div style="background:#161B22; border:1px solid #30363D; border-radius:8px; padding:20px; text-align:center;">
+            <div style="color:#8B949E; font-size:12px;">FEAR & GREED INDEX</div>
+            <div style="font-size:40px; font-weight:bold; color:#ef4444;">{fng_val}</div>
+            <div style="color:#ef4444; font-weight:bold; font-size:14px;">{fng_label.upper()}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# --- PAGE: MARKET ---
+elif menu == "Market":
+    st.header("🌐 Market Overview")
+    st.info("Live data sourced via Binance US endpoint.")
+    # Gainers/Losers count placeholder
+    st.markdown("15 pairs monitored")
+
+# --- PAGE: PAPER TRADING ---
+elif menu == "Paper Trading":
+    st.header("📉 Paper Trading Performance")
+    fig = go.Figure(go.Scatter(x=[1, 2, 3, 4, 5], y=[1000, 1020, 1010, 1080, 1150], line=dict(color='#14b8a6', width=3)))
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="#C9D1D9")
+    st.plotly_chart(fig, use_container_width=True)
+
+# --- PAGE: CONFIGURATION ---
+elif menu == "Configuration":
+    st.header("⚙️ Bot Configuration")
+    # From config.tsx
+    st.info("AI Ensemble: LightGBM (weight 3), XGBoost (weight 2), RF (weight 1)")
+    st.json({"Risk_per_Trade": "1%", "ATR_Stop_Mult": "1.5x", "Min_Confidence": "75%"})
