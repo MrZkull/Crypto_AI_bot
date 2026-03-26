@@ -1,4 +1,5 @@
 # config.py - All settings in one place
+# Updated for Automated Testnet Execution
 
 SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT",
@@ -43,15 +44,19 @@ FEATURES = [
     "rsi_1h", "adx_1h", "trend_1h",
 ]
 
-MIN_CONFIDENCE    = 65
-MIN_ADX           = 20
+# ─── AI & SIGNAL FILTERS (Strict for Testnet) ───
+MIN_CONFIDENCE    = 75       # Increased from 65 to ensure only A+ setups
+MIN_ADX           = 25       # Increased from 20 to ensure strong momentum
 MIN_SCORE         = 3
 
+# ─── RISK MANAGEMENT & EXECUTION ───
+MAX_OPEN_TRADES   = 3        # NEW: Prevents bot from over-exposing the account
 ATR_STOP_MULT     = 1.5
-ATR_TARGET1_MULT  = 2.0
-ATR_TARGET2_MULT  = 3.0
-RISK_PER_TRADE    = 0.01
+ATR_TARGET1_MULT  = 1.5      # Changed to 1.5 for a 1:1 Risk/Reward on the first 50% take profit
+ATR_TARGET2_MULT  = 3.0      # 1:2 Risk/Reward for the remaining runner
+RISK_PER_TRADE    = 0.01     # 1% account risk per trade
 
+# ─── ML TRAINING PARAMS ───
 TARGET_FUTURE     = 6                # look 6 candles ahead on 15m = 90 min
 TARGET_THRESHOLD  = 0.005            # 0.5% move = meaningful signal
 
@@ -60,6 +65,7 @@ RANDOM_STATE      = 42
 
 SCAN_INTERVAL_MIN = 15              # scan every 15 min matching candle close
 
+# ─── FILE PATHS ───
 RAW_DATA_FILE     = "training_data.csv"
 FEATURES_FILE     = "training_features.csv"
 DATASET_FILE      = "training_dataset.csv"
