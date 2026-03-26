@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ─── CUSTOM CSS (To match your Replit design) ────────────────────
+# ─── CUSTOM CSS ──────────────────────────────────────────────────
 st.markdown("""
     <style>
     /* Dark theme overrides */
@@ -47,11 +47,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─── EXCHANGE CONNECTION ─────────────────────────────────────────
-@st.cache_resource(ttl=60) # Caches connection for 60 seconds to prevent API spam
+@st.cache_resource(ttl=60)
 def init_exchange():
     """Initialize Binance Testnet using Streamlit Secrets"""
     try:
-        # Streamlit uses st.secrets instead of .env for cloud deployments
         exchange = ccxt.binance({
             "apiKey": st.secrets["BINANCE_API_KEY"],
             "secret": st.secrets["BINANCE_SECRET"],
@@ -61,6 +60,7 @@ def init_exchange():
         exchange.set_sandbox_mode(True)
         return exchange
     except Exception as e:
+        st.error(f"Failed to initialize exchange: {e}")
         return None
 
 exchange = init_exchange()
@@ -69,7 +69,7 @@ exchange = init_exchange()
 with st.sidebar:
     st.markdown("### Navigation")
     menu = st.radio(
-        "Navigation Menu",
+        "Navigation Menu", # Required label to prevent crash
         ["Dashboard", "Signals", "Market", "Paper Trading", "Configuration"],
         label_visibility="collapsed"
     )
@@ -77,13 +77,9 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("<span style='color: #94A3B8; font-size: 14px;'>Monitored Coins</span>", unsafe_allow_html=True)
     
-    # Matching your config.py symbols
     symbols = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "AVAX", "SUI", "DOT", "LINK", "MATIC", "NEAR", "APT", "ARB"]
     
-    # Generate HTML for the coin pills
-    pills_html = ""
-    for sym in symbols:
-        pills_html += f"<div class='coin-badge'>{sym}</div>"
+    pills_html = "".join([f"<div class='coin-badge'>{sym}</div>" for sym in symbols])
     st.markdown(f"<div>{pills_html}</div>", unsafe_allow_html=True)
 
 # ─── MAIN DASHBOARD CONTENT ──────────────────────────────────────
@@ -94,18 +90,18 @@ if menu == "Dashboard":
     with col1:
         st.markdown("## 🤖 CryptoBot AI Dashboard")
         st.markdown("🟢 **LIVE** &nbsp; | &nbsp; Scanning 14 pairs &nbsp;•&nbsp; 15 min interval &nbsp;•&nbsp; 73.1% accuracy")
+    
     with col2:
-        # Fetch Live Balance
         balance_usdt = 0.00
-      
-    if exchange:
+        if exchange:
             try:
                 bal = exchange.fetch_balance()
-                # Use .get() to prevent crashes if USDT doesn't exist yet
                 balance_usdt = float(bal.get('USDT', {}).get('free', 0.0))
             except Exception as e:
-                st.error(f"Binance API Error: {e}") # <-- This will print the error on the screen!
+                st.error(f"Binance API Error: {e}")
+        
         st.metric("Testnet Balance", f"${balance_usdt:,.2f}")
+
     st.markdown("---")
     
     # Top Metrics Cards
@@ -117,10 +113,9 @@ if menu == "Dashboard":
     with m3:
         st.metric("Sell Signals", "6", delta="Short positions active", delta_color="inverse")
 
-    # Recent Signals Section (Replicating your image)
+    # Recent Signals Section
     st.markdown("<br><h4>📈 Recent Signals</h4>", unsafe_allow_html=True)
     
-    # Example Trade Card (This matches your Replit screenshot exactly)
     st.markdown("""
     <div class="signal-card">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -148,7 +143,7 @@ if menu == "Dashboard":
     </div>
     """, unsafe_allow_html=True)
 
-# ─── OTHER TABS (Placeholders for future expansion) ──────────────
+# ─── OTHER TABS ──────────────────────────────────────────────────
 elif menu == "Paper Trading":
     st.markdown("## 📜 Active Testnet Orders")
     if exchange:
@@ -156,18 +151,17 @@ elif menu == "Paper Trading":
             try:
                 orders = exchange.fetch_open_orders()
                 if not orders:
-                    st.info("No open orders right now. Waiting for the bot to fire a signal.")
+                    st.info("No open orders. Waiting for the bot to fire a signal.")
                 else:
-                    st.write(orders) # Will display the raw JSON of open orders for now
+                    st.json(orders)
             except Exception as e:
                 st.error(f"Error fetching orders: {e}")
     else:
-        st.warning("Please configure your API keys in Streamlit Secrets to view live orders.")
+        st.warning("Exchange not initialized.")
 
 elif menu == "Configuration":
     st.markdown("## ⚙️ Bot Configuration")
     st.code("""
-    # Current active settings
     MIN_CONFIDENCE    = 75
     MIN_ADX           = 25
     RISK_PER_TRADE    = 0.01 (1%)
