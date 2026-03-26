@@ -97,7 +97,8 @@ if menu == "Dashboard":
     with col2:
         # Fetch Live Balance
         balance_usdt = 0.00
-       if exchange:
+      
+    if exchange:
             try:
                 bal = exchange.fetch_balance()
                 # Use .get() to prevent crashes if USDT doesn't exist yet
