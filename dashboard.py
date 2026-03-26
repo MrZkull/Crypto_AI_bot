@@ -97,14 +97,14 @@ if menu == "Dashboard":
     with col2:
         # Fetch Live Balance
         balance_usdt = 0.00
-        if exchange:
+       if exchange:
             try:
                 bal = exchange.fetch_balance()
-                balance_usdt = float(bal['USDT']['free'])
-            except:
-                pass
+                # Use .get() to prevent crashes if USDT doesn't exist yet
+                balance_usdt = float(bal.get('USDT', {}).get('free', 0.0))
+            except Exception as e:
+                st.error(f"Binance API Error: {e}") # <-- This will print the error on the screen!
         st.metric("Testnet Balance", f"${balance_usdt:,.2f}")
-
     st.markdown("---")
     
     # Top Metrics Cards
