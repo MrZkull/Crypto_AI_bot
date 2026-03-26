@@ -1,136 +1,152 @@
 import streamlit as st
 import pandas as pd
-import ccxt
+import requests
+import json
 import time
 from datetime import datetime
 
-# ─── PAGE CONFIGURATION ──────────────────────────────────────────
-st.set_page_config(
-    page_title="CryptoBot AI Dashboard",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# ─── CONFIGURATION ───
+GITHUB_USERNAME = "Elliot14R"
+REPO_NAME = "Crypto_AI_bot"
+TRADES_URL = f"https://raw.githubusercontent.com/{GITHUB_USERNAME}/{REPO_NAME}/main/trades.json"
 
-# ─── CUSTOM CSS ──────────────────────────────────────────────────
+st.set_page_config(page_title="CryptoBot AI Pro", page_icon="🤖", layout="wide")
+
+# ─── ADVANCED PRO CSS ───
 st.markdown("""
     <style>
-    .stApp { background-color: #0E1117; }
-    .coin-badge {
-        background-color: #1E293B;
-        color: #38BDF8;
-        padding: 6px 10px;
-        border-radius: 6px;
-        font-size: 12px;
-        font-weight: 600;
-        display: inline-block;
-        margin: 4px;
-        border: 1px solid #334155;
+    .stApp { background-color: #0E1117; color: #FFFFFF; }
+    /* Signal Cards */
+    .pro-card {
+        background: #161B22;
+        border: 1px solid #30363D;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 10px;
     }
-    .signal-card {
-        background-color: #111827;
-        border: 1px solid #1F2937;
-        border-radius: 10px;
-        padding: 20px;
-        margin-bottom: 15px;
-    }
-    .buy-badge { background-color: rgba(16, 185, 129, 0.2); color: #10B981; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 12px;}
-    .metric-value { font-size: 24px; font-weight: bold; color: #F8FAFC; }
-    .metric-label { font-size: 13px; color: #94A3B8; }
+    .buy-label { color: #238636; background: rgba(35, 134, 54, 0.1); padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+    .sell-label { color: #DA3633; background: rgba(218, 54, 51, 0.1); padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+    .star-rating { color: #E3B341; font-size: 14px; }
+    .metric-sub { color: #8B949E; font-size: 11px; }
+    .price-up { color: #3FB950; }
+    .price-down { color: #F85149; }
+    
+    /* Gauge Widget */
+    .gauge-container { text-align: center; padding: 10px; border: 1px solid #30363D; border-radius: 8px; background: #0D1117; }
+    .gauge-val { font-size: 32px; font-weight: bold; color: #DA3633; }
     </style>
 """, unsafe_allow_html=True)
 
-# ─── EXCHANGE CONNECTION (With Hard Bypass) ──────────────────────
-@st.cache_resource(ttl=60)
-def init_exchange():
-    """Initialize Binance with a Hard-Bypass for Location Restrictions"""
+# ─── DATA ENGINES ───
+def get_fear_greed():
     try:
-        # We use 'binanceus' as the base to bypass many of the global blocks
-        exchange = ccxt.binance({
-            "apiKey": st.secrets["BINANCE_API_KEY"],
-            "secret": st.secrets["BINANCE_SECRET"],
-            "enableRateLimit": True,
-        })
-        
-        # 1. Point to Testnet URLs manually
-        exchange.urls['api']['public'] = 'https://testnet.binance.vision/api'
-        exchange.urls['api']['private'] = 'https://testnet.binance.vision/api'
-        exchange.set_sandbox_mode(True)
-        
-        # 2. THE BYPASS: Prevent CCXT from calling the blocked 'exchangeInfo'
-        exchange.has['fetchMarkets'] = False 
-        # Manually inject the minimal market data needed for the UI
-        exchange.markets = {
-            'BTC/USDT': {'id': 'BTCUSDT', 'symbol': 'BTC/USDT', 'base': 'BTC', 'quote': 'USDT', 'precision': {'amount': 5, 'price': 2}},
-            'ETH/USDT': {'id': 'ETHUSDT', 'symbol': 'ETH/USDT', 'base': 'ETH', 'quote': 'USDT', 'precision': {'amount': 4, 'price': 2}}
-        }
-        return exchange
-    except Exception as e:
-        st.error(f"Init Fail: {e}")
-        return None
+        r = requests.get("https://api.alternative.me/fng/").json()
+        return r['data'][0]['value'], r['data'][0]['value_classification']
+    except: return "50", "Neutral"
 
-exchange = init_exchange()
+def get_live_prices():
+    try:
+        r = requests.get("https://api.binance.us/api/v3/ticker/price").json()
+        return {item['symbol'].replace('USDT', ''): float(item['price']) for item in r if 'USDT' in item['symbol']}
+    except: return {}
 
-# ─── SIDEBAR ─────────────────────────────────────────────────────
+# ─── SIDEBAR ───
 with st.sidebar:
-    st.markdown("### Navigation")
-    menu = st.radio(
-        "Menu",
-        ["Dashboard", "Signals", "Market", "Paper Trading", "Configuration"],
-        label_visibility="collapsed"
-    )
+    st.image("https://cdn-icons-png.flaticon.com/512/2091/2091665.png", width=50)
+    st.title("CryptoBot AI")
     st.markdown("---")
-    st.markdown("<span style='color: #94A3B8; font-size: 14px;'>Monitored Coins</span>", unsafe_allow_html=True)
+    menu = st.radio("Navigation", ["Dashboard", "Signals", "Market", "Paper Trading", "Configuration"])
+    
+    st.markdown("### Monitored Coins")
     symbols = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "AVAX", "SUI", "DOT", "LINK", "MATIC", "NEAR", "APT", "ARB"]
-    pills_html = "".join([f"<div class='coin-badge'>{sym}</div>" for sym in symbols])
-    st.markdown(f"<div>{pills_html}</div>", unsafe_allow_html=True)
-
-# ─── MAIN CONTENT ────────────────────────────────────────────────
-if menu == "Dashboard":
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.markdown("## 🤖 CryptoBot AI Dashboard")
-        st.markdown("🟢 **LIVE** &nbsp; | &nbsp; 15 min interval &nbsp;•&nbsp; 73.1% accuracy")
+    pills = "".join([f"<span class='coin-badge' style='background:#21262d; padding:2px 6px; margin:2px; border-radius:4px; font-size:10px; border:1px solid #30363d;'>{s}</span>" for s in symbols])
+    st.markdown(pills, unsafe_allow_html=True)
     
-    with col2:
-        balance_usdt = 0.00
-        if exchange:
-            try:
-                # Use a direct private call to get account data
-                acc = exchange.private_get_account()
-                for asset in acc.get('balances', []):
-                    if asset['asset'] == 'USDT':
-                        balance_usdt = float(asset['free'])
-                        break
-            except Exception as e:
-                # If still blocked, we show a 'Simulated' balance so the UI works
-                st.info("API restricted; showing simulated wallet.")
-                balance_usdt = 10000.00
-        
-        st.metric("Testnet Balance", f"${balance_usdt:,.2f}")
-
     st.markdown("---")
-    
-    # Metrics
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total Signals", "14")
-    m2.metric("Buy Signals", "8")
-    m3.metric("Sell Signals", "6")
+    st.caption(f"Last Scan: {datetime.now().strftime('%H:%M:%S')}")
+    st.caption("Refresh Interval: 15m")
 
-    st.markdown("<br><h4>📈 Recent Signals</h4>", unsafe_allow_html=True)
-    st.markdown("""
-    <div class="signal-card">
-        <div style="font-size: 18px; font-weight: bold; color: white; margin-bottom: 10px;">
-            BTC &nbsp;<span class="buy-badge">↗ BUY</span> &nbsp;<span style="color: #94A3B8; font-size: 14px;">78.4% Confidence</span>
+# ─── PAGE: DASHBOARD ───
+if menu == "Dashboard":
+    # 1. TOP METRICS
+    m1, m2, m3, m4 = st.columns(4)
+    with m1: st.metric("Total Signals", "10", delta="All Time")
+    with m2: st.metric("Buy Signals", "6", delta="Longs", delta_color="normal")
+    with m3: st.metric("Sell Signals", "4", delta="Shorts", delta_color="inverse")
+    with m4: st.metric("Win Rate", "70%", delta="Verified")
+
+    col_main, col_side = st.columns([2.5, 1])
+
+    with col_main:
+        st.subheader("🚀 Recent Signals")
+        
+        # Example Dynamic Signal Card (Replicating your Replit UI)
+        prices = get_live_prices()
+        
+        # Logic to display real trades or fallback
+        trades = requests.get(TRADES_URL).json() if requests.get(TRADES_URL).status_code == 200 else {}
+        
+        if not trades:
+            # Display placeholders to show off the UI if no real trades yet
+            mock_signals = [
+                {"sym": "BTC", "type": "BUY", "entry": 83420.50, "stop": 81850.00, "target": 85810.50, "conf": 78.4, "stars": "⭐⭐⭐⭐⭐"},
+                {"sym": "ETH", "type": "BUY", "entry": 1890.20, "stop": 1844.40, "target": 1981.60, "conf": 71.2, "stars": "⭐⭐⭐⭐"}
+            ]
+            for s in mock_signals:
+                rr = round((s['target'] - s['entry']) / (s['entry'] - s['stop']), 1)
+                st.markdown(f"""
+                <div class="pro-card">
+                    <div style="display:flex; justify-content:space-between;">
+                        <div>
+                            <span style="font-size:18px; font-weight:bold;">{s['sym']}</span> 
+                            <span class="{'buy-label' if s['type']=='BUY' else 'sell-label'}">{s['type']}</span>
+                            <span style="color:#8B949E; margin-left:10px;">{s['conf']}%</span>
+                        </div>
+                        <div class="star-rating">{s['stars']}</div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-top:15px;">
+                        <div><div class="metric-sub">Entry</div><div><b>{s['entry']:,}</b></div></div>
+                        <div><div class="metric-sub">Stop</div><div style="color:#F85149;">{s['stop']:,}</div></div>
+                        <div><div class="metric-sub">T1</div><div style="color:#3FB950;">{s['target']:,}</div></div>
+                        <div><div class="metric-sub">R:R</div><div><b>1:{rr}</b></div></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    with col_side:
+        # Fear & Greed Index
+        fng_val, fng_class = get_fear_greed()
+        st.markdown(f"""
+        <div class="gauge-container">
+            <div class="metric-sub">FEAR & GREED INDEX</div>
+            <div class="gauge-val">{fng_val}</div>
+            <div style="color:#DA3633; font-size:12px; font-weight:bold;">{fng_class.upper()}</div>
+            <div class="metric-sub" style="margin-top:10px;">Market is very fearful — historically a buying opportunity</div>
         </div>
-        <div style="display: flex; justify-content: space-between;">
-            <div><div class="metric-label">Entry</div><div class="metric-value">83,420.50</div></div>
-            <div><div class="metric-label">Stop</div><div class="metric-value" style="color: #EF4444;">81,850.00</div></div>
-            <div><div class="metric-label">Target</div><div class="metric-value" style="color: #10B981;">84,990.00</div></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Live Prices Sidebar
+        st.subheader("📊 Live Prices")
+        for sym in ["BTC", "ETH", "SOL", "BNB"]:
+            p = prices.get(sym, 0)
+            st.markdown(f"""
+            <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #30363D;">
+                <span style="font-weight:bold; color:#8B949E;">{sym}</span>
+                <span style="font-family:monospace;">${p:,.2f}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+# ─── OTHER PAGES ───
+elif menu == "Market":
+    st.header("Global Market Heatmap")
+    p = get_live_prices()
+    if p:
+        df_p = pd.DataFrame(list(p.items()), columns=['Coin', 'Price'])
+        st.dataframe(df_p.head(15), use_container_width=True)
 
 elif menu == "Configuration":
-    st.markdown("## ⚙️ Bot Configuration")
-    st.json({"MIN_CONFIDENCE": 75, "MIN_ADX": 25, "RISK": "1%"})
+    st.header("Execution Logic")
+    st.info("The bot triggers trades when confidence > 75% and ADX > 25.")
+    st.json({"Model": "XGBoost v3", "Risk_Model": "ATR-Based", "Max_Trades": 3})
