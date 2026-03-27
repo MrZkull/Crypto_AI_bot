@@ -82,7 +82,7 @@ def check_btc_volatility() -> dict:
     Uses Binance 15m OHLCV to compute ATR(14).
     """
     try:
-        url    = "https://api.binance.com/api/v3/klines"
+        url    = "https://api.binance.us/api/v3/klines"
         params = {"symbol": "BTCUSDT", "interval": "15m", "limit": 30}
         resp   = requests.get(url, params=params, timeout=10)
         data   = resp.json()
