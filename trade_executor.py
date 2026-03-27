@@ -97,7 +97,7 @@ def get_balance_usdt(ex):
 # ════════════ MARKET DATA ══════════════════════════════════
 
 def get_data(symbol, interval):
-    url    = "https://api.binance.com/api/v3/klines"
+    url    = "https://data-api.binance.vision/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": LIVE_LIMIT}
     resp   = requests.get(url, params=params, timeout=15)
     resp.raise_for_status()
