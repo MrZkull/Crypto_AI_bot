@@ -39,7 +39,7 @@ def load_model():
 
 
 def get_data(symbol, interval):
-    url    = "https://api.binance.com/api/v3/klines"
+    url    = "https://data-api.binance.vision/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": LIVE_LIMIT}
     resp   = requests.get(url, params=params, timeout=15)
     df     = pd.DataFrame(resp.json()).iloc[:, :6]
