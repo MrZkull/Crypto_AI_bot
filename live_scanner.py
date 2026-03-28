@@ -7,7 +7,7 @@ import time
 import schedule
 import logging
 from datetime import datetime
-from feature_engineering import add_indicators
+from feature_engineering import add_indicators, add_higher_tf_features
 from telegram_alert import send_signal, send_startup
 from news_sentiment import get_news_sentiment, get_market_conditions
 from config import (
@@ -46,6 +46,10 @@ def get_data(symbol, interval):
     df.columns = ["open_time", "open", "high", "low", "close", "volume"]
     for c in ["open", "high", "low", "close", "volume"]:
         df[c] = pd.to_numeric(df[c])
+    
+    # Critical fix: Convert milliseconds to real DateTimes so the merge works!
+    df["open_time"] = pd.to_datetime(df["open_time"], unit='ms') 
+    
     return df
 
 
@@ -110,10 +114,19 @@ def quality_score(row_entry, row_confirm, row_trend, signal, confidence):
 
 def scan_symbol(symbol):
     try:
-        # Fetch all three timeframes
-        df_entry   = add_indicators(get_data(symbol, TIMEFRAME_ENTRY))
-        df_confirm = add_indicators(get_data(symbol, TIMEFRAME_CONFIRM))
-        df_trend   = add_indicators(get_data(symbol, TIMEFRAME_TREND))
+        # Fetch all required timeframes
+        raw_entry   = get_data(symbol, TIMEFRAME_ENTRY)
+        raw_confirm = get_data(symbol, TIMEFRAME_CONFIRM)
+        raw_trend   = get_data(symbol, TIMEFRAME_TREND)
+        raw_1h      = get_data(symbol, "1h") # Fetch 1h specifically for the AI features
+
+        # Add basic indicators
+        df_entry   = add_indicators(raw_entry)
+        df_confirm = add_indicators(raw_confirm)
+        df_trend   = add_indicators(raw_trend)
+
+        # Merge the 1h AI features into the entry timeframe
+        df_entry = add_higher_tf_features(df_entry, raw_1h)
 
         if df_entry.empty or len(df_entry) < 10:
             return
@@ -127,6 +140,8 @@ def scan_symbol(symbol):
         if missing:
             log.warning(f"  {symbol}: Missing features {missing}")
             return
+            
+        # ... (Leave the rest of your scan_symbol code exactly the same below this!)return
 
         # AI prediction
         X    = pd.DataFrame([row_entry[FEATURES].values], columns=FEATURES)
