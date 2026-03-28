@@ -94,8 +94,7 @@ def add_indicators(df):
 
 def add_higher_tf_features(df_15m, df_1h):
     """
-    Add 1h trend features to 15m data.
-    This gives the model context about the bigger trend.
+    Add 1h trend features to 15m data using a bulletproof forward-fill.
     """
     df_1h = df_1h.copy()
     df_1h["ema20_1h"] = ta.trend.ema_indicator(df_1h["close"], window=20)
@@ -104,18 +103,24 @@ def add_higher_tf_features(df_15m, df_1h):
     df_1h["adx_1h"]   = ta.trend.adx(df_1h["high"], df_1h["low"], df_1h["close"])
     df_1h["trend_1h"] = (df_1h["ema20_1h"] > df_1h["ema50_1h"]).astype(int)
 
-    # Convert 1h timestamps to merge with 15m
+    # Ensure timestamps are actual datetime objects
     df_1h["open_time"] = pd.to_datetime(df_1h["open_time"])
-    df_1h["merge_key"] = df_1h["open_time"].dt.floor("1h")
-
     df_15m["open_time"] = pd.to_datetime(df_15m["open_time"])
-    df_15m["merge_key"] = df_15m["open_time"].dt.floor("1h")
 
-    htf_cols = ["merge_key","ema20_1h","ema50_1h","rsi_1h","adx_1h","trend_1h"]
-    df_merged = df_15m.merge(
-        df_1h[htf_cols].drop_duplicates("merge_key"),
-        on="merge_key", how="left"
-    ).drop(columns=["merge_key"])
+    # Sort both dataframes by time (Required for merge_asof)
+    df_1h = df_1h.sort_values("open_time")
+    df_15m = df_15m.sort_values("open_time")
+
+    # The specific columns we want to bring over
+    htf_cols = ["open_time", "ema20_1h", "ema50_1h", "rsi_1h", "adx_1h", "trend_1h"]
+
+    # Perform an 'asof' merge: Matches the closest 1h time that is <= the 15m time
+    df_merged = pd.merge_asof(
+        df_15m, 
+        df_1h[htf_cols], 
+        on="open_time", 
+        direction="backward"
+    )
 
     return df_merged
 
