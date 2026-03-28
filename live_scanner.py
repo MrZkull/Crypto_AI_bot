@@ -39,7 +39,7 @@ def load_model():
 
 
 def get_data(symbol, interval):
-    url    = "https://data-api.binance.vision/api/v3/klines""
+    url    = "https://data-api.binance.vision/api/v3/klines"
     params = {"symbol": symbol, "interval": interval, "limit": LIVE_LIMIT}
     resp   = requests.get(url, params=params, timeout=15)
     df     = pd.DataFrame(resp.json()).iloc[:, :6]
@@ -141,8 +141,6 @@ def scan_symbol(symbol):
             log.warning(f"  {symbol}: Missing features {missing}")
             return
             
-        # ... (Leave the rest of your scan_symbol code exactly the same below this!)return
-
         # AI prediction
         X    = pd.DataFrame([row_entry[FEATURES].values], columns=FEATURES)
         pred = model.predict(X)[0]
