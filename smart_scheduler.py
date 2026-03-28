@@ -35,7 +35,7 @@ def get_scan_mode() -> dict:
             "mode":           "weekend",
             "label":          "WEEKEND MODE",
             "emoji":          "📅",
-            "min_confidence": 45,    # raised by 5 on weekends
+            "min_confidence": 65,    # raised by 5 on weekends
             "min_score":      2,
             "min_adx":        18,
             "interval_min":   15 if is_active else 30,
