@@ -34,8 +34,8 @@ def get_live_prices(symbols):
     try:
         for sym in symbols:
             try:
-                # Corrected URL and fixed the parenthesis/comma syntax
-                r = requests.get("https://data-api.binance.vision/api/v3/ticker/price", params={"symbol": sym}, timeout=5)
+                # FIXED: Pointing to the Testnet API so Render doesn't get blocked
+                r = requests.get("https://testnet.binance.vision/api/v3/ticker/price", params={"symbol": sym}, timeout=5)
                 prices[sym] = float(r.json()["price"])
             except Exception: 
                 prices[sym] = None
@@ -138,34 +138,55 @@ def api_scan():
 
 
 @app.route("/api/close_trade", methods=["POST"])
+@app.route("/api/close_trade", methods=["POST"])
 def api_close():
     data   = request.get_json()
     symbol = data.get("symbol")
     if not symbol: return jsonify({"ok":False,"error":"symbol required"}), 400
+    
     trades = load_json(TRADES_FILE, {})
     if symbol not in trades: return jsonify({"ok":False,"error":"Not found"}), 404
+    
     try:
         from trade_executor import init_exchange
         ex    = init_exchange()
         trade = trades[symbol]
+        
+        # 1. Cancel the Stop Loss and Take Profit orders
         for oid in trade.get("order_ids",{}).values():
             try: ex.cancel_order(oid, symbol)
             except Exception: pass
+            
+        # 2. Execute the Market Close
         side = "sell" if trade["signal"]=="BUY" else "buy"
-        ex.create_order(symbol, "market", side, trade["qty"])
-        prices = get_live_prices([symbol])
-        cp     = prices.get(symbol, trade["entry"])
-        entry  = trade["entry"]; qty = trade["qty"]
-        pnl    = round((cp-entry)*qty if trade["signal"]=="BUY" else (entry-cp)*qty, 4)
+        order = ex.create_order(symbol, "market", side, trade["qty"])
+        
+        # 3. Safely calculate PnL using the actual filled price
+        cp = float(order.get("average") or order.get("price") or trade["entry"])
+        entry = float(trade["entry"])
+        qty   = float(trade["qty"])
+        
+        pnl = round((cp - entry) * qty if trade["signal"] == "BUY" else (entry - cp) * qty, 4)
+        
+        # 4. Save to history
         history = load_json(HISTORY_FILE, [])
-        history.append({**trade,"close_price":cp,"pnl":pnl,
-                        "closed_at":datetime.now(timezone.utc).isoformat(),"close_reason":"Manual close"})
+        history.append({
+            **trade, 
+            "close_price": cp, 
+            "pnl": pnl,
+            "closed_at": datetime.now(timezone.utc).isoformat(),
+            "close_reason": "Manual close"
+        })
         save_json(HISTORY_FILE, history)
+        
+        # 5. Remove from open trades
         trades.pop(symbol)
         save_json(TRADES_FILE, trades)
-        return jsonify({"ok":True,"pnl":pnl})
+        
+        return jsonify({"ok":True, "pnl":pnl})
+        
     except Exception as e:
-        return jsonify({"ok":False,"error":str(e)}), 500
+        return jsonify({"ok":False, "error":str(e)}), 500
 
 
 @app.route("/")
