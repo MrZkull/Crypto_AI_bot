@@ -357,6 +357,7 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
     <div class="topbar-right">
       <span class="top-stat">Balance: <span id="topBalance">—</span> USDT</span>
       <span class="top-stat">Acc: <span style="color:var(--green)">73.1%</span></span>
+      <span class="top-stat"><span style="color:var(--blue)">20</span> pairs · <span style="color:var(--cyan)">4 tiers</span></span>
       <span class="last-upd" id="lastUpd">—</span>
       <span class="live-badge offline" id="liveBadge">OFFLINE</span>
       <button class="btn-scan" id="scanBtn" onclick="triggerScan()">▶ Scan Now</button>
@@ -398,8 +399,8 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
       </div>
       <div class="stat-card c-blue">
         <div class="stat-label">Monitoring</div>
-        <div class="stat-value blue" style="font-size:16px">15 pairs</div>
-        <div class="stat-sub">every 15 min scan</div>
+        <div class="stat-value blue" style="font-size:16px">20 pairs</div>
+        <div class="stat-sub">4 tiers · 15 min scan</div>
       </div>
     </div>
 
@@ -557,12 +558,12 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
       <div class="stat-card c-green">
         <div class="stat-label">Gainers</div>
         <div class="stat-value green" id="mkt-gainers">0</div>
-        <div class="stat-sub">of 15 pairs</div>
+        <div class="stat-sub">of 20 pairs</div>
       </div>
       <div class="stat-card c-red">
         <div class="stat-label">Losers</div>
         <div class="stat-value red" id="mkt-losers">0</div>
-        <div class="stat-sub">of 15 pairs</div>
+        <div class="stat-sub">of 20 pairs</div>
       </div>
       <div class="stat-card c-green">
         <div class="stat-label">Best 24h</div>
@@ -605,9 +606,9 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
       <div class="panel">
         <div class="panel-header">
           <span class="panel-title">All Pairs</span>
-          <span class="panel-badge blink" style="color:var(--green);border-color:var(--green)">15 pairs · Live</span>
+          <span class="panel-badge blink" style="color:var(--green);border-color:var(--green)">20 pairs · Live</span>
         </div>
-        <div style="padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:480px;overflow-y:auto" id="mktPairsGrid"></div>
+        <div style="padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:540px;overflow-y:auto" id="mktPairsGrid"></div>
       </div>
     </div>
   </div>
@@ -642,10 +643,10 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
       <div style="overflow-x:auto">
         <table class="htable">
           <thead><tr>
-            <th>Symbol</th><th>Dir</th><th>Entry</th><th>Close</th>
+            <th>Symbol</th><th>Tier</th><th>Dir</th><th>Entry</th><th>Close</th>
             <th>PnL (USDT)</th><th>Result</th><th>Opened</th><th>Duration</th><th>Reason</th>
           </tr></thead>
-          <tbody id="histBody"><tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text3)">No closed trades yet</td></tr></tbody>
+          <tbody id="histBody"><tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No closed trades yet</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -767,7 +768,7 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" style="margin-bottom:16px">
           <div class="panel-header"><span class="panel-title">Current Status</span></div>
           <div class="panel-body" style="display:flex;flex-direction:column;gap:8px">
             <div class="bal-row"><span style="color:var(--text3)">Scan mode</span><span id="cfgMode">—</span></div>
@@ -775,8 +776,16 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
             <div class="bal-row"><span style="color:var(--text3)">Day of week</span><span id="cfgDay">—</span></div>
             <div class="bal-row"><span style="color:var(--text3)">BTC ATR status</span><span id="cfgAtr">—</span></div>
             <div class="bal-row"><span style="color:var(--text3)">API status</span><span id="cfgApi">—</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Total pairs</span><span style="color:var(--blue)">20 coins · 4 tiers</span></div>
             <div class="bal-row"><span style="color:var(--text3)">Model file</span><span style="color:var(--green)">pro_crypto_ai_model.pkl</span></div>
             <div class="bal-row"><span style="color:var(--text3)">Features</span><span style="color:var(--purple)">40+ indicators</span></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">Coin Universe — 4 Tiers</span></div>
+          <div class="panel-body" style="display:flex;flex-direction:column;gap:10px" id="tierTableCfg">
+            <!-- filled by JS -->
           </div>
         </div>
       </div>
@@ -787,11 +796,21 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
 
 <script>
 // ══ CONFIG ═══════════════════════════════════════════════
+const API_BASE = "http://localhost:5000";
 // Change to your Render.com URL e.g.:
+// const API_BASE = "https://crypto-ai-bot-na93.onrender.com";
 
-const API_BASE = "https://crypto-ai-bot-na93.onrender.com";
-
-const SYMBOLS = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","AVAXUSDT","SUIUSDT","DOTUSDT","LINKUSDT","MATICUSDT","NEARUSDT","APTUSDT","INJUSDT","ARBUSDT"];
+// ── 20 coins — verified on Binance, matching config.py ──────────
+const COIN_TIERS = {
+  "big3":   { label:"👑 Big Three",          color:"var(--amber)",  coins:["BTCUSDT","ETHUSDT","BNBUSDT"] },
+  "liq1":   { label:"⚡ High-Liquidity L1s", color:"var(--blue)",   coins:["SOLUSDT","AVAXUSDT","NEARUSDT","SUIUSDT","APTUSDT"] },
+  "inst":   { label:"🏛 Institutional Alts", color:"var(--purple)", coins:["LINKUSDT","DOTUSDT","UNIUSDT","AAVEUSDT","XRPUSDT"] },
+  "ai_mom": { label:"🤖 AI & Momentum",      color:"var(--cyan)",   coins:["FETUSDT","RENDERUSDT","ADAUSDT","INJUSDT","ARBUSDT","OPUSDT","SEIUSDT"] },
+};
+const SYMBOLS = Object.values(COIN_TIERS).flatMap(t => t.coins);
+// Helper: get tier for a symbol
+const getTier = sym => Object.entries(COIN_TIERS).find(([,t]) => t.coins.includes(sym));
+const getTierColor = sym => { const t = getTier(sym); return t ? t[1].color : "var(--text2)"; };
 
 let allSignals    = [];
 let marketData    = [];
@@ -882,6 +901,27 @@ function updateScanMode() {
   if (ws) ws.textContent = m.mode==="weekend" ? "ACTIVE NOW" : "Weekday";
 }
 
+// Build tier table for config page
+function buildTierTable() {
+  const el = document.getElementById("tierTableCfg");
+  if (!el) return;
+  el.innerHTML = Object.entries(COIN_TIERS).map(([key, tier]) => `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:11px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:12px;font-weight:600;color:${tier.color}">${tier.label}</span>
+        <span style="font-size:9px;color:var(--text3);letter-spacing:1px">${tier.coins.length} coins</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${tier.coins.map(s => `
+          <span style="font-size:10px;padding:2px 8px;border-radius:3px;background:${tier.color}15;
+                       border:1px solid ${tier.color}35;color:${tier.color};cursor:pointer"
+                onclick="showPage('signals')" title="${s}">
+            ${s.replace("USDT","")}
+          </span>`).join("")}
+      </div>
+    </div>`).join("");
+}
+
 // ══ NAVIGATION ═══════════════════════════════════════════
 const PAGE_TITLES = {
   dashboard:"Dashboard", signals:"Signal History",
@@ -898,26 +938,35 @@ function showPage(id) {
   document.getElementById("pageTitle").textContent = PAGE_TITLES[id] || id;
   if (id === "market")      renderMarketPage();
   if (id === "performance") renderPerformancePage();
-  if (id === "config")      updateScanMode();
+  if (id === "config")      { updateScanMode(); buildTierTable(); }
 }
 
-// Build coin chips
+// Build coin chips — grouped by tier
 function buildCoinChips() {
-  document.getElementById("coinChips").innerHTML = SYMBOLS.map(s =>
-    `<div class="coin-chip" id="chip-${s}" onclick="showPage('signals')">${s.replace("USDT","")}</div>`
+  // Sidebar coin chips grouped by tier
+  document.getElementById("coinChips").innerHTML = Object.entries(COIN_TIERS).map(([key, tier]) =>
+    `<div style="width:100%;font-size:8px;letter-spacing:1px;color:var(--text3);margin:6px 0 3px;text-transform:uppercase">${tier.label}</div>` +
+    tier.coins.map(s =>
+      `<div class="coin-chip" id="chip-${s}" onclick="showPage('signals')" style="border-color:${tier.color}22;color:${tier.color}">${s.replace("USDT","")}</div>`
+    ).join("")
   ).join("");
-  // Build signal page coin filter
+
+  // Signal page coin filter — All + tier groups
   document.getElementById("coinFilterBtns").innerHTML =
-    '<button class="fbtn active" onclick="filterCoin(\'all\',this)">All Coins</button>' +
-    ["BTC","ETH","SOL","BNB","XRP"].map(c =>
-      `<button class="fbtn" onclick="filterCoin('${c}USDT',this)">${c}</button>`
+    '<button class="fbtn active" onclick="filterCoin(\'all\',this)">All</button>' +
+    Object.entries(COIN_TIERS).map(([key, tier]) =>
+      `<button class="fbtn" onclick="filterTier('${key}',this)" style="font-size:10px">${tier.label.split(' ').slice(1).join(' ')}</button>`
+    ).join("") +
+    '<span style="width:1px;height:16px;background:var(--border);display:inline-block;margin:0 4px"></span>' +
+    ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT"].map(c =>
+      `<button class="fbtn" onclick="filterCoin('${c}',this)">${c.replace("USDT","")}</button>`
     ).join("");
 }
 
 // ══ API CALLS ════════════════════════════════════════════
 async function fetchStatus() {
   try {
-    const r = await fetch(API_BASE + "/api/status", {signal: AbortSignal.timeout(15000)});
+    const r = await fetch(API_BASE + "/api/status", {signal: AbortSignal.timeout(5000)});
     if (!r.ok) throw new Error();
     const d = await r.json();
     apiOnline = true;
@@ -959,7 +1008,7 @@ async function fetchStatus() {
 
 async function fetchBalance() {
   try {
-    const r = await fetch(API_BASE + "/api/balance", {signal: AbortSignal.timeout(15000)});
+    const r = await fetch(API_BASE + "/api/balance", {signal: AbortSignal.timeout(8000)});
     if (!r.ok) throw new Error();
     const d = await r.json();
     const usdt = parseFloat(d.usdt || 0);
@@ -982,7 +1031,7 @@ async function fetchBalance() {
 
 async function fetchOpenTrades() {
   try {
-    const r = await fetch(API_BASE + "/api/trades/open", {signal: AbortSignal.timeout(15000)});
+    const r = await fetch(API_BASE + "/api/trades/open", {signal: AbortSignal.timeout(8000)});
     if (!r.ok) return;
     const trades = await r.json();
 
@@ -1025,15 +1074,18 @@ async function fetchOpenTrades() {
 }
 
 function tradeCardHTML(t) {
-  const dec     = t.entry < 10 ? 4 : 2;
-  const pnlCls  = (t.unrealised_pnl || 0) >= 0 ? "pos" : "neg";
-  const prog    = t.progress || 0;
+  const dec      = t.entry < 10 ? 4 : 2;
+  const pnlCls   = (t.unrealised_pnl || 0) >= 0 ? "pos" : "neg";
+  const prog     = t.progress || 0;
+  const tierCol  = getTierColor(t.symbol);
+  const tierInfo = getTier(t.symbol);
+  const tierLbl  = tierInfo ? tierInfo[1].label : "";
   return `
   <div class="trade-card ${t.signal.toLowerCase()}">
     <div class="tc-top">
       <div>
-        <div class="tc-sym">${t.symbol.replace("USDT","")}<span>/USDT</span></div>
-        <div style="font-size:10px;color:var(--text3);margin-top:2px">${timeAgo(t.opened_at)} · score ${t.score}/6 · ${t.status||"Open"}</div>
+        <div class="tc-sym" style="color:${tierCol}">${t.symbol.replace("USDT","")}<span style="color:var(--text3);font-size:12px;font-weight:400">/USDT</span></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">${timeAgo(t.opened_at)} · score ${t.score}/6 · ${t.status||"Open"} · <span style="color:${tierCol}">${tierLbl}</span></div>
       </div>
       <div style="text-align:right">
         <span class="dir-tag ${t.signal.toLowerCase()}">${t.signal}</span>
@@ -1066,7 +1118,7 @@ function tradeCardHTML(t) {
 async function fetchSignals() {
   try {
     // Try dedicated signals endpoint first
-    const r = await fetch(API_BASE + "/api/signals", {signal: AbortSignal.timeout(15000)});
+    const r = await fetch(API_BASE + "/api/signals", {signal: AbortSignal.timeout(5000)});
     if (r.ok) {
       const d = await r.json();
       allSignals = d;
@@ -1076,7 +1128,7 @@ async function fetchSignals() {
   } catch {
     // Build from trade history + mock recent for display
     try {
-      const r2 = await fetch(API_BASE + "/api/trades/history", {signal: AbortSignal.timeout(15000)});
+      const r2 = await fetch(API_BASE + "/api/trades/history", {signal: AbortSignal.timeout(5000)});
       if (r2.ok) {
         const h = await r2.json();
         allSignals = h.map(t => ({...t, generated_at: t.opened_at}));
@@ -1091,24 +1143,31 @@ async function fetchSignals() {
 function renderSignalsPage() {
   let data = [...allSignals];
   if (sigFilter.dir !== "all") data = data.filter(s => s.signal === sigFilter.dir.toUpperCase());
-  if (sigFilter.coin && sigFilter.coin !== "all") data = data.filter(s => s.symbol === sigFilter.coin);
+  if (sigFilter.tier) {
+    const tierCoins = COIN_TIERS[sigFilter.tier]?.coins || [];
+    data = data.filter(s => tierCoins.includes(s.symbol));
+  } else if (sigFilter.coin && sigFilter.coin !== "all") {
+    data = data.filter(s => s.symbol === sigFilter.coin);
+  }
   if (sigFilter.conf > 0) data = data.filter(s => (s.confidence||0) >= sigFilter.conf);
 
-  const buys = data.filter(s => s.signal === "BUY").length;
-  const sells = data.filter(s => s.signal === "SELL").length;
   document.getElementById("signalCount").textContent = data.length;
 
   const body = document.getElementById("signalsBody");
   if (!data.length) {
-    body.innerHTML = `<div class="empty"><div class="eicon">⚡</div><div class="emsg">No signals match your filters.<br>Bot scans every 15 minutes.</div></div>`;
+    body.innerHTML = `<div class="empty"><div class="eicon">⚡</div><div class="emsg">No signals match your filters.<br>Bot scans every 15 minutes across 20 pairs.</div></div>`;
     return;
   }
   body.innerHTML = [...data].reverse().map(s => signalCardHTML(s)).join("");
 }
 
 function signalCardHTML(s) {
-  const dec   = (s.entry||0) < 10 ? 4 : 2;
-  const stars = "★".repeat(Math.min(s.score||3,5)) + "☆".repeat(Math.max(0,5-(s.score||3)));
+  const dec      = (s.entry||0) < 10 ? 4 : 2;
+  const stars    = "★".repeat(Math.min(s.score||3,5)) + "☆".repeat(Math.max(0,5-(s.score||3)));
+  const tierInfo = getTier(s.symbol);
+  const tierTag  = tierInfo
+    ? `<span style="font-size:9px;padding:1px 6px;border-radius:3px;background:${tierInfo[1].color}18;color:${tierInfo[1].color};border:1px solid ${tierInfo[1].color}33">${tierInfo[1].label}</span>`
+    : "";
   return `
   <div class="signal-card ${(s.signal||"buy").toLowerCase()}">
     <div class="sc-top">
@@ -1116,6 +1175,7 @@ function signalCardHTML(s) {
         <span class="dir-tag ${(s.signal||"buy").toLowerCase()}">${s.signal||"BUY"}</span>
         <span class="sc-sym">${(s.symbol||"BTC").replace("USDT","")}<span style="color:var(--text3);font-size:11px"> USDT</span></span>
         <span class="sc-conf"><span>${s.confidence||0}%</span> conf</span>
+        ${tierTag}
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span class="stars">${stars}</span>
@@ -1157,17 +1217,24 @@ function updateSignalStats() {
   document.getElementById("signalCount").textContent  = total;
 }
 
-// Signal filters
 function filterSig(dir, btn) {
   sigFilter.dir = dir;
-  document.querySelectorAll(".fbtn").forEach(b => { if(b.classList.contains("fbtn")&&["all","buy","sell"].some(x=>b.textContent.toLowerCase().includes(x))){} });
+  btn.closest(".filter-group").querySelectorAll(".fbtn").forEach(b => { if(b.classList.contains("fbtn")&&["all","buy","sell"].some(x=>b.textContent.toLowerCase().includes(x))){} });
   btn.closest(".filter-group").querySelectorAll(".fbtn").forEach(b => b.classList.remove("active"));
   btn.classList.add("active");
   renderSignalsPage();
 }
 function filterCoin(coin, btn) {
   sigFilter.coin = coin;
-  btn.closest(".filter-group").querySelectorAll(".fbtn").forEach(b => b.classList.remove("active"));
+  sigFilter.tier = null;
+  btn.closest(".filter-group") && btn.closest(".filter-group").querySelectorAll(".fbtn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  renderSignalsPage();
+}
+function filterTier(tierKey, btn) {
+  sigFilter.tier = tierKey;
+  sigFilter.coin = null;
+  btn.closest(".filter-group") && btn.closest(".filter-group").querySelectorAll(".fbtn").forEach(b => b.classList.remove("active"));
   btn.classList.add("active");
   renderSignalsPage();
 }
@@ -1182,7 +1249,7 @@ function filterConf(conf, btn) {
 async function fetchMarketPrices() {
   try {
     const symJson = JSON.stringify(SYMBOLS);
-    const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(symJson)}`, {signal: AbortSignal.timeout(15000)});
+    const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(symJson)}`, {signal: AbortSignal.timeout(10000)});
     if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
     if (!Array.isArray(data)) throw new Error();
@@ -1230,7 +1297,7 @@ async function fetchMarketPrices() {
     // Fallback individual
     for (const sym of ["BTCUSDT","ETHUSDT"]) {
       try {
-        const r2 = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}`, {signal: AbortSignal.timeout(15000)});
+        const r2 = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}`, {signal: AbortSignal.timeout(5000)});
         if (r2.ok) marketData.push(await r2.json());
       } catch {}
     }
@@ -1255,39 +1322,51 @@ function renderMarketPage() {
     document.getElementById("mkt-worst-sym").textContent = worst.symbol.replace("USDT","");
   }
 
-  document.getElementById("mktPairsGrid").innerHTML = marketData.map(t => {
-    const price = parseFloat(t.lastPrice);
-    const chg   = parseFloat(t.priceChangePercent);
-    const high  = parseFloat(t.highPrice);
-    const low   = parseFloat(t.lowPrice);
-    const vol   = parseFloat(t.quoteVolume);
-    const range = high - low;
-    const pos   = range > 0 ? ((price - low) / range * 100) : 50;
-    const volFmt= vol > 1e9 ? (vol/1e9).toFixed(1)+"B" : vol > 1e6 ? (vol/1e6).toFixed(0)+"M" : vol.toFixed(0);
-    const dec   = price < 0.1 ? 4 : price < 10 ? 4 : 2;
+  // Build market data lookup
+  const bySymbol = {};
+  marketData.forEach(t => { bySymbol[t.symbol] = t; });
+
+  // Render tier-grouped
+  const grid = document.getElementById("mktPairsGrid");
+  grid.innerHTML = Object.entries(COIN_TIERS).map(([key, tier]) => {
+    const tiledCoins = tier.coins.map(sym => {
+      const t = bySymbol[sym];
+      if (!t) return `<div class="market-card" style="opacity:0.4"><div class="mc-head"><span class="mc-sym" style="color:${tier.color}">${sym.replace("USDT","")}</span><span class="mc-chg" style="background:var(--bg);color:var(--text3)">—</span></div><div class="mc-price">loading...</div></div>`;
+      const price = parseFloat(t.lastPrice);
+      const chg   = parseFloat(t.priceChangePercent);
+      const high  = parseFloat(t.highPrice);
+      const low   = parseFloat(t.lowPrice);
+      const vol   = parseFloat(t.quoteVolume);
+      const range = high - low;
+      const pos   = range > 0 ? ((price - low) / range * 100) : 50;
+      const volFmt= vol > 1e9 ? (vol/1e9).toFixed(1)+"B" : vol > 1e6 ? (vol/1e6).toFixed(0)+"M" : vol.toFixed(0);
+      return `
+      <div class="market-card" style="border-top:2px solid ${tier.color}40">
+        <div class="mc-head">
+          <span class="mc-sym" style="color:${tier.color}">${sym.replace("USDT","")}</span>
+          <span class="mc-chg ${chg>=0?"up":"down"}">${chg>=0?"+":""}${chg.toFixed(2)}%</span>
+        </div>
+        <div class="mc-price">${fmtUSD(price)}</div>
+        <div class="mc-vol">Vol $${volFmt}</div>
+        <div class="mc-range">
+          <div class="mc-range-fill" style="left:${Math.min(pos,95)}%;width:5%;background:${tier.color}"></div>
+        </div>
+        <div class="mc-range-labels"><span>${fmtUSD(low)}</span><span>${fmtUSD(high)}</span></div>
+      </div>`;
+    }).join("");
     return `
-    <div class="market-card">
-      <div class="mc-head">
-        <span class="mc-sym">${t.symbol.replace("USDT","")}</span>
-        <span class="mc-chg ${chg>=0?"up":"down"}">${chg>=0?"+":""}${chg.toFixed(2)}%</span>
-      </div>
-      <div class="mc-price">${fmtUSD(price)}</div>
-      <div class="mc-vol">Vol: $${volFmt}</div>
-      <div class="mc-range">
-        <div class="mc-range-fill" style="left:${Math.min(pos,95)}%;width:5%"></div>
-      </div>
-      <div class="mc-range-labels">
-        <span>L ${fmtUSD(low)}</span>
-        <span>H ${fmtUSD(high)}</span>
-      </div>
-    </div>`;
+    <div style="grid-column:1/-1;display:flex;align-items:center;gap:8px;margin:10px 0 4px">
+      <span style="font-size:11px;font-weight:600;color:${tier.color}">${tier.label}</span>
+      <div style="flex:1;height:1px;background:${tier.color}25"></div>
+    </div>
+    ${tiledCoins}`;
   }).join("");
 }
 
 // ══ FEAR & GREED ═════════════════════════════════════════
 async function fetchFearGreed() {
   try {
-    const r = await fetch("https://api.alternative.me/fng/", {signal: AbortSignal.timeout(15000)});
+    const r = await fetch("https://api.alternative.me/fng/", {signal: AbortSignal.timeout(8000)});
     const d = await r.json();
     const val = parseInt(d.data[0].value);
     const lbl = d.data[0].value_classification;
@@ -1321,7 +1400,7 @@ async function fetchFearGreed() {
 // ══ LOG ══════════════════════════════════════════════════
 async function fetchLog() {
   try {
-    const r = await fetch(API_BASE + "/api/log", {signal: AbortSignal.timeout(15000)});
+    const r = await fetch(API_BASE + "/api/log", {signal: AbortSignal.timeout(5000)});
     if (!r.ok) return;
     const d  = await r.json();
     const panel = document.getElementById("logPanel");
@@ -1341,7 +1420,7 @@ async function fetchLog() {
 // ══ HISTORY ══════════════════════════════════════════════
 async function fetchHistory() {
   try {
-    const r = await fetch(API_BASE + "/api/trades/history", {signal: AbortSignal.timeout(15000)});
+    const r = await fetch(API_BASE + "/api/trades/history", {signal: AbortSignal.timeout(5000)});
     if (!r.ok) return;
     const history = await r.json();
 
@@ -1353,11 +1432,15 @@ async function fetchHistory() {
 
     if (!history.length) return;
     document.getElementById("histBody").innerHTML = [...history].reverse().map(h => {
-      const dec = (h.entry||0) < 10 ? 4 : 2;
-      const pnl = h.pnl ?? 0;
-      const res = pnl > 0 ? "win" : "loss";
+      const dec     = (h.entry||0) < 10 ? 4 : 2;
+      const pnl     = h.pnl ?? 0;
+      const res     = pnl > 0 ? "win" : "loss";
+      const tierInf = getTier(h.symbol);
+      const tierCol = tierInf ? tierInf[1].color : "var(--text3)";
+      const tierLbl = tierInf ? tierInf[1].label.split(' ').slice(1).join(' ') : "—";
       return `<tr>
-        <td style="font-weight:600;color:#fff">${(h.symbol||"").replace("USDT","")}</td>
+        <td style="font-weight:600;color:${tierCol}">${(h.symbol||"").replace("USDT","")}</td>
+        <td style="font-size:9px;color:${tierCol};opacity:0.7">${tierLbl}</td>
         <td><span class="tag ${(h.signal||"buy").toLowerCase()}">${h.signal||"BUY"}</span></td>
         <td style="color:var(--blue)">${fmtUSD(h.entry)}</td>
         <td>${fmtUSD(h.close_price)}</td>
@@ -1374,7 +1457,7 @@ async function fetchHistory() {
 // ══ PERFORMANCE ══════════════════════════════════════════
 function renderPerformancePage() {
   try {
-    fetch(API_BASE + "/api/trades/history", {signal: AbortSignal.timeout(15000)})
+    fetch(API_BASE + "/api/trades/history", {signal: AbortSignal.timeout(5000)})
       .then(r => r.json()).then(history => {
         if (!history.length) return;
         const wins   = history.filter(h => (h.pnl||0) > 0);
@@ -1418,7 +1501,7 @@ function renderPerformancePage() {
             </div>
           </div>`;
 
-        // Coin performance
+        // Coin performance grouped by tier
         const byCoin = {};
         history.forEach(h => {
           const s = h.symbol;
@@ -1426,14 +1509,26 @@ function renderPerformancePage() {
           if ((h.pnl||0) > 0) byCoin[s].wins++; else byCoin[s].losses++;
           byCoin[s].pnl += (h.pnl||0);
         });
-        document.getElementById("coinPerfGrid").innerHTML = Object.entries(byCoin).map(([sym, d]) => {
-          const wr2 = d.wins/(d.wins+d.losses)*100;
-          return `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:12px">
-            <div style="font-family:var(--sans);font-weight:700;color:#fff;margin-bottom:6px">${sym.replace("USDT","")}</div>
-            <div style="font-size:11px;color:${d.pnl>=0?"var(--green)":"var(--red)"};font-weight:600;margin-bottom:4px">${fmtPnl(d.pnl)} USDT</div>
-            <div style="font-size:10px;color:var(--text3)">${d.wins}W ${d.losses}L · ${wr2.toFixed(0)}%</div>
-          </div>`;
-        }).join("") || `<div class="empty" style="grid-column:1/-1"><div class="emsg">No data yet</div></div>`;
+        // Render grouped by tier
+        const tierHtml = Object.entries(COIN_TIERS).map(([key, tier]) => {
+          const tierCoins = tier.coins.filter(s => byCoin[s]);
+          if (!tierCoins.length) return "";
+          const coinCards = tierCoins.map(sym => {
+            const d = byCoin[sym];
+            const wr2 = d.wins/(d.wins+d.losses)*100;
+            return `<div style="background:var(--bg3);border:1px solid ${tier.color}30;border-radius:7px;padding:12px">
+              <div style="font-family:var(--sans);font-weight:700;color:${tier.color};margin-bottom:6px">${sym.replace("USDT","")}</div>
+              <div style="font-size:11px;color:${d.pnl>=0?"var(--green)":"var(--red)"};font-weight:600;margin-bottom:4px">${fmtPnl(d.pnl)} USDT</div>
+              <div style="font-size:10px;color:var(--text3)">${d.wins}W ${d.losses}L · ${wr2.toFixed(0)}%</div>
+            </div>`;
+          }).join("");
+          return `<div style="grid-column:1/-1;display:flex;align-items:center;gap:8px;margin:6px 0 2px">
+              <span style="font-size:11px;color:${tier.color};font-weight:600">${tier.label}</span>
+              <div style="flex:1;height:1px;background:${tier.color}25"></div>
+            </div>${coinCards}`;
+        }).join("");
+        document.getElementById("coinPerfGrid").innerHTML = tierHtml ||
+          `<div class="empty" style="grid-column:1/-1"><div class="emsg">No data yet</div></div>`;
       }).catch(() => {});
   } catch {}
 }
@@ -1447,7 +1542,7 @@ async function triggerScan() {
   btn.classList.add("running");
   btn.disabled = true;
   try {
-    const r = await fetch(API_BASE + "/api/scan", {method:"POST", signal: AbortSignal.timeout(15000)});
+    const r = await fetch(API_BASE + "/api/scan", {method:"POST", signal: AbortSignal.timeout(10000)});
     const d = await r.json();
     btn.textContent = d.ok ? "✓ Started" : "✕ Failed";
   } catch {
