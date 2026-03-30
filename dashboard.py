@@ -1,10 +1,4 @@
 # dashboard_api.py - Complete fixed version
-# Fixes:
-#   1. Cloud Amnesia - pulls state from GitHub on startup
-#   2. Close button NoneType crash - uses actual fill price
-#   3. Balance shows equity not just free USDT
-#   4. All coin categories in every menu
-
 import os, json, time, threading, logging, requests
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,10 +18,8 @@ LOG_FILE     = "bot.log"
 HISTORY_FILE = "trade_history.json"
 SIGNALS_FILE = "signals.json"
 
-
 # ── Persistence layer ─────────────────────────────────────────
 def load_json(path, default):
-    """Loads from GitHub first, falls back to local, then default."""
     try:
         from persistence import load_from_github
         data = load_from_github(Path(path).name, None)
@@ -43,9 +35,7 @@ def load_json(path, default):
         pass
     return default
 
-
 def save_json(path, data):
-    """Saves locally AND pushes to GitHub."""
     try:
         from persistence import save_json as persist_save
         persist_save(path, data)
@@ -58,10 +48,7 @@ def save_json(path, data):
     except Exception as e:
         log.error(f"Save failed {path}: {e}")
 
-
-# ── Pull state from GitHub on startup ────────────────────────
 def restore_on_startup():
-    """Called once when Render starts — restores all data from GitHub."""
     try:
         from persistence import pull_all_from_github
         count = pull_all_from_github()
@@ -69,12 +56,10 @@ def restore_on_startup():
     except Exception as e:
         log.warning(f"Startup restore failed: {e}")
 
-
 # ── Live price fetching ──────────────────────────────────────
 _price_cache   = {}
 _price_cache_t = 0
 PRICE_CACHE_TTL = 10  # seconds
-
 
 def get_live_prices(symbols):
     global _price_cache, _price_cache_t
@@ -85,10 +70,7 @@ def get_live_prices(symbols):
 
     prices = {}
     try:
-        r    = requests.get(
-            "https://api.binance.com/api/v3/ticker/24hr",
-            timeout=8
-        )
+        r = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=8)
         data = r.json()
         for item in data:
             _price_cache[item["symbol"]] = {
@@ -103,7 +85,6 @@ def get_live_prices(symbols):
         log.warning(f"Price fetch error: {e}")
 
     return {s: _price_cache.get(s) for s in symbols}
-
 
 def enrich_trades(trades, prices):
     result = []
@@ -139,9 +120,54 @@ def enrich_trades(trades, prices):
         })
     return result
 
+# ── Telegram Listener ─────────────────────────────────────────
+def telegram_listener():
+    """Runs in the background to listen for your Telegram commands."""
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token: return
+    
+    offset = None
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{token}/getUpdates"
+            params = {"timeout": 10, "allowed_updates": ["message"]}
+            if offset: params["offset"] = offset
+            
+            r = requests.get(url, params=params, timeout=15)
+            if r.ok:
+                data = r.json()
+                for item in data.get("result", []):
+                    offset = item["update_id"] + 1
+                    msg = item.get("message", {})
+                    text = msg.get("text", "").strip()
+                    chat_id = msg.get("chat", {}).get("id")
+                    
+                    if text == "/status":
+                        trades = load_json(TRADES_FILE, {})
+                        if not trades:
+                            reply = "📡 *Status:* No open trades."
+                        else:
+                            reply = f"📡 *Status:* {len(trades)} Open Trades\n"
+                            for sym, t in trades.items():
+                                reply += f"• {sym} ({t['signal']}) @ {t['entry']}\n"
+                        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
+                                      data={"chat_id": chat_id, "text": reply, "parse_mode": "Markdown"})
+                        
+                    elif text.startswith("/close"):
+                        parts = text.split(" ")
+                        if len(parts) > 1:
+                            symbol = parts[1].upper()
+                            if not symbol.endswith("USDT"): symbol += "USDT"
+                            port = int(os.getenv("PORT", 5000))
+                            requests.post(f"http://localhost:{port}/api/close_trade", json={"symbol": symbol})
+                            requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
+                                          data={"chat_id": chat_id, "text": f"⚙️ Attempting to close {symbol}..."})
+        except Exception:
+            pass
+        time.sleep(3)
+
 
 # ── API routes ────────────────────────────────────────────────
-
 @app.route("/api/status")
 def api_status():
     trades  = load_json(TRADES_FILE,  {})
@@ -164,34 +190,28 @@ def api_status():
     except Exception:
         model_acc = 73.1
 
-    # Read current scan mode
     mode_data = load_json("scan_mode.json", {})
 
     return jsonify({
-        "ok":           True,
-        "timestamp":    datetime.now(timezone.utc).isoformat(),
-        "open_trades":  len(trades),
-        "max_trades":   3,
-        "total_closed": total,
-        "wins":         len(wins),
-        "losses":       len(losses),
-        "win_rate":     wr,
-        "total_pnl":    totpnl,
-        "model_acc":    model_acc,
+        "ok":            True,
+        "timestamp":     datetime.now(timezone.utc).isoformat(),
+        "open_trades":   len(trades),
+        "max_trades":    3,
+        "total_closed":  total,
+        "wins":          len(wins),
+        "losses":        len(losses),
+        "win_rate":      wr,
+        "total_pnl":     totpnl,
+        "model_acc":     model_acc,
         "today_signals": len(today_sigs),
-        "today_buy":    len([s for s in today_sigs if s.get("signal") == "BUY"]),
-        "today_sell":   len([s for s in today_sigs if s.get("signal") == "SELL"]),
-        "scan_mode":    mode_data.get("mode", "active"),
+        "today_buy":     len([s for s in today_sigs if s.get("signal") == "BUY"]),
+        "today_sell":    len([s for s in today_sigs if s.get("signal") == "SELL"]),
+        "scan_mode":     mode_data.get("mode", "active"),
     })
 
 
 @app.route("/api/balance")
 def api_balance():
-    """
-    Returns balance + equity.
-    Equity = free USDT + unrealised PnL of open trades.
-    This fixes the 'balance dropped' confusion.
-    """
     try:
         from trade_executor import init_exchange
         ex = init_exchange()
@@ -200,7 +220,6 @@ def api_balance():
         free_usdt  = float(b.get("USDT", {}).get("free",  0) or 0)
         total_usdt = float(b.get("USDT", {}).get("total", 0) or 0)
 
-        # Calculate unrealised PnL from open trades
         trades = load_json(TRADES_FILE, {})
         syms   = list(trades.keys())
         prices = get_live_prices(syms) if syms else {}
@@ -213,14 +232,8 @@ def api_balance():
         )
 
         assets = [
-            {
-                "asset": a,
-                "free":  str(b[a]["free"]),
-                "total": str(b[a]["total"]),
-            }
-            for a in b
-            if isinstance(b[a], dict)
-            and float(b[a].get("free", 0) or 0) > 0
+            {"asset": a, "free": str(b[a]["free"]), "total": str(b[a]["total"])}
+            for a in b if isinstance(b[a], dict) and float(b[a].get("free", 0) or 0) > 0
             and a not in ("info", "free", "used", "total", "timestamp", "datetime")
         ]
 
@@ -234,14 +247,7 @@ def api_balance():
             "note":        "Equity = Free USDT + Open Trade P&L",
         })
     except Exception as e:
-        log.warning(f"Balance fetch failed: {e}")
-        return jsonify({
-            "ok":         False,
-            "usdt":       None,
-            "equity":     None,
-            "unrealised": 0,
-            "error":      str(e),
-        })
+        return jsonify({"ok": False, "usdt": None, "equity": None, "unrealised": 0, "error": str(e)})
 
 
 @app.route("/api/trades/open")
@@ -262,7 +268,7 @@ def api_signals():
     signals  = load_json(SIGNALS_FILE, [])
     symbol   = request.args.get("symbol")
     sig_type = request.args.get("type")
-    rejected = request.args.get("rejected")  # ?rejected=true to see filtered signals
+    rejected = request.args.get("rejected") 
 
     if symbol:
         signals = [s for s in signals if s.get("symbol") == symbol]
@@ -274,144 +280,6 @@ def api_signals():
         signals = [s for s in signals if s.get("rejected")]
 
     return jsonify(list(reversed(signals[-200:])))
-
-
-@app.route("/api/signals/summary")
-def api_signals_summary():
-    from config import COIN_CATEGORIES, COIN_META
-    signals = load_json(SIGNALS_FILE, [])
-
-    coin_stats = {}
-    for s in signals:
-        sym = s.get("symbol", "")
-        if sym not in coin_stats:
-            coin_stats[sym] = {
-                "total": 0, "buy": 0, "sell": 0,
-                "wins": 0, "losses": 0, "avg_conf": [],
-            }
-        coin_stats[sym]["total"] += 1
-        if s.get("signal") == "BUY":
-            coin_stats[sym]["buy"] += 1
-        elif s.get("signal") == "SELL":
-            coin_stats[sym]["sell"] += 1
-        if s.get("result") == "WIN":
-            coin_stats[sym]["wins"] += 1
-        elif s.get("result") == "LOSS":
-            coin_stats[sym]["losses"] += 1
-        if s.get("confidence"):
-            coin_stats[sym]["avg_conf"].append(s["confidence"])
-
-    result = []
-    for category, coins in COIN_CATEGORIES.items():
-        for sym in coins:
-            meta  = COIN_META.get(sym, {})
-            stats = coin_stats.get(sym, {
-                "total": 0, "buy": 0, "sell": 0,
-                "wins": 0, "losses": 0, "avg_conf": [],
-            })
-            confs   = stats["avg_conf"]
-            decided = stats["wins"] + stats["losses"]
-            result.append({
-                "symbol":   sym,
-                "short":    meta.get("short", sym.replace("USDT", "")),
-                "color":    meta.get("color", "#888"),
-                "category": category,
-                "total":    stats["total"],
-                "buy":      stats["buy"],
-                "sell":     stats["sell"],
-                "wins":     stats["wins"],
-                "losses":   stats["losses"],
-                "win_rate": round(stats["wins"] / decided * 100, 1) if decided else None,
-                "avg_conf": round(sum(confs) / len(confs), 1) if confs else None,
-            })
-
-    return jsonify(result)
-
-
-@app.route("/api/coins")
-def api_coins():
-    from config import COIN_CATEGORIES, COIN_META, SYMBOLS
-    prices  = get_live_prices(SYMBOLS)
-    signals = load_json(SIGNALS_FILE, [])
-
-    # Latest signal per coin
-    sig_map = {}
-    for s in signals[-500:]:
-        sym = s.get("symbol")
-        if sym and not s.get("rejected"):
-            sig_map[sym] = s
-
-    result = []
-    for category, coins in COIN_CATEGORIES.items():
-        for sym in coins:
-            meta       = COIN_META.get(sym, {})
-            price_data = prices.get(sym) or {}
-            last_sig   = sig_map.get(sym, {})
-            result.append({
-                "symbol":      sym,
-                "name":        meta.get("name",  sym.replace("USDT", "")),
-                "short":       meta.get("short", sym.replace("USDT", "")),
-                "color":       meta.get("color", "#888888"),
-                "category":    category,
-                "price":       price_data.get("price"),
-                "change_pct":  price_data.get("change_pct"),
-                "high_24h":    price_data.get("high"),
-                "low_24h":     price_data.get("low"),
-                "volume_24h":  price_data.get("volume"),
-                "last_signal": last_sig.get("signal"),
-                "last_conf":   last_sig.get("confidence"),
-                "last_sig_time": last_sig.get("generated_at"),
-            })
-    return jsonify(result)
-
-
-@app.route("/api/categories")
-def api_categories():
-    from config import COIN_CATEGORIES, COIN_META, SYMBOLS
-    prices  = get_live_prices(SYMBOLS)
-    signals = load_json(SIGNALS_FILE, [])
-
-    sig_map = {}
-    for s in signals[-200:]:
-        sym = s.get("symbol")
-        if sym and not s.get("rejected"):
-            sig_map[sym] = s
-
-    result = []
-    for category, coins in COIN_CATEGORIES.items():
-        cat_coins      = []
-        avg_change     = []
-        bullish_count  = 0
-
-        for sym in coins:
-            meta       = COIN_META.get(sym, {})
-            price_data = prices.get(sym) or {}
-            change     = price_data.get("change_pct", 0) or 0
-            avg_change.append(change)
-            if change > 0:
-                bullish_count += 1
-            last_sig = sig_map.get(sym, {})
-            cat_coins.append({
-                "symbol":      sym,
-                "short":       meta.get("short", sym.replace("USDT", "")),
-                "color":       meta.get("color", "#888"),
-                "price":       price_data.get("price"),
-                "change_pct":  change,
-                "last_signal": last_sig.get("signal"),
-                "last_conf":   last_sig.get("confidence"),
-            })
-
-        avg = round(sum(avg_change) / len(avg_change), 2) if avg_change else 0
-        result.append({
-            "category":   category,
-            "coins":      cat_coins,
-            "avg_change": avg,
-            "bullish":    bullish_count,
-            "bearish":    len(coins) - bullish_count,
-            "trend":      "BULLISH" if avg > 0.5 else "BEARISH" if avg < -0.5 else "NEUTRAL",
-        })
-
-    return jsonify(result)
 
 
 @app.route("/api/market/overview")
@@ -470,10 +338,6 @@ def api_scan():
 
 @app.route("/api/close_trade", methods=["POST"])
 def api_close():
-    """
-    FIXED: No longer crashes with NoneType.
-    Uses actual fill price from exchange instead of live price for PnL.
-    """
     data   = request.get_json()
     symbol = data.get("symbol")
     if not symbol:
@@ -489,7 +353,6 @@ def api_close():
         from trade_executor import init_exchange
         ex   = init_exchange()
 
-        # Cancel any pending SL/TP orders
         for key, oid in trade.get("order_ids", {}).items():
             if key != "entry":
                 try:
@@ -498,15 +361,13 @@ def api_close():
                 except Exception:
                     pass
 
-        # Place closing market order
         side = "sell" if trade["signal"] == "BUY" else "buy"
         close_order = ex.create_order(symbol, "market", side, trade["qty"])
 
-        # ── FIX: Use actual fill price, never None ──
         close_price = (
             float(close_order.get("average") or 0) or
             float(close_order.get("price")   or 0) or
-            float(trade.get("entry", 0))  # last resort fallback
+            float(trade.get("entry", 0))
         )
 
         entry = float(trade["entry"])
@@ -517,7 +378,6 @@ def api_close():
             4
         )
 
-        # Save to history
         history = load_json(HISTORY_FILE, [])
         history.append({
             **trade,
@@ -528,7 +388,6 @@ def api_close():
         })
         save_json(HISTORY_FILE, history)
 
-        # Remove from open trades
         trades.pop(symbol, None)
         save_json(TRADES_FILE, trades)
 
@@ -544,19 +403,8 @@ def api_close():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.route("/api/persistence/status")
-def api_persistence_status():
-    """Shows what data is saved in GitHub."""
-    try:
-        from persistence import get_stats
-        return jsonify({"ok": True, "files": get_stats()})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
-
-
 @app.route("/api/persistence/restore", methods=["POST"])
 def api_persistence_restore():
-    """Manually trigger GitHub restore — useful after Render restart."""
     try:
         from persistence import pull_all_from_github
         count = pull_all_from_github()
@@ -564,20 +412,20 @@ def api_persistence_restore():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
-
 @app.route("/")
 def root():
     return send_from_directory("dashboard_static", "index.html")
-
 
 @app.route("/<path:path>")
 def static_files(path):
     return send_from_directory("dashboard_static", path)
 
-
 if __name__ == "__main__":
-    # Restore data from GitHub on every startup
     restore_on_startup()
     port = int(os.getenv("PORT", 5000))
     log.info(f"Dashboard API → http://localhost:{port}")
+    
+    # ── START TELEGRAM LISTENER ──
+    threading.Thread(target=telegram_listener, daemon=True).start()
+    
     app.run(host="0.0.0.0", port=port, debug=False)
