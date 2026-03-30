@@ -1045,7 +1045,7 @@ async function triggerScan() {
   btn.classList.add("running");
   btn.disabled = true;
   try {
-    const r = await fetch(API_BASE + "/api/scan", {method:"POST", signal: AbortSignal.timeout(10000)});
+    const r = await fetch(API_BASE + "/api/scan", {method:"POST", signal: AbortSignal.timeout(15000)});
     const d = await r.json();
     btn.textContent = d.ok ? "✓ Started" : "✕ Failed";
   } catch {
