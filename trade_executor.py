@@ -4,6 +4,7 @@
 # 3. Breakeven Trailing Stop Loss (Risk-Free after TP1)
 # 4. Ghost Order Sweeper (Frees up locked USDT)
 # 5. GitHub Persistence Layer
+# 6. Slash Bug Fix (Prevents 6/3 duplicate trades)
 
 import os, json, time, logging, requests, joblib
 import pandas as pd
@@ -243,9 +244,11 @@ def clean_ghost_orders(ex):
         open_orders = ex.fetch_open_orders()
         cancelled = 0
         for o in open_orders:
+            # ── Remove slash to ensure it matches correctly ──
+            o_sym = o["symbol"].replace("/", "")
             if o["id"] not in valid_ids:
                 try:
-                    ex.cancel_order(o["id"], o["symbol"])
+                    ex.cancel_order(o["id"], o_sym)
                     cancelled += 1
                 except: pass
         if cancelled > 0:
@@ -290,7 +293,7 @@ def auto_recover_trades(ex):
     trades = load_trades()
     try:
         log.info("  🔄 Checking Binance for orphaned trades...")
-        open_orders = ex.fetch_open_orders()
+        open_orders    = ex.fetch_open_orders()
         
         # ── THE FIX: Remove the slash from CCXT's symbol formatting ──
         for o in open_orders:
@@ -298,7 +301,6 @@ def auto_recover_trades(ex):
             
         active_symbols = list(set(o["symbol"] for o in open_orders))
         recovered      = 0
-        
         for sym in active_symbols:
             if sym not in trades:
                 sym_orders = [o for o in open_orders if o["symbol"] == sym]
@@ -541,11 +543,11 @@ def run_execution_scan():
     pipeline   = load_model()
     thresholds = get_mode_thresholds(mode)
 
-    # 1. Restore Memory
+    # 1. Restore Memory FIRST
     auto_recover_trades(exchange)
     sync_trade_history(exchange)
 
-    # 2. Free up unused cash (Ghost Orders)
+    # 2. Free up unused cash (Ghost Orders) SECOND
     clean_ghost_orders(exchange)
 
     log.info(f"\n[1/2] Checking open trades...")
