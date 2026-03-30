@@ -113,32 +113,69 @@ def load_json(path: str, default):
     return load_from_github(path, default)
 
 
-def save_json(path: str, data):
-    """
-    Drop-in replacement for the existing save_json function.
-    Saves to both local file AND GitHub for redundancy.
-    """
-    # Always save locally first (fast, works offline)
-    try:
-        tmp = str(path) + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(data, f, indent=2, default=str)
-        os.replace(tmp, path)
-    except Exception as e:
-        log.warning(f"Local save failed for {path}: {e}")
+import os, json, base64, requests, time, threading
+import logging
 
-    # Then push to GitHub asynchronously
-    filename = Path(path).name
-    if filename in PERSISTENT_FILES:
-        try:
-            from threading import Thread
-            Thread(
-                target=save_to_github,
-                args=(filename, data),
-                daemon=True
-            ).start()
-        except Exception as e:
-            log.warning(f"GitHub push failed for {filename}: {e}")
+log = logging.getLogger(__name__)
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPO  = os.getenv("GITHUB_REPO")  # Format: "username/repo"
+BRANCH       = "main"
+
+# 🚦 THE FIX: Create a "Lock" so only one thread can talk to GitHub at a time
+_save_lock = threading.Lock()
+
+def save_json(filename, data):
+    """Thread-safe save to GitHub with a smart retry loop."""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return
+
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    # Convert data to base64 for GitHub
+    content_str = json.dumps(data, indent=2, default=str)
+    content_b64 = base64.b64encode(content_str.encode("utf-8")).decode("utf-8")
+    
+    # 🚦 Tell the thread to wait its turn in line
+    with _save_lock:
+        # Try up to 5 times to get the correct SHA and save
+        for attempt in range(5):
+            try:
+                # 1. Fetch the absolute newest SHA from GitHub
+                r_get = requests.get(url, headers=headers, timeout=10)
+                sha = r_get.json().get("sha") if r_get.ok else None
+                
+                # 2. Build the payload
+                payload = {
+                    "message": f"Auto-update {filename}",
+                    "content": content_b64,
+                    "branch": BRANCH
+                }
+                if sha:
+                    payload["sha"] = sha
+                    
+                # 3. Push the save
+                r_put = requests.put(url, headers=headers, json=payload, timeout=15)
+                
+                if r_put.ok:
+                    return  # Success! Exit the function.
+                    
+                elif r_put.status_code == 409:
+                    log.warning(f"GitHub 409 Conflict for {filename} (Attempt {attempt+1}/5). Retrying in 2s...")
+                    time.sleep(2)  # Wait 2 seconds for the file to settle, then try again
+                    continue
+                    
+                else:
+                    log.error(f"GitHub save failed: {r_put.status_code} {r_put.text}")
+                    break # A different error happened, stop trying
+                    
+            except Exception as e:
+                log.error(f"GitHub request error for {filename}: {e}")
+                break
 
 
 def sync_all_to_github():
