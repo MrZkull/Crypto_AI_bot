@@ -167,6 +167,27 @@ def telegram_listener():
         time.sleep(3)
 
 
+# ── Automated Scanner ─────────────────────────────────────────
+def automated_scanner():
+    """Runs the trading algorithm automatically every 15 minutes aligned to the clock."""
+    while True:
+        try:
+            # Calculate seconds until the next :00, :15, :30, or :45 mark
+            now = datetime.now(timezone.utc)
+            minutes_to_wait = 15 - (now.minute % 15)
+            seconds_to_wait = (minutes_to_wait * 60) - now.second
+            
+            # Sleep until the exact 15-minute mark
+            time.sleep(seconds_to_wait)
+            
+            log.info(f"⏰ Auto-Scheduler: Triggering 15-min market scan...")
+            import subprocess
+            subprocess.run(["python", "trade_executor.py"], timeout=300)
+        except Exception as e:
+            log.error(f"Auto-scan scheduler failed: {e}")
+            time.sleep(60)
+
+
 # ── API routes ────────────────────────────────────────────────
 @app.route("/api/status")
 def api_status():
@@ -425,7 +446,8 @@ def static_files(path):
 try:
     restore_on_startup()
     threading.Thread(target=telegram_listener, daemon=True).start()
-    log.info("✅ GitHub Restore and Telegram Listener started successfully!")
+    threading.Thread(target=automated_scanner, daemon=True).start() # 👈 ADDED: The 15 min heart-beat
+    log.info("✅ GitHub Restore, Telegram, and Auto-Scanner started successfully!")
 except Exception as e:
     log.error(f"Startup task error: {e}")
 
