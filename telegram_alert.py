@@ -2,16 +2,12 @@
 
 import os
 import requests
-from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=".env", override=True)
 
-
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
-
-
 
 def send_message(text, parse_mode="Markdown"):
     if not BOT_TOKEN or not CHAT_ID:
@@ -25,7 +21,6 @@ def send_message(text, parse_mode="Markdown"):
     except Exception as e:
         print(f"Telegram error: {e}")
         return False
-
 
 def send_signal(symbol, signal, confidence, entry, stop, t1, t2, reasons, score):
     emoji  = "🟢" if signal == "BUY" else "🔴"
@@ -42,10 +37,10 @@ def send_signal(symbol, signal, confidence, entry, stop, t1, t2, reasons, score)
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{emoji} *{signal}  —  {symbol}* {stars}\n"
         f"🎯 Confidence: *{confidence:.1f}%*\n\n"
-        f"⚡ *ENTRY:*      `{fp(entry)}`\n"
-        f"🛑 *STOP LOSS:*  `{fp(stop)}`  (-{sl_pct:.1f}%)\n"
-        f"🎯 *TARGET 1:*   `{fp(t1)}`  (+{t1_pct:.1f}%)\n"
-        f"🎯 *TARGET 2:*   `{fp(t2)}`  (+{t2_pct:.1f}%)\n"
+        f"⚡ *ENTRY:* `{fp(entry)}`\n"
+        f"🛑 *STOP LOSS:* `{fp(stop)}`  (-{sl_pct:.1f}%)\n"
+        f"🎯 *TARGET 1:* `{fp(t1)}`  (+{t1_pct:.1f}%)\n"
+        f"🎯 *TARGET 2:* `{fp(t2)}`  (+{t2_pct:.1f}%)\n"
         f"⚖️  *R:R:* 1:{(t1_pct/sl_pct):.1f}\n\n"
         f"📊 *Why:*\n{reason_lines}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -53,19 +48,28 @@ def send_signal(symbol, signal, confidence, entry, stop, t1, t2, reasons, score)
     )
     return send_message(msg)
 
-
 def send_startup():
     from config import SYMBOLS
-    from news_sentiment import get_market_conditions
+    
+    # Optional logic based on how you have your modules defined
+    try:
+        from news_sentiment import get_market_conditions
+        market = get_market_conditions()
+        fg     = market.get("fear_greed", 50)
+        cond   = market.get("condition", "Neutral")
+        adv    = market.get("advice", "Trade safely.")
+        lbl    = market.get("label", "Neutral")
+    except ImportError:
+        fg = 50; cond = "Neutral"; adv = "Trade carefully."; lbl = "Neutral"
+
     coins  = "  ".join([s.replace("USDT","") for s in SYMBOLS])
-    market = get_market_conditions()
-    fg     = market["fear_greed"]
     emoji  = "😱" if fg < 25 else "😨" if fg < 45 else "😐" if fg < 55 else "😊" if fg < 75 else "🤑"
+    
     send_message(
         f"🚀 *CryptoBot AI Started*\n"
         f"Monitoring: `{coins}`\n\n"
         f"🌍 *Market Conditions*\n"
-        f"Fear & Greed: {fg} {emoji} — {market['label']}\n"
-        f"Condition: {market['condition']}\n"
-        f"_{market['advice']}_"
+        f"Fear & Greed: {fg} {emoji} — {lbl}\n"
+        f"Condition: {cond}\n"
+        f"_{adv}_"
     )
