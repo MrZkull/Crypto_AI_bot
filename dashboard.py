@@ -7,8 +7,6 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=".env", override=True)
-
-# ── THIS IS THE LINE RENDER WAS LOOKING FOR! ──
 app = Flask(__name__, static_folder="dashboard_static")
 CORS(app)
 
@@ -54,8 +52,9 @@ def get_live_prices(symbols):
         return {s: _price_cache.get(s) for s in symbols}
     try:
         sym_json = json.dumps(list(symbols))
+        # 👈 FIX: Switch to Testnet API to bypass US Geo-blocks on Render
         r = requests.get(
-            "https://api.binance.com/api/v3/ticker/24hr",
+            "https://testnet.binance.vision/api/v3/ticker/24hr",
             params={"symbols": sym_json},
             timeout=8
         )
@@ -227,7 +226,6 @@ def static_files(path):
 
 # ════════════ STARTUP ════════════════════════════════════════
 if __name__ == "__main__":
-    # Pull the latest data from GitHub before starting the server
     try:
         from persistence import pull_all_from_github
         pull_all_from_github()
