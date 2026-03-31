@@ -51,18 +51,16 @@ def get_live_prices(symbols):
     if now - _price_cache_t < PRICE_CACHE_TTL and _price_cache:
         return {s: _price_cache.get(s) for s in symbols}
     try:
-        sym_json = json.dumps(list(symbols))
-        # 👈 FIX: Switch to Testnet API to bypass US Geo-blocks on Render
-        r = requests.get(
-            "https://testnet.binance.vision/api/v3/ticker/24hr",
-            params={"symbols": sym_json},
-            timeout=8
-        )
-        if r.ok and isinstance(r.json(), list):
+        # Reverted back to the working Mainnet API for public prices
+        r = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=8)
+        if r.ok:
             for item in r.json():
                 _price_cache[item["symbol"]] = {
                     "price":      float(item["lastPrice"]),
                     "change_pct": float(item["priceChangePercent"]),
+                    "high":       float(item["highPrice"]),
+                    "low":        float(item["lowPrice"]),
+                    "volume":     float(item["quoteVolume"]),
                 }
             _price_cache_t = now
     except Exception as e:
