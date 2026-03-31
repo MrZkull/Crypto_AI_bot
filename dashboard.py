@@ -7,10 +7,11 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=".env", override=True)
+
+# ── THIS IS THE LINE RENDER WAS LOOKING FOR! ──
 app = Flask(__name__, static_folder="dashboard_static")
 CORS(app)
 
-# ── THE FIX: Writes to bot.log AND the Render Console ──
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(message)s",
