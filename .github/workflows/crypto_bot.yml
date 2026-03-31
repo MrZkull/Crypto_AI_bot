@@ -39,9 +39,9 @@ jobs:
           echo "CRYPTOPANIC_KEY=${{ secrets.CRYPTOPANIC_KEY }}"   >> .env
           echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}"   >> .env
           echo "BINANCE_SECRET=${{ secrets.BINANCE_SECRET }}"     >> .env
-          # GITHUB_TOKEN for dashboard scan button
-          echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}"         >> .env
-          echo "GITHUB_REPO=${{ github.repository }}"             >> .env
+          echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"  >> .env
+          echo "GITHUB_REPO=Elliot14R/Crypto_AI_bot"         >> .env
+          echo "GITHUB_BRANCH=main"                           >> .env
 
       - name: Restore model
         uses: actions/cache@v4
