@@ -45,7 +45,7 @@ TRADES_FILE     = "trades.json"
 HISTORY_FILE    = "trade_history.json"
 SIGNALS_FILE    = "signals.json"
 MODE_FILE       = "scan_mode.json"
-BALANCE_FILE    = "balance.json"  # 👈 Added Balance File
+BALANCE_FILE    = "balance.json"  
 
 MAX_OPEN_TRADES = 3
 TP1_CLOSE_PCT   = 0.5
@@ -111,15 +111,10 @@ def init_exchange():
 
 def load_model():
     pipeline = joblib.load(MODEL_FILE)
-    required = ["ensemble", "selector", "all_features", "best_features", "label_map"]
-    missing  = [k for k in required if k not in pipeline]
-    if missing:
-        raise ValueError(f"Model pipeline missing keys: {missing}")
-    log.info(f"✓ Model loaded — {len(pipeline['all_features'])} features")
     return pipeline
 
 def get_balance_usdt(ex):
-    """Fetches balance, saves it to GitHub for the dashboard, and returns USDT."""
+    """Fetches balance, saves it to GitHub, and catches errors."""
     try:
         b = ex.fetch_balance()
         usdt = float(b.get("USDT", {}).get("free", 0))
@@ -130,15 +125,22 @@ def get_balance_usdt(ex):
                 if asset not in ("info", "free", "used", "total", "timestamp", "datetime"):
                     assets.append({"asset": asset, "free": float(data["free"])})
         
-        # Save to trigger GitHub persistence
         save_json(BALANCE_FILE, {
             "usdt": usdt,
             "assets": assets,
-            "updated_at": datetime.now(timezone.utc).isoformat()
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "error": None
         })
         return usdt
     except Exception as e:
         log.error(f"Balance fetch failed: {e}")
+        # Save the error so we can read it!
+        save_json(BALANCE_FILE, {
+            "usdt": 0.0,
+            "assets": [],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "error": str(e)
+        })
         return 0.0
 
 # ════════════ MARKET DATA ════════════════════════════════════
@@ -159,13 +161,11 @@ def calc_pos_size(balance, entry, stop, risk_mult=1.0):
     risk_usd       = balance * effective_risk
     dist           = abs(entry - stop)
 
-    if dist <= 0:
-        return 0.0, 0.0
+    if dist <= 0: return 0.0, 0.0
 
     qty = risk_usd / dist
     max_usd = balance * 0.20
-    if (qty * entry) > max_usd:
-        qty = max_usd / entry
+    if (qty * entry) > max_usd: qty = max_usd / entry
 
     return round(qty, 6), round(risk_usd, 2)
 
@@ -174,10 +174,8 @@ def calc_pos_size(balance, entry, stop, risk_mult=1.0):
 def execute_trade(ex, symbol, signal, entry, atr, confidence, score, reasons, risk_mult=1.0):
     trades = load_trades()
 
-    if symbol in trades or len(trades) >= MAX_OPEN_TRADES:
-        return False
-    if not check_correlation(trades, signal):
-        return False
+    if symbol in trades or len(trades) >= MAX_OPEN_TRADES: return False
+    if not check_correlation(trades, signal): return False
 
     dec = 4 if entry < 10 else 2
     if signal == "BUY":
@@ -192,16 +190,13 @@ def execute_trade(ex, symbol, signal, entry, atr, confidence, score, reasons, ri
         side  = "sell"; sl_side = "buy";  tp_side = "buy"
 
     balance = get_balance_usdt(ex)
-    if balance < 10:
-        _warn(f"⚠️ Balance too low ({balance:.2f} USDT) — cannot trade {symbol}")
-        return False
+    if balance < 10: return False
 
     qty, risk_usd = calc_pos_size(balance, entry, stop, risk_mult)
     qty_tp1       = round(qty * TP1_CLOSE_PCT, 6)
     qty_tp2       = round(qty * TP2_CLOSE_PCT, 6)
 
-    if qty <= 0:
-        return False
+    if qty <= 0: return False
 
     log.info(f"  Placing {signal} {symbol} | qty={qty} | risk={risk_usd:.2f} USDT")
     order_ids = {}
@@ -262,16 +257,12 @@ def execute_trade(ex, symbol, signal, entry, atr, confidence, score, reasons, ri
 
 def sync_trade_history(ex):
     history = load_history()
-    if len(history) > 0:
-        return
-    log.info("  🔄 Rebuilding history from Binance...")
-    rebuilt = []
+    if len(history) > 0: return
     try:
+        rebuilt = []
         for sym in SYMBOLS:
-            try:
-                orders = ex.fetch_closed_orders(sym, limit=10)
-            except Exception:
-                continue
+            try: orders = ex.fetch_closed_orders(sym, limit=10)
+            except Exception: continue
             entries = [o for o in orders if o["type"] == "market" and o["status"] == "closed"]
             exits   = [o for o in orders if o["type"] != "market" and o["status"] == "closed"]
             for entry in entries:
@@ -284,26 +275,20 @@ def sync_trade_history(ex):
                 is_buy = entry["side"] == "buy"
                 pnl    = (exit_price - entry_price) * qty if is_buy else (entry_price - exit_price) * qty
                 rebuilt.append({
-                    "symbol":       sym,
-                    "signal":       "BUY" if is_buy else "SELL",
-                    "entry":        entry_price,
-                    "close_price":  exit_price,
-                    "pnl":          round(pnl, 4),
-                    "opened_at":    datetime.fromtimestamp(entry["timestamp"]/1000, tz=timezone.utc).isoformat(),
-                    "closed_at":    datetime.fromtimestamp(exit_order["timestamp"]/1000, tz=timezone.utc).isoformat(),
+                    "symbol": sym, "signal": "BUY" if is_buy else "SELL",
+                    "entry": entry_price, "close_price": exit_price, "pnl": round(pnl, 4),
+                    "opened_at": datetime.fromtimestamp(entry["timestamp"]/1000, tz=timezone.utc).isoformat(),
+                    "closed_at": datetime.fromtimestamp(exit_order["timestamp"]/1000, tz=timezone.utc).isoformat(),
                     "close_reason": "Binance Sync",
                 })
         if rebuilt:
             rebuilt.sort(key=lambda x: x["closed_at"])
             save_json(HISTORY_FILE, rebuilt)
-            log.info(f"  ✅ Recovered {len(rebuilt)} closed trades")
-    except Exception as e:
-        log.warning(f"  ⚠️ History sync failed: {e}")
+    except Exception: pass
 
 def auto_recover_trades(ex):
     trades = load_trades()
     try:
-        log.info("  🔄 Checking Binance for orphaned trades...")
         open_orders    = ex.fetch_open_orders()
         active_symbols = list(set(o["symbol"] for o in open_orders))
         recovered      = 0
@@ -330,16 +315,12 @@ def auto_recover_trades(ex):
                     "opened_at": sym_orders[0].get("datetime", datetime.now(timezone.utc).isoformat()),
                 }
                 recovered += 1
-        if recovered > 0:
-            save_trades(trades)
-            log.info(f"  ✅ Recovered {recovered} orphaned trades")
-    except Exception as e:
-        log.warning(f"  ⚠️ Auto-recover failed: {e}")
+        if recovered > 0: save_trades(trades)
+    except Exception: pass
 
 def check_open_trades(ex):
     trades    = load_trades()
-    if not trades:
-        return
+    if not trades: return
     to_remove = []
 
     for symbol, trade in list(trades.items()):
@@ -385,8 +366,7 @@ def check_open_trades(ex):
         except Exception: pass
 
     save_trades(trades)
-    for sym in set(to_remove):
-        trades.pop(sym, None)
+    for sym in set(to_remove): trades.pop(sym, None)
     save_trades(trades)
 
 def _pnl(trade, close_price, close_type):
@@ -403,11 +383,8 @@ def _cancel_remaining(ex, symbol, oids, trade):
 
 def _record_close(trade, close_price, pnl, reason):
     append_history({
-        **trade,
-        "close_price":  close_price,
-        "pnl":          pnl,
-        "closed_at":    datetime.now(timezone.utc).isoformat(),
-        "close_reason": reason,
+        **trade, "close_price": close_price, "pnl": pnl,
+        "closed_at": datetime.now(timezone.utc).isoformat(), "close_reason": reason,
     })
 
 # ════════════ SIGNAL GENERATION ══════════════════════════════
@@ -443,8 +420,7 @@ def generate_signal(symbol, pipeline, thresholds):
             return None
 
         adx_val = float(row_entry.get("adx", 0))
-        if adx_val < thresholds["min_adx"]:
-            return None
+        if adx_val < thresholds["min_adx"]: return None
 
         score, reasons = _quality_score(row_entry, row_confirm, signal, confidence)
         entry = float(row_entry["close"])
@@ -555,6 +531,14 @@ def _send_close_alert(symbol, result, pnl, entry, close_price, opened_at):
 def run_execution_scan():
     log.info(f"\n{'═'*56}\nSCAN START — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n{'═'*56}")
 
+    # 1. Init exchange and FORCE balance check BEFORE anything else
+    try:
+        exchange = init_exchange()
+        get_balance_usdt(exchange)
+    except Exception as e:
+        log.error(f"Exchange init failed: {e}")
+        return
+
     run, mode, vol, reason = should_scan()
     check_mode_switch(mode)
 
@@ -567,12 +551,8 @@ def run_execution_scan():
 
     log.info(f"\n  Mode: {mode['label']} | conf≥{mode['min_confidence']}% | score≥{mode['min_score']} | risk_mult:{effective_risk:.2f}")
 
-    exchange   = init_exchange()
     pipeline   = load_model()
     thresholds = get_mode_thresholds(mode)
-
-    # 👈 NEW: Fetches and saves balance to balance.json!
-    get_balance_usdt(exchange)
 
     auto_recover_trades(exchange)
     sync_trade_history(exchange)
