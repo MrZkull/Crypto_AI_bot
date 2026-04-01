@@ -117,26 +117,51 @@ def get_balance_usdt(ex):
     """Fetches balance, saves it to GitHub, and catches errors."""
     try:
         b = ex.fetch_balance()
-        usdt = float(b.get("USDT", {}).get("free", 0))
+        usdt_node  = b.get("USDT", {}) if isinstance(b.get("USDT", {}), dict) else {}
+        usdt_free  = float(usdt_node.get("free", 0) or 0)
+        usdt_used  = float(usdt_node.get("used", 0) or 0)
+        usdt_total = float(usdt_node.get("total", usdt_free + usdt_used) or (usdt_free + usdt_used))
+
+        # Build asset list from TOTAL balances (not only free), so held coins are visible on dashboard.
         
         assets = []
-        for asset, data in b.items():
-            if isinstance(data, dict) and float(data.get("free", 0)) > 0:
-                if asset not in ("info", "free", "used", "total", "timestamp", "datetime"):
-                    assets.append({"asset": asset, "free": float(data["free"])})
+        totals = b.get("total", {}) if isinstance(b.get("total", {}), dict) else {}
+        frees  = b.get("free", {}) if isinstance(b.get("free", {}), dict) else {}
+        useds  = b.get("used", {}) if isinstance(b.get("used", {}), dict) else {}
+
+        for asset, total_amt in totals.items():
+            try:
+                total_amt = float(total_amt or 0)
+                free_amt  = float(frees.get(asset, 0) or 0)
+                used_amt  = float(useds.get(asset, 0) or 0)
+            except Exception:
+                continue
+            if total_amt > 0:
+                assets.append({
+                    "asset": asset,
+                    "free": round(free_amt, 8),
+                    "used": round(used_amt, 8),
+                    "total": round(total_amt, 8),
+                })
         
         save_json(BALANCE_FILE, {
-            "usdt": usdt,
+            "usdt": usdt_free,
+            "usdt_free": usdt_free,
+            "usdt_used": usdt_used,
+            "usdt_total": usdt_total,
             "assets": assets,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "error": None
         })
-        return usdt
+        return usdt_free
     except Exception as e:
         log.error(f"Balance fetch failed: {e}")
         # Save the error so we can read it!
         save_json(BALANCE_FILE, {
             "usdt": 0.0,
+            "usdt_free": 0.0,
+            "usdt_used": 0.0,
+            "usdt_total": 0.0,
             "assets": [],
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "error": str(e)
