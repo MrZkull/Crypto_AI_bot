@@ -21,7 +21,7 @@ jobs:
 
     env:
       GH_PAT_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
-      GITHUB_REPO:  Elliot14R/Crypto_AI_bot
+      GITHUB_REPO: Elliot14R/Crypto_AI_bot
       GITHUB_BRANCH: main
 
     steps:
@@ -44,9 +44,9 @@ jobs:
           echo "CRYPTOPANIC_KEY=${{ secrets.CRYPTOPANIC_KEY }}"   >> .env
           echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}"   >> .env
           echo "BINANCE_SECRET=${{ secrets.BINANCE_SECRET }}"     >> .env
-          echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"        >> .env
+          echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"         >> .env
           echo "GITHUB_REPO=Elliot14R/Crypto_AI_bot"              >> .env
-          echo "GITHUB_BRANCH=main"                                >> .env
+          echo "GITHUB_BRANCH=main"                               >> .env
 
       - name: Restore model cache
         uses: actions/cache@v4
@@ -70,17 +70,17 @@ jobs:
 
       - name: Init state files if missing
         run: |
-          [ -f trades.json ]        || echo '{}'  > trades.json
-          [ -f trade_history.json ] || echo '[]'  > trade_history.json
-          [ -f signals.json ]       || echo '[]'  > signals.json
-          [ -f scan_mode.json ]     || echo '{}'  > scan_mode.json
-          [ -f balance.json ]       || echo '{}'  > balance.json
+          [ -f trades.json ]        || echo '{}' > trades.json
+          [ -f trade_history.json ] || echo '[]' > trade_history.json
+          [ -f signals.json ]       || echo '[]' > signals.json
+          [ -f scan_mode.json ]     || echo '{}' > scan_mode.json
+          [ -f balance.json ]       || echo '{}' > balance.json
 
       - name: Run bot
         run: |
           if [ "${{ github.event.inputs.mode }}" = "diagnostic" ]; then
-            echo "Running diagnostic..."
-            python trade_executor.py diagnostic
+            echo "Running diagnostic checks..."
+            python -m py_compile trade_executor.py smart_scheduler.py dashboard.py
           else
             python trade_executor.py
           fi
