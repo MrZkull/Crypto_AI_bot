@@ -630,11 +630,15 @@ async function fetchBalance() {
   if (!d || !d.ok) return;
 
   const usdt = d.usdt != null ? d.usdt.toFixed(2) : '—';
+  const usdtFree = d.usdt_free != null ? d.usdt_free.toFixed(2) : usdt;
   document.getElementById('statBalance').textContent = usdt;
   document.getElementById('topBalance').textContent  = usdt;
   document.getElementById('balMain').textContent     = usdt;
   document.getElementById('balEq').textContent       = d.equity != null ? d.equity.toFixed(2) : '—';
 
+  const eq = d.equity;
+  const eqEl = document.getElementById('balEq');
+  if (eqEl) eqEl.textContent = eq != null ? eq.toFixed(2) : usdt;
   const uEl = document.getElementById('ot-upnl');
   if (uEl && d.unrealised != null) {
     uEl.textContent = (d.unrealised >= 0 ? '+' : '') + d.unrealised.toFixed(4);
@@ -643,12 +647,14 @@ async function fetchBalance() {
 
   if (d.assets && d.assets.length) {
     const html = d.assets.slice(0, 8).map(a =>
-      `<div class="bal-row"><span style="color:var(--text3)">${a.asset}</span><span style="color:var(--text)">${Number(a.free).toFixed(4)}</span></div>`
+      `<div class="bal-row"><span style="color:var(--text3)">${a.asset}</span><span style="color:var(--text)">${Number(a.total ?? a.free ?? 0).toFixed(4)}</span></div>`
     ).join('');
     document.getElementById('balAssets').innerHTML = `<div style="display:flex;flex-direction:column;gap:4px">${html}</div>`;
   } else {
     document.getElementById('balAssets').innerHTML = '';
   }
+  const balSub = document.querySelector('.bal-sub');
+  if (balSub) balSub.textContent = `USDT TOTAL (Free: ${usdtFree})`;
 }
 
 function renderTradeCard(t) {
