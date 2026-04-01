@@ -1,110 +1,67 @@
-# trade_executor.py — Proxy & Features Fix
+# trade_executor.py
 import os, json, time, logging, requests, joblib, pandas as pd
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=".env", override=True)
 
-try:
-    import ccxt
-except ImportError:
-    raise ImportError("Run: pip install ccxt")
+try: import ccxt
+except ImportError: raise ImportError("Run: pip install ccxt")
 
-from config import (SYMBOLS, ATR_STOP_MULT, ATR_TARGET1_MULT, ATR_TARGET2_MULT,
-    RISK_PER_TRADE, TIMEFRAME_ENTRY, TIMEFRAME_CONFIRM, TIMEFRAME_TREND,
-    LIVE_LIMIT, MODEL_FILE, LOG_FILE, get_tier)
+from config import (SYMBOLS, ATR_STOP_MULT, ATR_TARGET1_MULT, ATR_TARGET2_MULT, RISK_PER_TRADE, TIMEFRAME_ENTRY, TIMEFRAME_CONFIRM, LIVE_LIMIT, MODEL_FILE, LOG_FILE, get_tier)
 from feature_engineering import add_indicators
-from smart_scheduler import should_scan, get_mode_thresholds
+from smart_scheduler import should_scan, get_mode_thresholds, check_correlation, get_effective_risk
 
-TRADES_FILE  = "trades.json"
-HISTORY_FILE = "trade_history.json"
-SIGNALS_FILE = "signals.json"
-MODE_FILE    = "scan_mode.json"
-BALANCE_FILE = "balance.json"
+# ════════════ THE BRIDGE: PERSISTENCE ════════════
+try:
+    from persistence import load_json, save_json, sync_all_to_github
+    PERSISTENCE_ENABLED = True
+except ImportError:
+    PERSISTENCE_ENABLED = False
+    def load_json(path, default):
+        try:
+            if Path(path).exists():
+                with open(path) as f: return json.load(f)
+        except Exception: pass
+        return default
+    def save_json(path, data):
+        tmp = str(path) + ".tmp"
+        with open(tmp, "w") as f: json.dump(data, f, indent=2, default=str)
+        os.replace(tmp, path)
+
+TRADES_FILE, HISTORY_FILE, SIGNALS_FILE, BALANCE_FILE, MODE_FILE = "trades.json", "trade_history.json", "signals.json", "balance.json", "scan_mode.json"
 MAX_OPEN_TRADES = 3
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s",
-    handlers=[logging.FileHandler(LOG_FILE, mode='a'), logging.StreamHandler()])
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", handlers=[logging.FileHandler(LOG_FILE, mode='a'), logging.StreamHandler()])
 log = logging.getLogger(__name__)
-
-def load_json(p, d):
-    try:
-        if Path(p).exists():
-            with open(p) as f: return json.load(f)
-    except: pass
-    return d
-
-def save_json(p, data):
-    tmp = str(p)+".tmp"
-    with open(tmp,"w") as f: json.dump(data,f,indent=2,default=str)
-    os.replace(tmp,p)
 
 load_trades  = lambda: load_json(TRADES_FILE, {})
 save_trades  = lambda d: save_json(TRADES_FILE, d)
 load_history = lambda: load_json(HISTORY_FILE, [])
 load_signals = lambda: load_json(SIGNALS_FILE, [])
-
-def append_history(rec):
-    h=load_history(); h.append(rec); save_json(HISTORY_FILE,h)
-
-def save_signal(sig):
-    s=load_signals()
-    s.append({**sig,"generated_at":datetime.now(timezone.utc).isoformat()})
-    save_json(SIGNALS_FILE,s[-500:])
+def append_history(rec): h=load_history(); h.append(rec); save_json(HISTORY_FILE,h)
+def save_signal(sig): s=load_signals(); s.append({**sig,"generated_at":datetime.now(timezone.utc).isoformat()}); save_json(SIGNALS_FILE,s[-500:])
 
 def init_exchange():
-    key, secret = os.getenv("BINANCE_API_KEY",""), os.getenv("BINANCE_SECRET","")
-    proxy_url   = os.getenv("PROXY_URL", "")  # 👈 Proxy URL grabbed from .env
+    key, secret, proxy_url = os.getenv("BINANCE_API_KEY",""), os.getenv("BINANCE_SECRET",""), os.getenv("PROXY_URL", "")
+    if not key or not secret: raise ValueError("BINANCE_API_KEY missing!")
+    cfg = {"apiKey": key, "secret": secret, "enableRateLimit": True, "options": {"defaultType": "spot"}, "urls": {"api": {"public": "https://testnet.binance.vision/api", "private": "https://testnet.binance.vision/api"}}}
     
-    if not key or not secret:
-        raise ValueError("BINANCE_API_KEY or BINANCE_SECRET missing!")
-
-    cfg = {
-        "apiKey": key,
-        "secret": secret,
-        "enableRateLimit": True,
-        "options": {"defaultType": "spot", "adjustForTimeDifference": True},
-        "urls": {
-            "api": {
-                "public":  "https://testnet.binance.vision/api",
-                "private": "https://testnet.binance.vision/api",
-            }
-        },
-    }
+    if proxy_url: cfg["proxies"] = {"http": proxy_url, "https": proxy_url} # 👈 PROXY FIX
     
-    # 🛡️ Inject the proxy to bypass the USA block
-    if proxy_url:
-        cfg["proxies"] = {"http": proxy_url, "https": proxy_url}
-        
     ex = ccxt.binance(cfg)
     ex.set_sandbox_mode(True)
-    
-    if proxy_url:
-        log.info("✓ Exchange: Binance TESTNET (Routed via Proxy 🛡️)")
-    else:
-        log.info("✓ Exchange: Binance TESTNET (No Proxy)")
+    log.info("✓ Exchange: Binance TESTNET" + (" (Routed via Proxy 🛡️)" if proxy_url else " (No Proxy)"))
     return ex
 
 def fetch_and_save_balance(ex):
     proxy_url = os.getenv("PROXY_URL", "")
     proxies   = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-    
     try:
-        b    = ex.fetch_balance()
+        b = ex.fetch_balance()
         usdt = float(b.get("USDT", {}).get("free", 0) or 0)
-        assets = [
-            {"asset": a, "free": round(float(v.get("free",0) or 0), 6),
-             "total": round(float(v.get("total",0) or 0), 6)}
-            for a, v in b.items()
-            if isinstance(v, dict) and float(v.get("total", 0) or 0) > 0
-            and a not in ("info","free","used","total","timestamp","datetime")
-        ]
-        save_json(BALANCE_FILE, {
-            "usdt":       round(usdt, 2),
-            "assets":     assets,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "source":     "ccxt",
-        })
+        assets = [{"asset": a, "free": round(float(v.get("free",0) or 0), 6), "total": round(float(v.get("total",0) or 0), 6)} for a, v in b.items() if isinstance(v, dict) and float(v.get("total", 0) or 0) > 0 and a not in ("info","free","used","total","timestamp","datetime")]
+        save_json(BALANCE_FILE, {"usdt": round(usdt, 2), "assets": assets, "updated_at": datetime.now(timezone.utc).isoformat(), "source": "ccxt"})
         log.info(f"✓ Balance (ccxt): {usdt:.2f} USDT")
         return usdt
     except Exception as e:
@@ -112,20 +69,18 @@ def fetch_and_save_balance(ex):
 
     try:
         import hmac, hashlib
-        key    = os.getenv("BINANCE_API_KEY", "")
-        secret = os.getenv("BINANCE_SECRET",  "")
-        ts     = int(datetime.now(timezone.utc).timestamp() * 1000)
+        key, secret = os.getenv("BINANCE_API_KEY", ""), os.getenv("BINANCE_SECRET", "")
+        ts = int(datetime.now(timezone.utc).timestamp() * 1000)
         params = f"timestamp={ts}"
-        sig    = hmac.new(secret.encode(), params.encode(), hashlib.sha256).hexdigest()
-        url    = f"https://testnet.binance.vision/api/v3/account?{params}&signature={sig}"
+        sig = hmac.new(secret.encode(), params.encode(), hashlib.sha256).hexdigest()
+        url = f"https://testnet.binance.vision/api/v3/account?{params}&signature={sig}"
         
-        # 🛡️ Uses proxy for REST fallback
+        # 🛡️ Uses proxy for REST fallback to bypass the block
         r = requests.get(url, headers={"X-MBX-APIKEY": key}, proxies=proxies, timeout=15)
         r.raise_for_status()
         data = r.json()
 
-        usdt   = 0.0
-        assets = []
+        usdt, assets = 0.0, []
         for b in data.get("balances", []):
             free, locked = float(b.get("free",0) or 0), float(b.get("locked",0) or 0)
             if (free + locked) > 0:
@@ -148,11 +103,7 @@ def load_model():
     return p
 
 def get_data(symbol, interval):
-    endpoints = [
-        "https://data-api.binance.vision/api/v3/klines", 
-        "https://api.binance.com/api/v3/klines",         
-        "https://api1.binance.com/api/v3/klines",        
-    ]
+    endpoints = ["https://data-api.binance.vision/api/v3/klines", "https://api.binance.com/api/v3/klines", "https://api1.binance.com/api/v3/klines"]
     params = {"symbol": symbol, "interval": interval, "limit": LIVE_LIMIT}
     last_err = None
     for url in endpoints:
@@ -361,7 +312,7 @@ def _send_close_alert(symbol,result,pnl,entry,close_price,opened_at):
         f"💵 *PnL: `{pnl:+.4f} USDT`*\n_Binance Testnet_")
 
 def run_execution_scan():
-    log.info(f"\n{'═'*56}\nSCAN — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n{'═'*56}")
+    log.info(f"\n{'═'*56}\nSCAN — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\nGitHub Actions US IP — geo-block bypassed\n{'═'*56}")
     run,mode,vol,reason=should_scan()
     check_mode_switch(mode)
     if not run: log.info(f"SKIPPED: {reason}"); return
@@ -394,7 +345,16 @@ def run_execution_scan():
         if vol_warn: sig["reasons"]=list(sig.get("reasons",[]))+[f"⚠️ {vol_warn}"]
         execute_trade(exchange,sig["symbol"],sig["signal"],sig["entry"],sig["atr"],sig["confidence"],sig["score"],sig["reasons"])
         time.sleep(1)
+    
     log.info(f"\n{'═'*56}\nDONE — {found} signal(s) found\n{'═'*56}\n")
 
+    # 👈 THE BRIDGE: Pushing data to GitHub so Render can read the balance
+    if PERSISTENCE_ENABLED:
+        log.info("Pushing data to GitHub so Dashboard can see it...")
+        time.sleep(2)
+        sync_all_to_github()
+
 if __name__=="__main__":
-    run_execution_scan()
+    import sys
+    if len(sys.argv)>1 and sys.argv[1]=="diagnostic": run_diagnostic()
+    else: run_execution_scan()
