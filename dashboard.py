@@ -277,6 +277,11 @@ def api_balance():
     This bypasses India/Render geo-block completely.
     """
     bal = load_json(BALANCE_FILE, {})
+    data_bal = load_json(str(Path("data") / BALANCE_FILE), {})
+
+    # Prefer data/balance.json when root balance.json exists but is empty/stale.
+    if bal.get("usdt") is None and data_bal.get("usdt") is not None:
+        bal = data_bal
 
     if not bal or bal.get("usdt") is None:
         return jsonify({
@@ -287,6 +292,27 @@ def api_balance():
             "assets":   [],
             "note":     "Balance not yet fetched. Go to GitHub → Actions → Run workflow to trigger first scan.",
         })
+
+    trades  = load_json(TRADES_FILE, {})
+    symbols = list(trades.keys())
+    prices  = get_live_prices(symbols) if symbols else {}
+    upnl    = 0.0
+    for sym, t in trades.items():
+        live = (prices.get(sym) or {}).get("price")
+        if live and t.get("entry") and t.get("qty"):
+            upnl += (live - t["entry"]) * t["qty"] if t["signal"] == "BUY" \
+                    else (t["entry"] - live) * t["qty"]
+
+    usdt = float(bal.get("usdt", 0))
+    return jsonify({
+        "ok":         True,
+        "usdt":       usdt,
+        "equity":     round(usdt + upnl, 2),
+        "unrealised": round(upnl, 4),
+        "assets":     bal.get("assets", []),
+        "updated_at": bal.get("updated_at"),
+        "note":       "Balance written by GitHub Actions (US IP, bypasses geo-block)",
+    })
 
     trades  = load_json(TRADES_FILE, {})
     symbols = list(trades.keys())
@@ -420,7 +446,7 @@ def static_files(path):
 # ════════════ STARTUP ════════════════════════════════════════
 
 log.info("=" * 50)
-log.info("CryptoBot Dashboard API starting...")
+log.info("CryptoBot dashboard.py API starting...")
 log.info(f"GH_PAT_TOKEN: {'SET' if os.getenv('GH_PAT_TOKEN') else 'MISSING'}")
 log.info(f"GITHUB_REPO:  {os.getenv('GITHUB_REPO', 'NOT SET')}")
 log.info(f"TELEGRAM:     {'SET' if os.getenv('TELEGRAM_TOKEN') else 'NOT SET'}")
