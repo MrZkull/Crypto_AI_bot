@@ -19,6 +19,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
+from persistence import save_json, load_json
 
 load_dotenv(dotenv_path=".env", override=True)
 
@@ -48,17 +49,17 @@ log = logging.getLogger(__name__)
 
 # ════════════ HELPERS ════════════════════════════════════════════════
 
-def load_json(p, d):
-    try:
-        if Path(p).exists():
-            with open(p) as f: return json.load(f)
-    except: pass
-    return d
+# def load_json(p, d):
+#     try:
+#         if Path(p).exists():
+#             with open(p) as f: return json.load(f)
+#     except: pass
+#     return d
 
-def save_json(p, data):
-    tmp = str(p) + ".tmp"
-    with open(tmp, "w") as f: json.dump(data, f, indent=2, default=str)
-    os.replace(tmp, p)
+# def save_json(p, data):
+#     tmp = str(p) + ".tmp"
+#     with open(tmp, "w") as f: json.dump(data, f, indent=2, default=str)
+#     os.replace(tmp, p)
 
 load_trades  = lambda: load_json(TRADES_FILE,  {})
 save_trades  = lambda d: save_json(TRADES_FILE, d)
