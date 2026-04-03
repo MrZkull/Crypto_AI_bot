@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 from persistence import save_json, load_json
+from binance_client import BinanceTestnet
 
 load_dotenv(dotenv_path=".env", override=True)
 
