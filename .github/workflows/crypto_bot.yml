@@ -2,6 +2,7 @@ name: CryptoBot AI — Smart Scanner
 
 on:
   schedule:
+    # Every 15 minutes
     - cron: '0,15,30,45 * * * *'
   workflow_dispatch:
     inputs:
@@ -13,16 +14,12 @@ on:
         options:
           - scan
           - diagnostic
+          - clear_stuck   # NEW: clears the 4 stuck trades
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 12
-
-    env:
-      GH_PAT_TOKEN:   ${{ secrets.GH_PAT_TOKEN }}
-      GITHUB_REPO:    Elliot14R/Crypto_AI_bot
-      GITHUB_BRANCH:  main
 
     steps:
       - name: Checkout
@@ -37,18 +34,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Write .env from secrets
+      - name: Write .env
         run: |
-          echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}"   >> .env
-          echo "BINANCE_SECRET=${{ secrets.BINANCE_SECRET }}"     >> .env
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}"     >> .env
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
           echo "CRYPTOPANIC_KEY=${{ secrets.CRYPTOPANIC_KEY }}"   >> .env
-          echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"        >> .env
-          echo "GITHUB_REPO=Elliot14R/Crypto_AI_bot"              >> .env
-          echo "GITHUB_BRANCH=main"                                >> .env
+          echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}"   >> .env
+          echo "BINANCE_SECRET=${{ secrets.BINANCE_SECRET }}"     >> .env
+          echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}"         >> .env
+          echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"         >> .env
+          echo "GITHUB_REPO=${{ github.repository }}"             >> .env
 
-      - name: Restore model cache
+      - name: Restore model
         uses: actions/cache@v4
         with:
           path: pro_crypto_ai_model.pkl
@@ -56,7 +53,6 @@ jobs:
 
       - name: Restore state files
         uses: actions/cache@v4
-        id: state-cache
         with:
           path: |
             trades.json
@@ -68,18 +64,25 @@ jobs:
           restore-keys: |
             bot-state-
 
-      - name: Init state files if missing
+      - name: Init missing state files
         run: |
           [ -f trades.json ]        || echo '{}'  > trades.json
           [ -f trade_history.json ] || echo '[]'  > trade_history.json
           [ -f signals.json ]       || echo '[]'  > signals.json
           [ -f scan_mode.json ]     || echo '{}'  > scan_mode.json
           [ -f balance.json ]       || echo '{}'  > balance.json
+          echo "=== Current trades.json ==="
+          cat trades.json
 
       - name: Run bot
         run: |
-          if [ "${{ github.event.inputs.mode }}" = "diagnostic" ]; then
+          MODE="${{ github.event.inputs.mode }}"
+          if [ "$MODE" = "diagnostic" ]; then
+            echo "Running diagnostic..."
             python trade_executor.py diagnostic
+          elif [ "$MODE" = "clear_stuck" ]; then
+            echo "Clearing stuck trades..."
+            python trade_executor.py clear_stuck
           else
             python trade_executor.py
           fi
