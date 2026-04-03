@@ -15,7 +15,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-TESTNET_BASE = "https://testnet.binance.vision"
+TESTNET_BASE = "https://api.binance.com"
 LIVE_BASE    = "https://api.binance.com"   # for public data only (no auth needed)
 
 
@@ -33,6 +33,7 @@ class BinanceTestnet:
         self.session.headers.update({
             "X-MBX-APIKEY": api_key,
             "Content-Type":  "application/x-www-form-urlencoded",
+            "User-Agent": "Mozilla/5.0",
         })
 
     # ── Signing ───────────────────────────────────────────────────────
@@ -72,8 +73,12 @@ class BinanceTestnet:
 
     # ── Account ───────────────────────────────────────────────────────
 
-    def get_account(self) -> dict:
-        """Returns full account info including balances."""
+    def get_account(self):
+    try:
+        return self._get("/api/v3/account")
+    except Exception as e:
+        print("⚠️ Retry account fetch...")
+        time.sleep(2)
         return self._get("/api/v3/account")
 
     def get_balance(self) -> dict:
