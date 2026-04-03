@@ -74,13 +74,13 @@ class BinanceTestnet:
     # ── Account ───────────────────────────────────────────────────────
 
     def get_account(self):
-    try:
-        return self._get("/api/v3/account")
-    except Exception as e:
-        print("⚠️ Retry account fetch...")
-        time.sleep(2)
-        return self._get("/api/v3/account")
-
+        try:
+            return self._get("/api/v3/account")
+        except Exception as e:
+            print("⚠️ Retry account fetch...")
+            time.sleep(2)
+            return self._get("/api/v3/account")
+        
     def get_balance(self) -> dict:
         """Returns dict of asset → free balance for non-zero assets."""
         account = self.get_account()
