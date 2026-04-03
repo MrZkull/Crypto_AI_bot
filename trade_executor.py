@@ -372,16 +372,16 @@ def generate_signal(symbol, pipeline, thresholds):
 def _quality_score(row, r1h, signal, confidence):
     score, reasons = 0, []
     if confidence >= 75:   score+=1; reasons.append(f"High AI conf ({confidence:.0f}%)")
-    elif confidence >= 65: score+=1; reasons.append(f"Good AI conf ({confidence:.0f}%)")
-    elif confidence >= 60: reasons.append(f"AI conf ({confidence:.0f}%)")
+    elif confidence >= 60: score+=1; reasons.append(f"Good AI conf ({confidence:.0f}%)")
+    elif confidence >= 55: reasons.append(f"AI conf ({confidence:.0f}%)")
 
     adx = float(row.get("adx", 0))
-    if adx > 25:   score+=1; reasons.append(f"Strong trend ADX {adx:.0f}")
-    elif adx > 20: score+=1; reasons.append(f"Moderate ADX {adx:.0f}")
+    if adx > 20:   score+=1; reasons.append(f"Strong trend ADX {adx:.0f}")
+    elif adx > 15: score+=1; reasons.append(f"Moderate ADX {adx:.0f}")
 
     rsi = float(row.get("rsi", 50))
-    if signal=="BUY"   and rsi<45:  score+=1; reasons.append(f"RSI bullish ({rsi:.0f})")
-    elif signal=="SELL" and rsi>55: score+=1; reasons.append(f"RSI bearish ({rsi:.0f})")
+    if signal=="BUY"   and rsi<50:  score+=1; reasons.append(f"RSI bullish ({rsi:.0f})")
+    elif signal=="SELL" and rsi>50: score+=1; reasons.append(f"RSI bearish ({rsi:.0f})")
 
     e20=float(row.get("ema20",0)); e50=float(row.get("ema50",0))
     if signal=="BUY"   and e20>e50: score+=1; reasons.append("EMA20>EMA50 uptrend")
