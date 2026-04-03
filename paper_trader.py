@@ -82,9 +82,9 @@ class PaperTrader:
     STARTING_BALANCE = 10000.0
     
     def test_connection(self) -> bool:
-    """Always succeeds for paper trading"""
-    log.info("  ✅ Paper trading mode — no exchange connection needed")
-    return True
+        """Always succeeds for paper trading"""
+        log.info("  ✅ Paper trading mode — no exchange connection needed")
+        return True
 
     def __init__(self):
         self._ensure_balance()
