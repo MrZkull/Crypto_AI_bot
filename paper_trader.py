@@ -88,7 +88,7 @@ class PaperTrader:
     def _ensure_balance(self):
         """Create balance.json with starting capital if it doesn't exist."""
         bal = load_json(BALANCE_FILE, {})
-        if not bal or bal.get("usdt") is None:
+        if not bal or bal.get("usdt") in (None, 0):
             self._save_balance(self.STARTING_BALANCE)
             log.info(f"  ✅ Paper trading: initialized with {self.STARTING_BALANCE} USDT")
 
