@@ -275,39 +275,53 @@ def api_status():
 @app.route("/api/balance")
 def api_balance():
     """
-    Reads balance.json written by GitHub Actions paper_trader / trade_executor.
-    Checks both root and data/ subfolder.
-    Handles paper trading format AND testnet format.
+    Attempts to fetch the live balance directly from Delta Exchange.
+    Falls back to balance.json if keys are missing or API fails.
     """
+    # 1. Try to fetch LIVE directly from Delta Exchange
+    try:
+        key = os.getenv("DELTA_API_KEY", "")
+        sec = os.getenv("DELTA_API_SECRET", "")
+        if key and sec:
+            from delta_client import DeltaClient
+            client = DeltaClient(key, sec)
+            live_usdt = client.get_usdt_balance()
+            
+            return jsonify({
+                "ok":          True,
+                "usdt":        round(live_usdt, 2),
+                "equity":      round(live_usdt, 2),
+                "unrealised":  0,
+                "assets":      [{"asset": "USDT", "free": str(live_usdt), "total": str(live_usdt)}],
+                "updated_at":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "mode":        "delta_testnet",
+                "note":        "Delta Exchange India Testnet (Live Fetch)",
+            })
+    except Exception as e:
+        log.warning(f"Live Delta balance fetch failed: {e}. Falling back to local file.")
+
+    # 2. Fallback to reading the local balance.json
     bal = load_json(BALANCE_FILE, {})
     bal_path = str(_find_file(BALANCE_FILE))
 
-    log.info(f"Balance request — path: {bal_path} — data: {bal}")
-
-    # File truly missing
-    if not bal:
+    if not bal or bal.get("error"):
         return jsonify({
             "ok":         False,
             "usdt":       None,
-            "equity":     None,
-            "unrealised": 0,
-            "assets":     [],
-            "note":       "balance.json not found. Run a GitHub Actions scan first.",
-            "file_path":  bal_path,
+            "note":       "Balance fetch failed. Add DELTA_API_KEY to Render environment variables.",
         })
 
-    # Has error from failed exchange call
-    if bal.get("error"):
-        return jsonify({
-            "ok":         False,
-            "usdt":       None,
-            "equity":     None,
-            "unrealised": 0,
-            "assets":     [],
-            "error":      bal.get("error"),
-            "note":       "Balance fetch failed. Check GitHub Actions log.",
-            "updated_at": bal.get("updated_at"),
-        })
+    usdt = float(bal.get("usdt") or 0)
+    return jsonify({
+        "ok":         True,
+        "usdt":       round(usdt, 2),
+        "equity":     round(float(bal.get("equity") or usdt), 2),
+        "unrealised": round(float(bal.get("unrealised") or 0), 4),
+        "assets":     bal.get("assets", []),
+        "updated_at": bal.get("updated_at"),
+        "mode":       bal.get("mode", "testnet"),
+        "note":       "Paper trading (simulated fills)",
+    })
 
     # ── Success — handle both paper trading and testnet formats ──────
     usdt       = float(bal.get("usdt") or 0)
