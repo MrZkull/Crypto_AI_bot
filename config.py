@@ -1,5 +1,7 @@
-# config.py — Complete settings file
-# ALL imports that trade_executor.py and other files need are here
+# config.py — Updated for Delta Exchange + Lower thresholds to fix no-trade issue
+# KEY CHANGE: MIN_CONFIDENCE lowered 65→58, MIN_SCORE 3→2
+# Reason: Market sideways since March 30, model confidence consistently 38-54%
+# 58% still filters out noise while allowing borderline signals through
 
 TIER_BIG3   = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
 TIER_LIQ1   = ["SOLUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT", "APTUSDT"]
@@ -16,29 +18,28 @@ COIN_TIERS = {
 }
 
 COIN_META = {
-    "BTCUSDT":    {"name": "Bitcoin",   "short": "BTC",  "color": "#f7931a"},
-    "ETHUSDT":    {"name": "Ethereum",  "short": "ETH",  "color": "#627eea"},
-    "BNBUSDT":    {"name": "BNB",       "short": "BNB",  "color": "#f3ba2f"},
-    "SOLUSDT":    {"name": "Solana",    "short": "SOL",  "color": "#9945ff"},
-    "AVAXUSDT":   {"name": "Avalanche", "short": "AVAX", "color": "#e84142"},
-    "NEARUSDT":   {"name": "NEAR",      "short": "NEAR", "color": "#00c08b"},
-    "SUIUSDT":    {"name": "Sui",       "short": "SUI",  "color": "#4da2ff"},
-    "APTUSDT":    {"name": "Aptos",     "short": "APT",  "color": "#00d4aa"},
-    "LINKUSDT":   {"name": "Chainlink", "short": "LINK", "color": "#2a5ada"},
-    "DOTUSDT":    {"name": "Polkadot",  "short": "DOT",  "color": "#e6007a"},
-    "UNIUSDT":    {"name": "Uniswap",   "short": "UNI",  "color": "#ff007a"},
-    "AAVEUSDT":   {"name": "Aave",      "short": "AAVE", "color": "#b6509e"},
-    "XRPUSDT":    {"name": "XRP",       "short": "XRP",  "color": "#00aae4"},
-    "FETUSDT":    {"name": "Fetch.AI",  "short": "FET",  "color": "#1a1f6e"},
-    "RENDERUSDT": {"name": "Render",    "short": "RNDR", "color": "#f14c27"},
-    "ADAUSDT":    {"name": "Cardano",   "short": "ADA",  "color": "#0033ad"},
-    "INJUSDT":    {"name": "Injective", "short": "INJ",  "color": "#00b2ff"},
-    "ARBUSDT":    {"name": "Arbitrum",  "short": "ARB",  "color": "#28a0f0"},
-    "OPUSDT":     {"name": "Optimism",  "short": "OP",   "color": "#ff0420"},
-    "SEIUSDT":    {"name": "Sei",       "short": "SEI",  "color": "#9d1ef9"},
+    "BTCUSDT":    {"name":"Bitcoin",   "short":"BTC",  "color":"#f7931a"},
+    "ETHUSDT":    {"name":"Ethereum",  "short":"ETH",  "color":"#627eea"},
+    "BNBUSDT":    {"name":"BNB",       "short":"BNB",  "color":"#f3ba2f"},
+    "SOLUSDT":    {"name":"Solana",    "short":"SOL",  "color":"#9945ff"},
+    "AVAXUSDT":   {"name":"Avalanche", "short":"AVAX", "color":"#e84142"},
+    "NEARUSDT":   {"name":"NEAR",      "short":"NEAR", "color":"#00c08b"},
+    "SUIUSDT":    {"name":"Sui",       "short":"SUI",  "color":"#4da2ff"},
+    "APTUSDT":    {"name":"Aptos",     "short":"APT",  "color":"#00d4aa"},
+    "LINKUSDT":   {"name":"Chainlink", "short":"LINK", "color":"#2a5ada"},
+    "DOTUSDT":    {"name":"Polkadot",  "short":"DOT",  "color":"#e6007a"},
+    "UNIUSDT":    {"name":"Uniswap",   "short":"UNI",  "color":"#ff007a"},
+    "AAVEUSDT":   {"name":"Aave",      "short":"AAVE", "color":"#b6509e"},
+    "XRPUSDT":    {"name":"XRP",       "short":"XRP",  "color":"#00aae4"},
+    "FETUSDT":    {"name":"Fetch.AI",  "short":"FET",  "color":"#1a1f6e"},
+    "RENDERUSDT": {"name":"Render",    "short":"RNDR", "color":"#f14c27"},
+    "ADAUSDT":    {"name":"Cardano",   "short":"ADA",  "color":"#0033ad"},
+    "INJUSDT":    {"name":"Injective", "short":"INJ",  "color":"#00b2ff"},
+    "ARBUSDT":    {"name":"Arbitrum",  "short":"ARB",  "color":"#28a0f0"},
+    "OPUSDT":     {"name":"Optimism",  "short":"OP",   "color":"#ff0420"},
+    "SEIUSDT":    {"name":"Sei",       "short":"SEI",  "color":"#9d1ef9"},
 }
 
-# Also expose as COIN_CATEGORIES for dashboard_api
 COIN_CATEGORIES = {
     "👑 Big Three":          TIER_BIG3,
     "⚡ High-Liquidity L1s": TIER_LIQ1,
@@ -48,8 +49,7 @@ COIN_CATEGORIES = {
 
 def get_tier(symbol: str) -> str:
     for t in COIN_TIERS.values():
-        if symbol in t["coins"]:
-            return t["label"]
+        if symbol in t["coins"]: return t["label"]
     return "Unknown"
 
 # Timeframes
@@ -59,37 +59,36 @@ TIMEFRAME_TREND   = "4h"
 DOWNLOAD_LIMIT    = 1500
 LIVE_LIMIT        = 300
 
-# Features list — must match feature_engineering.add_indicators() output
+# Features
 FEATURES = [
-    "ema9","ema20","ema50","ema200",
-    "ema20_slope","ema50_slope",
+    "ema9","ema20","ema50","ema200","ema20_slope","ema50_slope",
     "price_vs_ema20","price_vs_ema50","price_vs_ema200","ema20_vs_ema50",
-    "rsi","rsi_slope","rsi_fast",
-    "stoch_k","stoch_d",
+    "rsi","rsi_slope","rsi_fast","stoch_k","stoch_d",
     "macd","macd_signal","macd_hist","macd_slope",
-    "adx","adx_pos","adx_neg","di_diff",
-    "atr","atr_pct",
+    "adx","adx_pos","adx_neg","di_diff","atr","atr_pct",
     "bb_high","bb_low","bb_pct","bb_width",
     "volume_ratio","volume_spike","obv_slope",
     "price_change","price_change3","price_change6",
     "high_low_pct","body_pct","momentum","volatility",
-    "bullish_candle","doji","hammer",
-    "rsi_1h","adx_1h","trend_1h",
+    "bullish_candle","doji","hammer","rsi_1h","adx_1h","trend_1h",
 ]
 
-# Signal thresholds (smart_scheduler overrides these at runtime)
-MIN_CONFIDENCE     = 65
-MIN_ADX            = 20
-MIN_SCORE          = 3
+# ── THRESHOLDS — LOWERED to fix 3-day no-trade drought ────────────
+# Previous: 65% confidence, 3 score → 0 trades in 3 days
+# New: 58% confidence, 2 score → will capture borderline signals
+# Risk: slightly more false signals, but still filtered by ADX
+MIN_CONFIDENCE     = 58    # was 65 — recent scans showed 38-54%, all rejected
+MIN_ADX            = 18    # was 20 — slightly relaxed
+MIN_SCORE          = 2     # was 3 — 2/5 quality checks still meaningful
 
-# Correlation filter — max same-direction trades at once
+# Correlation filter
 MAX_SAME_DIRECTION = 2
 
 # Risk management
 ATR_STOP_MULT     = 1.5
 ATR_TARGET1_MULT  = 2.0
 ATR_TARGET2_MULT  = 3.0
-RISK_PER_TRADE    = 0.01   # 1% of balance
+RISK_PER_TRADE    = 0.01   # 1% per trade
 
 # Training
 TARGET_FUTURE    = 6
