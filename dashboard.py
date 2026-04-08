@@ -329,8 +329,7 @@ def api_balance():
         "assets":      assets,
         "updated_at":  bal.get("updated_at"),
         "mode":        mode,
-        "note":        f"Paper trading — real signals, simulated fills" if mode == "paper_trading"
-                       else "Testnet balance",
+        "note":        f"Delta Exchange India Testnet (real balance)" if mode == "delta_testnet" else "Paper trading (simulated fills)",
     })
 
 
@@ -417,7 +416,7 @@ def api_close():
     symbol = data.get("symbol", "?")
     mode   = load_json(BALANCE_FILE, {}).get("mode", "testnet")
 
-    if mode == "paper_trading":
+    if mode in ("paper_trading", "delta_testnet"):
         # Paper trading: can close directly by updating trades.json
         trades = load_json(TRADES_FILE, {})
         if symbol in trades:
