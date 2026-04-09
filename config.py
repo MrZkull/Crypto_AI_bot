@@ -3,6 +3,9 @@
 # Reason: Market sideways since March 30, model confidence consistently 38-54%
 # 58% still filters out noise while allowing borderline signals through
 
+PAPER_MODE_ON_GEOBLOCK = True
+PAPER_START_USDT = 10000.0
+
 TIER_BIG3   = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
 TIER_LIQ1   = ["SOLUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT", "APTUSDT"]
 TIER_INST   = ["LINKUSDT", "DOTUSDT", "UNIUSDT", "AAVEUSDT", "XRPUSDT"]
