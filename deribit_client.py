@@ -1,4 +1,4 @@
-# deribit_client.py — Precision Rounding Fix
+# deribit_client.py — Tick Size & Trigger Precision Fix
 import json, time, logging, requests, math
 log = logging.getLogger(__name__)
 
@@ -71,10 +71,7 @@ class DeribitClient:
         return data.get("result", data)
 
     def _post(self, path: str, body: dict) -> dict:
-        """
-        Deribit's REST API safely accepts ALL actions (including Buy/Sell) via GET parameters.
-        This routes orders through GET to completely bypass the strict JSON-RPC 11050 parsing error!
-        """
+        """Forces all orders to route via GET to bypass strict JSON-RPC payload errors"""
         return self._get(path, body)
 
     def is_supported(self, symbol: str) -> bool:
@@ -102,6 +99,10 @@ class DeribitClient:
         info = self.get_instrument_info(symbol)
         return float(info.get("min_trade_amount", SYMBOL_MAP.get(symbol, {}).get("min_amount", 1)))
 
+    def get_tick_size(self, symbol: str) -> float:
+        info = self.get_instrument_info(symbol)
+        return float(info.get("tick_size", 0.001))
+
     def get_live_price(self, symbol: str) -> float:
         try:
             instrument = self.get_instrument_name(symbol)
@@ -112,26 +113,30 @@ class DeribitClient:
             return 0.0
 
     def round_amount(self, symbol: str, amount: float) -> float:
-        """Strictly rounds an amount to the exact exchange step size to prevent 400 Errors."""
+        """Rounds amount to exactly match the exchange step size."""
         if amount <= 0: return 0.0
         min_amt = self.get_min_trade_amount(symbol)
-        
-        # Calculate how many "steps" fit into the requested amount
         steps = math.floor(amount / min_amt)
         rounded = steps * min_amt
-        
-        # Ensure it meets the absolute minimum trade size
         final_amount = max(min_amt, rounded)
-        
-        # Format cleanly for the API payload (remove .0 if it's an integer step)
-        if float(min_amt).is_integer():
-            return int(final_amount)
+        if float(min_amt).is_integer(): return int(final_amount)
         else:
             dec = len(str(float(min_amt)).split('.')[-1])
             return round(final_amount, dec)
 
+    def round_price(self, symbol: str, price: float) -> float:
+        """Rounds price to exactly match the exchange tick size (prevents Invalid Params)."""
+        if price <= 0: return 0.0
+        tick = self.get_tick_size(symbol)
+        rounded = round(price / tick) * tick
+        if float(tick).is_integer(): return int(rounded)
+        else:
+            tick_str = str(float(tick))
+            dec = len(tick_str.split('.')[-1]) if '.' in tick_str else 0
+            return round(rounded, dec)
+
     def calc_contracts(self, symbol: str, balance_usd: float, entry: float, stop: float, risk_mult: float = 1.0) -> float:
-        risk_usd  = balance_usd * 0.02 * risk_mult   # 2% risk
+        risk_usd  = balance_usd * 0.02 * risk_mult
         stop_dist = abs(entry - stop)
         min_amt   = self.get_min_trade_amount(symbol)
 
@@ -196,20 +201,25 @@ class DeribitClient:
     def place_limit_order(self, symbol: str, side: str, amount: float, price: float, stop_price: float = None) -> dict:
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
+        
+        # FIX 2: Apply the Tick Size Rounder to the price
+        safe_price = self.round_price(symbol, price)
+        
         body = {
-            "instrument_name": instrument, "amount": amount, "price": round(price, 4),
+            "instrument_name": instrument, "amount": amount, "price": safe_price,
             "label": f"bot_{symbol}_{int(time.time())}",
         }
         if stop_price is not None:
             body["type"] = "stop_limit"
-            body["stop_price"] = round(trigger_price, 4)
+            # FIX 1: The Quotes around "trigger_price" and Tick Size Rounder applied to the stop loss
+            body["trigger_price"] = self.round_price(symbol, stop_price)
             body["trigger"] = "last_price"
         else: body["type"] = "limit"
 
         result = self._post(method, body)
         order  = result.get("order", result)
         kind   = "STOP_LIMIT" if stop_price else "LIMIT"
-        log.info(f"  {kind} {side.upper()} {amount} {instrument} @ {price} → id={order.get('order_id','?')}")
+        log.info(f"  {kind} {side.upper()} {amount} {instrument} @ {safe_price} → id={order.get('order_id','?')}")
         return order
 
     def get_order(self, order_id: str) -> dict:
