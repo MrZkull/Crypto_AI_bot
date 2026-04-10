@@ -127,7 +127,7 @@ class DeribitClient:
     def get_all_balances(self) -> dict:
         """Returns equity in USD for BTC and ETH accounts combined."""
         balances = {}
-        for currency in ["BTC", "ETH"]:
+        for currency in ["BTC", "ETH", "USDT", "USDC", "SOL", "XRP"]:
             try:
                 summary = self.get_balance(currency)
                 equity_usd = float(summary.get("equity_usd", 0) or
