@@ -1,4 +1,3 @@
-# dashboard_api.py — 100% Deribit Live Version
 import os, json, time, threading, logging, requests
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,7 +47,6 @@ def save_json(path, data):
     except Exception as e:
         log.error(f"save_json {path}: {e}")
 
-
 _price_cache   = {}
 _price_cache_t = 0
 PRICE_TTL      = 10
@@ -74,7 +72,6 @@ def get_live_prices(symbols):
     except Exception as e:
         log.warning(f"Price fetch: {e}")
     return {s: _price_cache.get(s) for s in symbols}
-
 
 def enrich_trades(trades, prices):
     result = []
@@ -110,7 +107,6 @@ def enrich_trades(trades, prices):
         })
     return result
 
-
 def trigger_github_scan():
     token = (os.getenv("GH_PAT_TOKEN", "") or os.getenv("GITHUB_TOKEN",  "") or os.getenv("GH_TOKEN",      ""))
     repo  = os.getenv("GITHUB_REPO", "")
@@ -130,7 +126,6 @@ def trigger_github_scan():
         else: return False, f"GitHub API {r.status_code}: {r.text[:100]}"
     except Exception as e:
         return False, str(e)
-
 
 def telegram_listener():
     token = os.getenv("TELEGRAM_TOKEN", "")
@@ -175,7 +170,6 @@ def telegram_listener():
             pass
         time.sleep(3)
 
-
 @app.route("/api/status")
 def api_status():
     trades  = load_json(TRADES_FILE,  {})
@@ -215,15 +209,13 @@ def api_status():
         "today_buy":       len([s for s in today_sigs if s.get("signal") == "BUY"]),
         "today_sell":      len([s for s in today_sigs if s.get("signal") == "SELL"]),
         "scan_mode":       mode_data.get("mode", "active"),
-        "balance_usdt":    bal.get("usdt", "BTC", "ETH", "USDC", "SOL", "xrp"),
+        "balance_usdt":    bal.get("usdt"),
         "balance_updated": bal.get("updated_at"),
         "trading_mode":    bal.get("mode", "deribit_testnet"),
     })
 
-
 @app.route("/api/balance")
 def api_balance():
-    """Fetches LIVE balance directly from Deribit"""
     try:
         client_id = os.getenv("DERIBIT_CLIENT_ID", "")
         client_secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
@@ -231,14 +223,11 @@ def api_balance():
             from deribit_client import DeribitClient
             client = DeribitClient(client_id, client_secret)
             
-            # Fetch all individual balances from the wallet
             all_bals = client.get_all_balances()
             
-            # 1. Extract ONLY the USDT balance for the top headline
             usdt_info = all_bals.get("USDT", {})
             main_usdt = float(usdt_info.get("equity_usd", 0))
             
-            # 2. Build the dynamic list of ALL coins for the bottom table
             assets_list = []
             for cur, info in all_bals.items():
                 qty = float(info.get("available", 0))
@@ -252,35 +241,17 @@ def api_balance():
             
             return jsonify({
                 "ok":          True,
-                "usdt":        round(main_usdt, 2),  # This goes to the top
+                "usdt":        round(main_usdt, 2),
                 "equity":      round(main_usdt, 2),
                 "unrealised":  0,
-                "assets":      assets_list,          # This builds the table
+                "assets":      assets_list,
                 "updated_at":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                 "mode":        "deribit_testnet",
                 "note":        "Live Deribit Wallet",
             })
-            
     except Exception as e:
         log.warning(f"Live Deribit balance fetch failed: {e}. Falling back to local file.")
 
-    # Fallback to local file if API keys are missing
-    bal = load_json(BALANCE_FILE, {})
-    usdt = float(bal.get("usdt") or 0)
-    return jsonify({
-        "ok":         True,
-        "usdt":       round(usdt, 2),
-        "equity":     round(float(bal.get("equity") or usdt), 2),
-        "unrealised": round(float(bal.get("unrealised") or 0), 4),
-        "assets":     bal.get("assets", []),
-        "updated_at": bal.get("updated_at"),
-        "mode":       bal.get("mode", "testnet"),
-        "note":       "Fetched from GitHub local cache",
-    })
-    except Exception as e:
-        log.warning(f"Live Deribit balance fetch failed: {e}. Falling back to local file.")
-
-    # Fallback to local file if API keys are missing
     bal = load_json(BALANCE_FILE, {})
     usdt = float(bal.get("usdt") or 0)
     return jsonify({
@@ -354,10 +325,12 @@ def api_close():
     }), 200
 
 @app.route("/")
-def root(): return send_from_directory("dashboard_static", "index.html")
+def root(): 
+    return send_from_directory("dashboard_static", "index.html")
 
 @app.route("/<path:path>")
-def static_files(path): return send_from_directory("dashboard_static", path)
+def static_files(path): 
+    return send_from_directory("dashboard_static", path)
 
 def _startup_check():
     log.info("=" * 50)
@@ -374,10 +347,10 @@ def _startup_check():
 
 _startup_check()
 
-try:
-    listener_thread = threading.Thread(target=telegram_listener, daemon=True)
-    listener_thread.start()
-except Exception as e:
+try: 
+    telegram_thread = threading.Thread(target=telegram_listener, daemon=True)
+    telegram_thread.start()
+except Exception as e: 
     log.error(f"Telegram listener failed: {e}")
 
 if __name__ == "__main__":
