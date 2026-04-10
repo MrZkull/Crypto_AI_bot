@@ -1,11 +1,4 @@
-# dashboard_api.py — Final Fixed Version
-# Fixes:
-#   1. Reads balance.json from BOTH root AND data/ subfolder (handles both locations)
-#   2. Handles paper trading balance format (usdt as int/float, no error field)
-#   3. Better startup logging so you can see exactly what's happening
-#   4. GH_PAT_TOKEN support for scan button
-#   5. All timeouts 8s (internal reads are instant — only external calls need timeouts)
-
+# dashboard_api.py — 100% Deribit Live Version
 import os, json, time, threading, logging, requests
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,17 +18,12 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── File paths — check both root AND data/ subfolder ─────────────────
-# GitHub Actions cache saves to root; some repo setups use data/ folder
 def _find_file(filename: str) -> Path:
-    """Find a state file — checks root first, then data/ subfolder."""
     root = Path(filename)
     data = Path("data") / filename
-    if root.exists():
-        return root
-    if data.exists():
-        return data
-    return root   # default to root (will be created there)
+    if root.exists(): return root
+    if data.exists(): return data
+    return root
 
 TRADES_FILE  = "trades.json"
 LOG_FILE     = "bot.log"
@@ -43,16 +31,11 @@ HISTORY_FILE = "trade_history.json"
 SIGNALS_FILE = "signals.json"
 BALANCE_FILE = "balance.json"
 
-
-# ════════════ FILE I/O ═══════════════════════════════════════════════
-
 def load_json(filename, default):
-    """Load JSON — checks root then data/ subfolder."""
     path = _find_file(filename)
     try:
         if path.exists():
-            with open(path) as f:
-                return json.load(f)
+            with open(path) as f: return json.load(f)
     except Exception as e:
         log.warning(f"load_json {path}: {e}")
     return default
@@ -60,14 +43,11 @@ def load_json(filename, default):
 def save_json(path, data):
     try:
         tmp = str(path) + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+        with open(tmp, "w") as f: json.dump(data, f, indent=2, default=str)
         os.replace(tmp, path)
     except Exception as e:
         log.error(f"save_json {path}: {e}")
 
-
-# ════════════ PRICE FETCHING (public API — no geo-block) ═════════════
 
 _price_cache   = {}
 _price_cache_t = 0
@@ -80,8 +60,7 @@ def get_live_prices(symbols):
         return {s: _price_cache.get(s) for s in symbols}
     try:
         sym_json = json.dumps(list(symbols))
-        r = requests.get("https://api.binance.com/api/v3/ticker/24hr",
-                         params={"symbols": sym_json}, timeout=8)
+        r = requests.get("https://api.binance.com/api/v3/ticker/24hr", params={"symbols": sym_json}, timeout=8)
         if r.ok and isinstance(r.json(), list):
             for item in r.json():
                 _price_cache[item["symbol"]] = {
@@ -132,53 +111,35 @@ def enrich_trades(trades, prices):
     return result
 
 
-# ════════════ GITHUB ACTIONS TRIGGER ════════════════════════════════
-
 def trigger_github_scan():
-    # Try both token env var names
-    token = (os.getenv("GH_PAT_TOKEN", "") or
-             os.getenv("GITHUB_TOKEN",  "") or
-             os.getenv("GH_TOKEN",      ""))
+    token = (os.getenv("GH_PAT_TOKEN", "") or os.getenv("GITHUB_TOKEN",  "") or os.getenv("GH_TOKEN",      ""))
     repo  = os.getenv("GITHUB_REPO", "")
     workflow = os.getenv("GITHUB_WORKFLOW", "crypto_bot.yml")
 
-    if not token:
-        return False, "GH_PAT_TOKEN not set in Render environment variables"
-    if not repo:
-        return False, "GITHUB_REPO not set in Render environment variables"
+    if not token: return False, "GH_PAT_TOKEN not set in Render environment variables"
+    if not repo: return False, "GITHUB_REPO not set in Render environment variables"
 
     try:
         url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches"
         r   = requests.post(url,
-            headers={"Authorization": f"token {token}",
-                     "Accept": "application/vnd.github.v3+json"},
-            json={"ref": os.getenv("GITHUB_BRANCH", "main")},
-            timeout=10)
-        if r.status_code == 204:
-            return True, "✅ Scan triggered on GitHub Actions!"
-        elif r.status_code == 401:
-            return False, "GH_PAT_TOKEN is invalid or expired"
-        elif r.status_code == 404:
-            return False, f"Workflow '{workflow}' not found in repo"
-        else:
-            return False, f"GitHub API {r.status_code}: {r.text[:100]}"
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"},
+            json={"ref": os.getenv("GITHUB_BRANCH", "main")}, timeout=10)
+        if r.status_code == 204: return True, "✅ Scan triggered on GitHub Actions!"
+        elif r.status_code == 401: return False, "GH_PAT_TOKEN is invalid or expired"
+        elif r.status_code == 404: return False, f"Workflow '{workflow}' not found in repo"
+        else: return False, f"GitHub API {r.status_code}: {r.text[:100]}"
     except Exception as e:
         return False, str(e)
 
 
-# ════════════ TELEGRAM ═══════════════════════════════════════════════
-
 def telegram_listener():
     token = os.getenv("TELEGRAM_TOKEN", "")
-    if not token:
-        return
+    if not token: return
     offset = None
     while True:
         try:
             r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates",
-                params={"timeout": 10, "allowed_updates": ["message"],
-                        **({"offset": offset} if offset else {})},
-                timeout=15)
+                params={"timeout": 10, "allowed_updates": ["message"], **({"offset": offset} if offset else {})}, timeout=15)
             if r.ok:
                 for item in r.json().get("result", []):
                     offset  = item["update_id"] + 1
@@ -193,13 +154,10 @@ def telegram_listener():
                         usdt   = bal.get("usdt", "?")
                         mode   = bal.get("mode", "testnet")
                         reply  = f"📡 *Bot Status*\nBalance: `{usdt}` USDT ({mode})\nOpen: {len(trades)} trade(s)\n"
-                        for sym, t in trades.items():
-                            reply += f"• {sym} {t.get('signal','?')} @ {t.get('entry','?')}\n"
-                        if not trades:
-                            reply += "_No open trades_"
+                        for sym, t in trades.items(): reply += f"• {sym} {t.get('signal','?')} @ {t.get('entry','?')}\n"
+                        if not trades: reply += "_No open trades_"
                         requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                            data={"chat_id": chat_id, "text": reply, "parse_mode": "Markdown"},
-                            timeout=10)
+                            data={"chat_id": chat_id, "text": reply, "parse_mode": "Markdown"}, timeout=10)
 
                     elif text == "/scan":
                         ok, msg_txt = trigger_github_scan()
@@ -210,19 +168,13 @@ def telegram_listener():
                         bal     = load_json(BALANCE_FILE, {})
                         usdt    = bal.get("usdt", "Not available")
                         equity  = bal.get("equity", usdt)
-                        updated = bal.get("updated_at", "unknown")
                         mode    = bal.get("mode", "testnet")
                         requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                            data={"chat_id": chat_id,
-                                  "text": f"💰 *Balance: {usdt} USDT*\nEquity: {equity} USDT\nMode: {mode}\nUpdated: {updated}",
-                                  "parse_mode": "Markdown"},
-                            timeout=10)
+                            data={"chat_id": chat_id, "text": f"💰 *Balance: {usdt} USDT*\nEquity: {equity} USDT\nMode: {mode}", "parse_mode": "Markdown"}, timeout=10)
         except Exception:
             pass
         time.sleep(3)
 
-
-# ════════════ API ROUTES ═════════════════════════════════════════════
 
 @app.route("/api/status")
 def api_status():
@@ -239,13 +191,10 @@ def api_status():
     totpnl = round(sum(h.get("pnl") or 0 for h in real), 4)
 
     today      = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today_sigs = [s for s in signals
-                  if (s.get("generated_at") or "")[:10] == today
-                  and not s.get("rejected")]
+    today_sigs = [s for s in signals if (s.get("generated_at") or "")[:10] == today and not s.get("rejected")]
 
     try:
-        with open("model_performance.json") as f:
-            model_acc = round(json.load(f).get("test_accuracy", 0.731) * 100, 1)
+        with open("model_performance.json") as f: model_acc = round(json.load(f).get("test_accuracy", 0.731) * 100, 1)
     except Exception:
         model_acc = 73.1
 
@@ -268,24 +217,20 @@ def api_status():
         "scan_mode":       mode_data.get("mode", "active"),
         "balance_usdt":    bal.get("usdt"),
         "balance_updated": bal.get("updated_at"),
-        "trading_mode":    bal.get("mode", "testnet"),
+        "trading_mode":    bal.get("mode", "deribit_testnet"),
     })
 
 
 @app.route("/api/balance")
 def api_balance():
-    """
-    Attempts to fetch the live balance directly from Delta Exchange.
-    Falls back to balance.json if keys are missing or API fails.
-    """
-    # 1. Try to fetch LIVE directly from Delta Exchange
+    """Fetches LIVE balance directly from Deribit"""
     try:
-        key = os.getenv("DELTA_API_KEY", "")
-        sec = os.getenv("DELTA_API_SECRET", "")
-        if key and sec:
-            from delta_client import DeltaClient
-            client = DeltaClient(key, sec)
-            live_usdt = client.get_usdt_balance()
+        client_id = os.getenv("DERIBIT_CLIENT_ID", "")
+        client_secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
+        if client_id and client_secret:
+            from deribit_client import DeribitClient
+            client = DeribitClient(client_id, client_secret)
+            live_usdt = client.get_usdt_equivalent()
             
             return jsonify({
                 "ok":          True,
@@ -294,23 +239,14 @@ def api_balance():
                 "unrealised":  0,
                 "assets":      [{"asset": "USDT", "free": str(live_usdt), "total": str(live_usdt)}],
                 "updated_at":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                "mode":        "delta_testnet",
-                "note":        "Delta Exchange India Testnet (Live Fetch)",
+                "mode":        "deribit_testnet",
+                "note":        "Deribit Testnet (Live Fetch)",
             })
     except Exception as e:
-        log.warning(f"Live Delta balance fetch failed: {e}. Falling back to local file.")
+        log.warning(f"Live Deribit balance fetch failed: {e}. Falling back to local file.")
 
-    # 2. Fallback to reading the local balance.json
+    # Fallback to local file if API keys are missing
     bal = load_json(BALANCE_FILE, {})
-    bal_path = str(_find_file(BALANCE_FILE))
-
-    if not bal or bal.get("error"):
-        return jsonify({
-            "ok":         False,
-            "usdt":       None,
-            "note":       "Balance fetch failed. Add DELTA_API_KEY to Render environment variables.",
-        })
-
     usdt = float(bal.get("usdt") or 0)
     return jsonify({
         "ok":         True,
@@ -320,32 +256,8 @@ def api_balance():
         "assets":     bal.get("assets", []),
         "updated_at": bal.get("updated_at"),
         "mode":       bal.get("mode", "testnet"),
-        "note":       "Paper trading (simulated fills)",
+        "note":       "Fetched from GitHub local cache",
     })
-
-    # ── Success — handle both paper trading and testnet formats ──────
-    usdt       = float(bal.get("usdt") or 0)
-    equity     = float(bal.get("equity")     or usdt)
-    unrealised = float(bal.get("unrealised") or 0)
-    assets     = bal.get("assets", [])
-    mode       = bal.get("mode", "testnet")
-
-    # If no assets array but we have usdt, create a minimal one
-    if not assets and usdt > 0:
-        assets = [{"asset": "USDT", "free": str(round(usdt, 2)),
-                   "total": str(round(equity, 2))}]
-
-    return jsonify({
-        "ok":          True,
-        "usdt":        round(usdt, 2),
-        "equity":      round(equity, 2),
-        "unrealised":  round(unrealised, 4),
-        "assets":      assets,
-        "updated_at":  bal.get("updated_at"),
-        "mode":        mode,
-        "note":        f"Delta Exchange India Testnet (real balance)" if mode == "delta_testnet" else "Paper trading (simulated fills)",
-    })
-
 
 @app.route("/api/trades/open")
 def api_open():
@@ -354,11 +266,9 @@ def api_open():
     prices  = get_live_prices(symbols) if symbols else {}
     return jsonify(enrich_trades(trades, prices))
 
-
 @app.route("/api/trades/history")
 def api_history():
     return jsonify(load_json(HISTORY_FILE, [])[-100:])
-
 
 @app.route("/api/signals")
 def api_signals():
@@ -372,163 +282,65 @@ def api_signals():
     elif rejected == "true": signals = [s for s in signals if s.get("rejected")]
     return jsonify(list(reversed(signals[-200:])))
 
-
 @app.route("/api/market/overview")
 def api_market_overview():
-    SYMBOLS = [
-        "BTCUSDT","ETHUSDT","BNBUSDT",
-        "SOLUSDT","AVAXUSDT","NEARUSDT","SUIUSDT","APTUSDT",
-        "LINKUSDT","DOTUSDT","UNIUSDT","AAVEUSDT","XRPUSDT",
-        "FETUSDT","RENDERUSDT","ADAUSDT","INJUSDT","ARBUSDT","OPUSDT","SEIUSDT",
-    ]
+    SYMBOLS = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","AVAXUSDT","NEARUSDT","SUIUSDT","APTUSDT","LINKUSDT","DOTUSDT","UNIUSDT","AAVEUSDT","XRPUSDT","FETUSDT","RENDERUSDT","ADAUSDT","INJUSDT","ARBUSDT","OPUSDT","SEIUSDT"]
     prices  = get_live_prices(SYMBOLS)
     changes = [v.get("change_pct", 0) for v in prices.values() if v]
     bullish = sum(1 for c in changes if c > 0)
     avg     = round(sum(changes) / len(changes), 2) if changes else 0
-    fg_score, fg_label = 50, "Neutral"
-    try:
-        r = requests.get("https://api.alternative.me/fng/", timeout=5)
-        d = r.json()
-        fg_score = int(d["data"][0]["value"])
-        fg_label = d["data"][0]["value_classification"]
-    except Exception:
-        pass
     return jsonify({
-        "total_coins": len(SYMBOLS),
-        "bullish":     bullish,
-        "bearish":     len(SYMBOLS) - bullish,
-        "avg_change":  avg,
-        "market_mood": "BULLISH" if avg > 0.5 else "BEARISH" if avg < -0.5 else "NEUTRAL",
-        "fear_greed":  fg_score,
-        "fg_label":    fg_label,
-        "timestamp":   datetime.now(timezone.utc).isoformat(),
+        "total_coins": len(SYMBOLS), "bullish": bullish, "bearish": len(SYMBOLS) - bullish,
+        "avg_change":  avg, "market_mood": "BULLISH" if avg > 0.5 else "BEARISH" if avg < -0.5 else "NEUTRAL",
+        "fear_greed":  50, "fg_label": "Neutral", "timestamp": datetime.now(timezone.utc).isoformat(),
     })
-
 
 @app.route("/api/log")
 def api_log():
     try:
-        # Check both root and logs/ subfolder
         for log_path in ["bot.log", "data/bot.log", "logs/bot.log"]:
             if Path(log_path).exists():
                 lines = Path(log_path).read_text(errors="replace").splitlines()
                 return jsonify({"lines": lines[-200:]})
-    except Exception:
-        pass
-    return jsonify({"lines": ["Log not found — check GitHub Actions artifacts for bot.log"]})
-
+    except Exception: pass
+    return jsonify({"lines": ["Log not found"]})
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
     ok, message = trigger_github_scan()
     return jsonify({"ok": ok, "message": message})
 
-
 @app.route("/api/close_trade", methods=["POST"])
 def api_close():
-    data   = request.get_json() or {}
-    symbol = data.get("symbol", "?")
-    mode   = load_json(BALANCE_FILE, {}).get("mode", "testnet")
-
-    if mode in ("paper_trading", "delta_testnet"):
-        # Paper trading: can close directly by updating trades.json
-        trades = load_json(TRADES_FILE, {})
-        if symbol in trades:
-            trade = trades[symbol]
-            from paper_trader import get_live_price, PaperTrader
-            live  = get_live_price(symbol)
-            entry = float(trade.get("entry", live))
-            qty   = float(trade.get("qty", 0))
-            pnl   = round((live - entry) * qty if trade.get("signal") == "BUY"
-                          else (entry - live) * qty, 4)
-            pt = PaperTrader()
-            pt.update_balance_after_close(pnl)
-            history = load_json(HISTORY_FILE, [])
-            history.append({**trade, "close_price": live, "pnl": pnl,
-                             "closed_at": datetime.now(timezone.utc).isoformat(),
-                             "close_reason": "Manual close (dashboard)"})
-            save_json(HISTORY_FILE, history)
-            trades.pop(symbol, None)
-            save_json(TRADES_FILE, trades)
-            return jsonify({"ok": True, "pnl": pnl, "close_price": live,
-                            "message": f"Paper trade closed @ {live:.4f} | PnL: {pnl:+.4f} USDT"})
-        return jsonify({"ok": False, "error": f"{symbol} not in open trades"}), 404
-
     return jsonify({
-        "ok":     False,
-        "message": f"Cannot close {symbol} from dashboard — geo-restricted.",
-        "action":  "Trades close automatically when SL/TP is hit. Or cancel at testnet.binance.vision.",
+        "ok":      False,
+        "message": "Manual closing from dashboard disabled in Live Deribit Mode.",
+        "action":  "Trades close automatically via SL/TP. To close manually, use the Deribit website."
     }), 200
 
-
-@app.route("/api/debug/balance")
-def api_debug_balance():
-    """Debug endpoint — shows exactly where balance.json is being read from."""
-    root_path = Path(BALANCE_FILE)
-    data_path = Path("data") / BALANCE_FILE
-    return jsonify({
-        "root_exists":  root_path.exists(),
-        "data_exists":  data_path.exists(),
-        "reading_from": str(_find_file(BALANCE_FILE)),
-        "content":      load_json(BALANCE_FILE, None),
-        "cwd":          str(Path.cwd()),
-    })
-
-
 @app.route("/")
-def root():
-    return send_from_directory("dashboard_static", "index.html")
+def root(): return send_from_directory("dashboard_static", "index.html")
 
 @app.route("/<path:path>")
-def static_files(path):
-    return send_from_directory("dashboard_static", path)
-
-
-# ════════════ STARTUP DIAGNOSTICS ════════════════════════════════════
+def static_files(path): return send_from_directory("dashboard_static", path)
 
 def _startup_check():
-    """Run at boot — log exactly what files are found and their content."""
     log.info("=" * 50)
     log.info("CryptoBot Dashboard API starting...")
-
-    files_to_check = [
-        ("balance.json",      BALANCE_FILE),
-        ("trades.json",       TRADES_FILE),
-        ("signals.json",      SIGNALS_FILE),
-        ("trade_history.json",HISTORY_FILE),
-    ]
-    for label, fname in files_to_check:
-        path = _find_file(fname)
-        if path.exists():
-            try:
-                with open(path) as f:
-                    data = json.load(f)
-                if fname == BALANCE_FILE:
-                    usdt = data.get("usdt", "?")
-                    mode = data.get("mode", "testnet")
-                    log.info(f"  ✅ {label}: EXISTS — {usdt} USDT ({mode}) @ {path}")
-                else:
-                    size = len(data) if isinstance(data, (list, dict)) else "?"
-                    log.info(f"  ✅ {label}: EXISTS — {size} entries @ {path}")
-            except Exception as e:
-                log.warning(f"  ⚠️ {label}: EXISTS but unreadable — {e}")
-        else:
-            log.info(f"  ℹ️  {label}: not yet (run a scan to create it) — checked {path}")
-
     tok  = "SET ✅" if os.getenv("TELEGRAM_TOKEN")  else "MISSING ❌"
     repo = os.getenv("GITHUB_REPO", "NOT SET ❌")
     pat  = "SET ✅" if (os.getenv("GH_PAT_TOKEN") or os.getenv("GITHUB_TOKEN")) else "MISSING ❌"
+    deribit = "SET ✅" if os.getenv("DERIBIT_CLIENT_ID") else "MISSING ❌"
     log.info(f"  TELEGRAM: {tok}")
     log.info(f"  GITHUB_REPO: {repo}")
     log.info(f"  GH_PAT_TOKEN: {pat}")
+    log.info(f"  DERIBIT_API: {deribit}")
     log.info("=" * 50)
 
 _startup_check()
 
-try:
-    threading.Thread(target=telegram_listener, daemon=True).start()
-except Exception as e:
-    log.error(f"Telegram listener failed: {e}")
+try: threading.Thread(target=telegram_listener, daemon=True).start()
+except Exception as e: log.error(f"Telegram listener failed: {e}")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
