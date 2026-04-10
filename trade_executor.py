@@ -1,20 +1,11 @@
-# trade_executor.py — Deribit Testnet + Paper Trading
+# trade_executor.py — 100% Deribit Testnet Perpetuals
 # ══════════════════════════════════════════════════════════════════════
 # EXCHANGE: Deribit Testnet (test.deribit.com)
-# WHY: No IP whitelist = works from GitHub Actions with zero config
-# 
-# BTC/ETH signals  → Real Deribit testnet orders (live balance)
-# All other coins  → Paper trading (same logic, simulated fills)
-# Balance shown    → Deribit portfolio value in USD
+# MODE: Live Testnet Execution (No Paper Trading)
 #
-# SETUP:
-#   1. Register at https://test.deribit.com (free, no KYC)
-#   2. Deposit test funds (click Deposit → get fake BTC/ETH)
-#   3. Settings → API → Create key with trade:read_write scope
-#      Leave IP whitelist EMPTY
-#   4. Add to GitHub Secrets:
-#      DERIBIT_CLIENT_ID     = your client id
-#      DERIBIT_CLIENT_SECRET = your client secret
+# BTC/ETH signals  → BTC/ETH-PERPETUAL (Coin-Margined)
+# All other coins  → _USDC-PERPETUAL (Cross-Collateral)
+# Balance shown    → Total Deribit portfolio value in USD
 # ══════════════════════════════════════════════════════════════════════
 
 import os, json, time, logging, requests, joblib
@@ -34,8 +25,7 @@ from feature_engineering import add_indicators
 from smart_scheduler import (
     should_scan, get_mode_thresholds, check_correlation, get_effective_risk
 )
-from deribit_client import DeribitClient, TRADEABLE
-from paper_trader import PaperTrader, get_live_price
+from deribit_client import DeribitClient
 
 TRADES_FILE     = "trades.json"
 HISTORY_FILE    = "trade_history.json"
@@ -84,7 +74,7 @@ def save_signal(sig):
 # ════════════ EXCHANGE INIT ══════════════════════════════════════════
 
 def init_deribit() -> DeribitClient:
-    cid    = os.getenv("DERIBIT_CLIENT_ID",     "")
+    cid    = os.getenv("DERIBIT_CLIENT_ID",      "")
     secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
     if not cid or not secret:
         raise ValueError(
@@ -95,25 +85,14 @@ def init_deribit() -> DeribitClient:
     client = DeribitClient(cid, secret)
     return client
 
-def init_paper() -> PaperTrader:
-    return PaperTrader()
-
 
 # ════════════ BALANCE ════════════════════════════════════════════════
 
-def fetch_and_save_balance(deribit: DeribitClient, paper: PaperTrader) -> float:
-    """
-    Fetch Deribit portfolio value + paper trading balance.
-    Shows combined view on dashboard.
-    """
+def fetch_and_save_balance(deribit: DeribitClient) -> float:
+    """Fetch 100% Live Deribit portfolio value."""
     try:
-        # Real Deribit balance
         deribit_usd = deribit.get_usdt_equivalent()
         balances    = deribit.get_all_balances()
-
-        # Paper trading balance for alt coins
-        paper_bal  = load_json(BALANCE_FILE, {})
-        paper_usdt = float(paper_bal.get("usdt", 10000) if paper_bal.get("mode") == "paper_trading" else 10000)
 
         assets = []
         for currency, info in balances.items():
@@ -126,21 +105,18 @@ def fetch_and_save_balance(deribit: DeribitClient, paper: PaperTrader) -> float:
                     "source": "deribit_testnet",
                 })
 
-        # Total = Deribit portfolio + paper USDT for alt coins
-        total_usd = deribit_usd + paper_usdt
-
         save_json(BALANCE_FILE, {
-            "usdt":           round(deribit_usd, 2),   # Deribit portfolio
-            "equity":         round(total_usd, 2),     # combined
+            "usdt":           round(deribit_usd, 2),
+            "equity":         round(deribit_usd, 2),
             "deribit_usd":    round(deribit_usd, 2),
-            "paper_usdt":     round(paper_usdt, 2),
+            "paper_usdt":     0.0,
             "unrealised":     0.0,
             "assets":         assets,
             "updated_at":     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             "mode":           "deribit_testnet",
-            "note":           f"Deribit: ${deribit_usd:.0f} | Paper alts: ${paper_usdt:.0f}",
+            "note":           f"Deribit Portfolio: ${deribit_usd:.0f}",
         })
-        log.info(f"✓ Balance: Deribit ${deribit_usd:.2f} | Paper ${paper_usdt:.2f} | Total ${total_usd:.2f}")
+        log.info(f"✓ Balance: Deribit ${deribit_usd:.2f}")
         return round(deribit_usd, 2)
 
     except Exception as e:
@@ -171,7 +147,6 @@ def get_data(symbol, interval):
             last_err = e
     raise last_err
 
-
 def load_model():
     p = joblib.load(MODEL_FILE)
     for k in ["ensemble","selector","all_features","label_map"]:
@@ -182,8 +157,7 @@ def load_model():
 
 # ════════════ EXECUTE TRADE ══════════════════════════════════════════
 
-def execute_trade(deribit: DeribitClient, paper: PaperTrader,
-                  symbol, signal, entry, atr, confidence, score,
+def execute_trade(deribit: DeribitClient, symbol, signal, entry, atr, confidence, score,
                   reasons, risk_mult=1.0, deribit_balance=10000.0):
 
     trades = load_trades()
@@ -206,85 +180,53 @@ def execute_trade(deribit: DeribitClient, paper: PaperTrader,
         tp2     = round(entry - atr * ATR_TARGET2_MULT, dec)
         side    = "SELL"; sl_side = "BUY";  tp_side = "BUY"
 
-    # Decide exchange
-    use_deribit = deribit.is_supported(symbol)
-    exch_label  = "DERIBIT" if use_deribit else "PAPER"
-
-    log.info(f"  [{exch_label}] {signal} {symbol} | "
-             f"SL={stop:.{dec}f} TP1={tp1:.{dec}f} TP2={tp2:.{dec}f}")
+    log.info(f"  [DERIBIT] {signal} {symbol} | SL={stop:.{dec}f} TP1={tp1:.{dec}f} TP2={tp2:.{dec}f}")
 
     order_ids    = {}
     actual_entry = entry
-    risk_usd     = 0.0
+    
+    amount_usd    = deribit.calc_usd_amount(deribit_balance, entry, stop, risk_mult)
+    amount_tp1    = max(10.0, round(amount_usd * 0.5 / 10) * 10)
+    amount_tp2    = max(10.0, round(amount_usd * 0.5 / 10) * 10)
+    risk_usd      = round(deribit_balance * RISK_PER_TRADE * risk_mult, 2)
 
-    if use_deribit:
-        # ── Real Deribit order ─────────────────────────────────────────
-        amount_usd    = deribit.calc_usd_amount(deribit_balance, entry, stop, risk_mult)
-        amount_tp1    = max(10.0, round(amount_usd * 0.5 / 10) * 10)
-        amount_tp2    = max(10.0, round(amount_usd * 0.5 / 10) * 10)
-        risk_usd      = round(deribit_balance * RISK_PER_TRADE * risk_mult, 2)
+    try:
+        # Entry
+        eo = deribit.place_market_order(symbol, side, amount_usd)
+        if not eo: log.error(f"  Entry failed {symbol}"); return False
+        order_ids["entry"] = str(eo.get("order_id", ""))
+        actual_entry = float(eo.get("average_price", entry) or eo.get("price", entry) or entry)
+        if actual_entry == 0: actual_entry = entry
+        log.info(f"  ✅ Deribit entry @ ~${actual_entry:.2f}")
+        time.sleep(1.5)
 
+        # SL
         try:
-            # Entry
-            eo = deribit.place_market_order(symbol, side, amount_usd)
-            if not eo: log.error(f"  Entry failed {symbol}"); return False
-            order_ids["entry"] = str(eo.get("order_id", ""))
-            actual_entry = float(eo.get("average_price", entry) or
-                                  eo.get("price", entry) or entry)
-            if actual_entry == 0: actual_entry = entry
-            log.info(f"  ✅ Deribit entry @ ~${actual_entry:.2f}")
-            time.sleep(1.5)
+            sl_o = deribit.place_limit_order(symbol, sl_side, amount_usd, price=stop, stop_price=stop)
+            if sl_o: order_ids["stop_loss"] = str(sl_o.get("order_id",""))
+            log.info(f"  ✅ Deribit SL @ {stop:.2f}")
+        except Exception as e: log.warning(f"  SL failed: {e}")
 
-            # SL
-            try:
-                sl_o = deribit.place_limit_order(symbol, sl_side, amount_usd,
-                                                  price=stop, stop_price=stop)
-                if sl_o: order_ids["stop_loss"] = str(sl_o.get("order_id",""))
-                log.info(f"  ✅ Deribit SL @ {stop:.2f}")
-            except Exception as e: log.warning(f"  SL failed: {e}")
+        # TP1
+        try:
+            tp1_o = deribit.place_limit_order(symbol, tp_side, amount_tp1, price=tp1)
+            if tp1_o: order_ids["tp1"] = str(tp1_o.get("order_id",""))
+            log.info(f"  ✅ Deribit TP1 @ {tp1:.2f}")
+        except Exception as e: log.warning(f"  TP1 failed: {e}")
 
-            # TP1
-            try:
-                tp1_o = deribit.place_limit_order(symbol, tp_side, amount_tp1, price=tp1)
-                if tp1_o: order_ids["tp1"] = str(tp1_o.get("order_id",""))
-                log.info(f"  ✅ Deribit TP1 @ {tp1:.2f}")
-            except Exception as e: log.warning(f"  TP1 failed: {e}")
+        # TP2
+        try:
+            tp2_o = deribit.place_limit_order(symbol, tp_side, amount_tp2, price=tp2)
+            if tp2_o: order_ids["tp2"] = str(tp2_o.get("order_id",""))
+            log.info(f"  ✅ Deribit TP2 @ {tp2:.2f}")
+        except Exception as e: log.warning(f"  TP2 failed: {e}")
 
-            # TP2
-            try:
-                tp2_o = deribit.place_limit_order(symbol, tp_side, amount_tp2, price=tp2)
-                if tp2_o: order_ids["tp2"] = str(tp2_o.get("order_id",""))
-                log.info(f"  ✅ Deribit TP2 @ {tp2:.2f}")
-            except Exception as e: log.warning(f"  TP2 failed: {e}")
+    except Exception as e:
+        log.error(f"  Deribit trade error {symbol}: {e}")
+        _warn(f"⚠️ Deribit trade error {symbol}: {e}")
+        return False
 
-        except Exception as e:
-            log.error(f"  Deribit trade error {symbol}: {e}")
-            _warn(f"⚠️ Deribit trade error {symbol}: {e}")
-            return False
-
-    else:
-        # ── Paper trade for alt coins ─────────────────────────────────
-        paper_bal = paper.get_usdt_balance()
-        qty       = round((paper_bal * RISK_PER_TRADE * risk_mult) / abs(entry - stop), 6)
-        if qty <= 0: return False
-        qty_tp1   = round(qty * 0.5, 6)
-        qty_tp2   = round(qty - qty_tp1, 6)
-        risk_usd  = round(paper_bal * RISK_PER_TRADE * risk_mult, 2)
-
-        eo = paper.place_market_order(symbol, side, qty)
-        if not eo: return False
-        order_ids["entry"] = str(eo.get("orderId",""))
-        actual_entry = float(eo.get("paper_fill", entry) or entry)
-
-        sl_o  = paper.place_limit_order(symbol, sl_side, qty,    price=stop, stop_price=stop)
-        tp1_o = paper.place_limit_order(symbol, tp_side, qty_tp1, price=tp1)
-        tp2_o = paper.place_limit_order(symbol, tp_side, qty_tp2, price=tp2)
-        order_ids["stop_loss"] = str(sl_o.get("orderId",""))
-        order_ids["tp1"]       = str(tp1_o.get("orderId",""))
-        order_ids["tp2"]       = str(tp2_o.get("orderId",""))
-        log.info(f"  📝 Paper entry @ {actual_entry:.{dec}f} | qty={qty} | risk=${risk_usd:.2f}")
-
-    qty_for_record = amount_usd / entry if use_deribit else qty
+    qty_for_record = amount_usd / entry
 
     record = {
         "symbol":         symbol,
@@ -308,21 +250,21 @@ def execute_trade(deribit: DeribitClient, paper: PaperTrader,
         "score":          score,
         "reasons":        reasons,
         "tier":           get_tier(symbol),
-        "exchange":       exch_label.lower(),
+        "exchange":       "deribit",
     }
     trades[symbol] = record
     save_trades(trades)
     save_signal(record)
     _send_open_alert(symbol, signal, confidence, score, actual_entry,
                      stop, tp1, tp2, qty_for_record, risk_usd,
-                     deribit_balance, reasons, exch_label)
-    log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal} [{exch_label}]")
+                     deribit_balance, reasons)
+    log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal} [DERIBIT]")
     return True
 
 
 # ════════════ MONITOR ════════════════════════════════════════════════
 
-def check_open_trades(deribit: DeribitClient, paper: PaperTrader):
+def check_open_trades(deribit: DeribitClient):
     trades = load_trades()
     if not trades: log.info("  No open trades"); return
 
@@ -335,14 +277,10 @@ def check_open_trades(deribit: DeribitClient, paper: PaperTrader):
         oids     = trade.get("order_ids", {})
         entry    = float(trade["entry"])
         dec      = 4 if entry < 10 else 2
-        is_deribit = trade.get("exchange") == "deribit"
 
         def get_o(key):
             if key not in oids: return {}
-            if is_deribit:
-                return deribit.get_order(oids[key])
-            else:
-                return paper.get_order(symbol, oids[key])
+            return deribit.get_order(oids[key])
 
         def order_filled(o):
             status = o.get("order_state", o.get("status", ""))
@@ -357,12 +295,10 @@ def check_open_trades(deribit: DeribitClient, paper: PaperTrader):
                     avg = float(o.get("average_price", o.get("price", trade["tp1"])) or trade["tp1"])
                     pnl = _pnl(trade, avg, "tp1")
                     log.info(f"  🎯 TP1 {symbol} @ {avg:.{dec}f} | pnl={pnl:+.4f}")
-                    _send_close_alert(symbol, "TP1 HIT 🎯", pnl, entry, avg, trade["opened_at"],
-                                      "DERIBIT" if is_deribit else "PAPER")
-                    if not is_deribit: paper.update_balance_after_close(pnl)
+                    _send_close_alert(symbol, "TP1 HIT 🎯", pnl, entry, avg, trade["opened_at"])
 
-                    # Move SL to breakeven for Deribit trades
-                    if is_deribit and "stop_loss" in oids:
+                    # Move SL to breakeven
+                    if "stop_loss" in oids:
                         try:
                             deribit.cancel_order(oids["stop_loss"])
                             sl_side = "SELL" if trade["signal"] == "BUY" else "BUY"
@@ -385,10 +321,8 @@ def check_open_trades(deribit: DeribitClient, paper: PaperTrader):
                     avg = float(o.get("average_price", o.get("price", trade["tp2"])) or trade["tp2"])
                     pnl = _pnl(trade, avg, "tp2")
                     log.info(f"  ✅ TP2 {symbol} @ {avg:.{dec}f} | pnl={pnl:+.4f}")
-                    _send_close_alert(symbol, "✅ FULL WIN (TP2)", pnl, entry, avg, trade["opened_at"],
-                                      "DERIBIT" if is_deribit else "PAPER")
+                    _send_close_alert(symbol, "✅ FULL WIN (TP2)", pnl, entry, avg, trade["opened_at"])
                     _record_close(trade, avg, pnl, "TP2 hit")
-                    if not is_deribit: paper.update_balance_after_close(pnl)
                     to_remove.append(symbol)
 
             # SL
@@ -399,15 +333,11 @@ def check_open_trades(deribit: DeribitClient, paper: PaperTrader):
                     avg = float(o.get("average_price", o.get("price", trade["stop"])) or trade["stop"])
                     pnl = _pnl(trade, avg, "sl")
                     log.info(f"  ❌ SL {symbol} @ {avg:.{dec}f} | pnl={pnl:+.4f}")
-                    _send_close_alert(symbol, "❌ STOPPED OUT", pnl, entry, avg, trade["opened_at"],
-                                      "DERIBIT" if is_deribit else "PAPER")
+                    _send_close_alert(symbol, "❌ STOPPED OUT", pnl, entry, avg, trade["opened_at"])
                     _record_close(trade, avg, pnl, "SL hit")
-                    if not is_deribit: paper.update_balance_after_close(pnl)
                     for k in ("tp1","tp2"):
                         if k in oids and not trade.get(f"{k}_hit"):
-                            try:
-                                if is_deribit: deribit.cancel_order(oids[k])
-                                else: paper.cancel_order(symbol, oids[k])
+                            try: deribit.cancel_order(oids[k])
                             except: pass
                     to_remove.append(symbol)
 
@@ -419,7 +349,7 @@ def check_open_trades(deribit: DeribitClient, paper: PaperTrader):
     save_trades(trades)
 
 
-def clear_stuck_trades(deribit: DeribitClient, paper: PaperTrader):
+def clear_stuck_trades(deribit: DeribitClient):
     trades = load_trades()
     if not trades: return
 
@@ -428,18 +358,13 @@ def clear_stuck_trades(deribit: DeribitClient, paper: PaperTrader):
     for symbol in list(trades.keys()):
         trade    = trades[symbol]
         oids     = trade.get("order_ids", {})
-        is_deribit = trade.get("exchange") == "deribit"
         found    = False
 
         for key, oid in oids.items():
             if key == "entry": continue
             try:
-                if is_deribit:
-                    o = deribit.get_order(oid)
-                    if o.get("order_state") in ("open", "partially_filled"): found = True; break
-                else:
-                    o = paper.get_order(symbol, oid)
-                    if o.get("status") == "NEW": found = True; break
+                o = deribit.get_order(oid)
+                if o.get("order_state") in ("open", "partially_filled"): found = True; break
             except: pass
 
         if not found and oids:
@@ -576,26 +501,26 @@ def check_mode_switch(mode):
         save_json(MODE_FILE,{"mode":mode["mode"],"since":datetime.now(timezone.utc).isoformat()})
 
 def _send_open_alert(symbol, signal, confidence, score, entry,
-                     stop, tp1, tp2, qty, risk_usd, balance, reasons, exch):
+                     stop, tp1, tp2, qty, risk_usd, balance, reasons):
     emoji = "🟢" if signal=="BUY" else "🔴"; stars = "⭐"*min(score,5)
     dec   = 4 if entry<10 else 2; fp = lambda v: f"{v:.{dec}f}"
     rlines = "\n".join([f"  • {r}" for r in reasons])
     _send(
-        f"🤖 *TRADE — {exch}*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🤖 *TRADE — DERIBIT*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{emoji} *{signal} — {symbol}* {stars}\n_{get_tier(symbol)}_\n"
         f"🎯 {confidence:.1f}% conf · {score}/5 score\n\n"
         f"⚡ Entry: `{fp(entry)}`  🛑 SL: `{fp(stop)}`\n"
         f"🎯 TP1: `{fp(tp1)}`  TP2: `{fp(tp2)}`\n\n"
-        f"💰 Risk: `{risk_usd:.2f} USDT` | Balance: `{balance:.2f}`\n\n"
+        f"💰 Risk: `{risk_usd:.2f} USD` | Balance: `{balance:.2f}`\n\n"
         f"📊 Reasons:\n{rlines}\n\n━━━━━━━━━━━━━━━━━━━━"
     )
 
-def _send_close_alert(symbol, result, pnl, entry, close_price, opened_at, exch):
+def _send_close_alert(symbol, result, pnl, entry, close_price, opened_at):
     emoji = "✅" if pnl>0 else "❌"; dec = 4 if entry<10 else 2
     try: dur = str(datetime.now(timezone.utc)-datetime.fromisoformat(opened_at)).split(".")[0]
     except: dur = "—"
     _send(
-        f"🤖 *CLOSED — {exch}*\n{emoji} *{result} — {symbol}*\n\n"
+        f"🤖 *CLOSED — DERIBIT*\n{emoji} *{result} — {symbol}*\n\n"
         f"📥 `{entry:.{dec}f}` → 📤 `{close_price:.{dec}f}`\n"
         f"💵 *PnL: `{pnl:+.4f}`* | ⏱️ {dur}"
     )
@@ -609,17 +534,16 @@ def run_diagnostic():
     lines = [
         "🔍 *Bot Diagnostic — Deribit Testnet*",
         f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-        f"Exchange: Deribit Testnet (no IP whitelist) ✅",
+        f"Exchange: Deribit Testnet (100% Live) ✅",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"Mode: *{mode['label']}*  conf≥{mode['min_confidence']}%",
+        f"Mode: *{mode['label']}* conf≥{mode['min_confidence']}%",
         f"BTC ATR: *{vol['atr_pct']:.3f}%* ({vol['status']})",
     ]
     try:
-        deribit = init_deribit(); paper = init_paper()
-        bal = fetch_and_save_balance(deribit, paper)
+        deribit = init_deribit()
+        bal = fetch_and_save_balance(deribit)
         lines.append(f"💰 Deribit balance: *${bal:.2f} USD* ✅")
         lines.append(f"📂 Open trades: *{len(load_trades())}*")
-        lines.append(f"🔗 Tradeable on Deribit: {TRADEABLE}")
     except Exception as e: lines.append(f"❌ Deribit: {e}")
     try:
         p = load_model(); lines.append(f"🤖 Model: ✅ {len(p['all_features'])} features")
@@ -632,7 +556,7 @@ def run_diagnostic():
 def run_execution_scan():
     log.info(f"\n{'═'*56}")
     log.info(f"SCAN — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-    log.info(f"Exchange: Deribit Testnet (BTC/ETH) + Paper (alts)")
+    log.info(f"Exchange: 100% Deribit Testnet Perpetuals")
     log.info(f"{'═'*56}")
 
     run, mode, vol, reason = should_scan()
@@ -643,19 +567,17 @@ def run_execution_scan():
     vol_warn       = vol["message"] if vol.get("warn") else None
 
     deribit  = init_deribit()
-    paper    = init_paper()
     pipeline = load_model()
     thresholds = get_mode_thresholds(mode)
 
     log.info(f"\n[0] Fetching balance...")
-    deribit_bal = fetch_and_save_balance(deribit, paper)
-    log.info(f"    Deribit: ${deribit_bal:.2f}")
+    deribit_bal = fetch_and_save_balance(deribit)
 
     log.info(f"\n[1] Clearing stuck trades...")
-    clear_stuck_trades(deribit, paper)
+    clear_stuck_trades(deribit)
 
     log.info(f"\n[2] Monitoring open trades...")
-    check_open_trades(deribit, paper)
+    check_open_trades(deribit)
 
     trades = load_trades()
     log.info(f"\n[3] Scanning {len(SYMBOLS)} coins | Open:{len(trades)}/{MAX_OPEN_TRADES}")
@@ -667,8 +589,7 @@ def run_execution_scan():
         if len(load_trades()) >= MAX_OPEN_TRADES:
             log.info("  Max trades — stop"); break
 
-        exch = "DERIBIT" if deribit.is_supported(symbol) else "PAPER"
-        log.info(f"\n  ── {symbol} ({get_tier(symbol)}) [{exch}] ──")
+        log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
 
         sig = generate_signal(symbol, pipeline, thresholds)
         if sig is None: time.sleep(0.3); continue
@@ -676,7 +597,7 @@ def run_execution_scan():
         found += 1
         if vol_warn: sig["reasons"] = list(sig.get("reasons",[])) + [f"⚠️ {vol_warn}"]
 
-        execute_trade(deribit, paper,
+        execute_trade(deribit, 
                       symbol=sig["symbol"], signal=sig["signal"],
                       entry=sig["entry"],   atr=sig["atr"],
                       confidence=sig["confidence"], score=sig["score"],
@@ -684,10 +605,10 @@ def run_execution_scan():
                       deribit_balance=deribit_bal)
         time.sleep(1)
 
-    fetch_and_save_balance(deribit, paper)
+    fetch_and_save_balance(deribit)
 
     log.info(f"\n{'═'*56}")
-    log.info(f"DONE — {found} signal(s) | Deribit ${deribit_bal:.2f}")
+    log.info(f"DONE — {found} signal(s) | Portfolio: ${deribit_bal:.2f}")
     log.info(f"{'═'*56}\n")
 
 
@@ -696,6 +617,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "diagnostic":
         run_diagnostic()
     elif len(sys.argv) > 1 and sys.argv[1] == "clear_stuck":
-        clear_stuck_trades(init_deribit(), init_paper())
+        clear_stuck_trades(init_deribit())
     else:
         run_execution_scan()
