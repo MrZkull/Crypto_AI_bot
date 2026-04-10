@@ -64,17 +64,19 @@ class DeribitClient:
     def _get(self, path: str, params: dict = None) -> dict:
         self._ensure_auth()
         r = self.session.get(f"{self.base}{path}", params=params or {}, timeout=15)
+        try: data = r.json()
+        except Exception: data = {}
+        if "error" in data: raise Exception(f"Deribit API Error: {data['error']}")
         r.raise_for_status()
-        data = r.json()
-        if "error" in data: raise Exception(f"API error {path}: {data['error']}")
         return data.get("result", data)
 
     def _post(self, path: str, body: dict) -> dict:
         self._ensure_auth()
         r = self.session.post(f"{self.base}{path}", json=body, timeout=15)
+        try: data = r.json()
+        except Exception: data = {}
+        if "error" in data: raise Exception(f"Deribit API Error: {data['error']}")
         r.raise_for_status()
-        data = r.json()
-        if "error" in data: raise Exception(f"API error {path}: {data['error']}")
         return data.get("result", data)
 
     def is_supported(self, symbol: str) -> bool:
