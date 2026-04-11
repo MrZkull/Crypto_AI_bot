@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
+from deribit_client import DeribitClient, TRADEABLE
 
 load_dotenv(dotenv_path=".env", override=True)
 
