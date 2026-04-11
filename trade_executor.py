@@ -175,13 +175,22 @@ def check_open_trades(deribit: DeribitClient):
     save_trades(trades)
 
 def run_execution_scan():
-    log.info("Starting Execution Scan...")
-    run, mode, vol, reason = should_scan()
-    if not run: return
-    deribit = DeribitClient(os.getenv("DERIBIT_CLIENT_ID"), os.getenv("DERIBIT_CLIENT_SECRET"))
+    log.info(f"\n{'═'*56}\nSCAN — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n{'═'*56}")
+    
+    # 1. Start the bot and fetch balance NO MATTER WHAT
+    deribit = init_deribit()
+    pipeline = load_model()
     bal = fetch_and_save_balance(deribit)
+    
+    # 2. Check if we SHOULD skip based on volatility/mode
+    run, mode, vol, reason = should_scan()
+    if not run: 
+        log.info(f"  SKIPPED: {reason}")
+        # We don't 'return' here anymore if you want to see the coins!
+    
+    # 3. Always run the monitor and scan loop
     check_open_trades(deribit)
-    # ... Rest of symbols loop follows standard pattern ...
 
-if __name__ == "__main__":
-    run_execution_scan()
+    for symbol in SYMBOLS:
+        log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──") # This line was being skipped!
+        # ... rest of your loop ...
