@@ -1,4 +1,4 @@
-# deribit_client.py — FULL INTEGRATED VERSION
+# deribit_client.py — FINAL INTEGRATED VERSION
 import time, logging, requests, math
 log = logging.getLogger(__name__)
 
@@ -135,5 +135,17 @@ class DeribitClient:
     def is_order_filled(self, order: dict) -> bool:
         return order.get("order_state") == "filled"
 
+    def get_fill_price(self, order_result: dict, fallback: float) -> float:
+        trades = order_result.get("trades", [])
+        if trades:
+            prices = [float(t.get("price", 0)) for t in trades if t.get("price")]
+            if prices: return round(sum(prices) / len(prices), 2)
+        order = order_result.get("order", order_result)
+        avg = order.get("average_price") or order.get("price")
+        return float(avg) if avg and float(avg) > 0 else fallback
+
     def is_supported(self, symbol):
         return symbol in SYMBOL_MAP
+
+    def cancel_order(self, order_id: str) -> dict:
+        return self._post("/private/cancel", {"order_id": order_id})
