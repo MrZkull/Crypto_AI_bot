@@ -27,6 +27,7 @@ SYMBOL_MAP = {
     "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL","currency": "USDC", "kind": "linear",  "min_amount": 1},
 }
 TRADEABLE = list(SYMBOL_MAP.keys())
+TRADEABLE_SYMBOLS = TRADEABLE  # This alias prevents the ImportError forever!
 
 class DeribitClient:
     def __init__(self, client_id: str, client_secret: str):
