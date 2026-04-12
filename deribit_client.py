@@ -178,10 +178,17 @@ class DeribitClient:
         method = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
         body = {"instrument_name": inst, "amount": amount, "price": safe_price, "reduce_only": True}
+        
         if stop_price:
-            body.update({"type": "stop_limit", "stop_price": self.round_price(symbol, stop_price), "trigger": "last_price"})
+            # FIX: Changed "stop_price" back to "trigger_price" so Deribit accepts it!
+            body.update({
+                "type": "stop_limit", 
+                "trigger_price": self.round_price(symbol, stop_price), 
+                "trigger": "last_price"
+            })
         else:
             body["type"] = "limit"
+            
         return self._post(method, body)
 
     def get_order(self, order_id):
