@@ -1,4 +1,4 @@
-# deribit_client.py — FULL INTEGRATED VERSION (HTTP Error Fix)
+# deribit_client.py — FULL INTEGRATED VERSION (test_connection restored)
 import time, logging, requests, math
 log = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ SYMBOL_MAP = {
     "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 1},
     "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL","currency": "USDC", "kind": "linear",  "min_amount": 1},
 }
-TRADEABLE_SYMBOLS = list(SYMBOL_MAP.keys())
+TRADEABLE = list(SYMBOL_MAP.keys())
 
 class DeribitClient:
     def __init__(self, client_id: str, client_secret: str):
@@ -157,3 +157,13 @@ class DeribitClient:
 
     def cancel_order(self, order_id: str) -> dict:
         return self._post("/private/cancel", {"order_id": order_id})
+
+    # RESTORED: Validates the connection and prints the balance on startup
+    def test_connection(self) -> bool:
+        try:
+            total = self.get_total_equity_usd()
+            log.info(f"✅ Deribit Testnet — ${total:.2f} USD | {len(TRADEABLE)} symbols")
+            return True
+        except Exception as e:
+            log.error(f"✗ Deribit FAILED: {e}")
+            raise
