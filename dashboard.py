@@ -1,4 +1,4 @@
-# dashboard_api.py — Fixed: Scan Now works, balance reads Deribit correctly
+# dashboard.py — Live Deribit Fetching + GitHub Sync
 import os, json, subprocess, requests, base64, logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +42,25 @@ def load_log(lines=200):
         except Exception:
             pass
     return []
+
+def fetch_live_github_data(filename):
+    """Bypasses Render's stale disk and fetches the latest file directly from GitHub Actions storage"""
+    repo = os.getenv("GITHUB_REPO")
+    token = os.getenv("GH_PAT_TOKEN") or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    if not repo or not token: 
+        return {}
+    
+    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3.raw"}
+    try:
+        # Try the data/ folder first
+        r = requests.get(f"https://api.github.com/repos/{repo}/contents/data/{filename}", headers=headers, timeout=5)
+        if r.status_code == 200: return r.json()
+        # Fallback to root folder
+        r2 = requests.get(f"https://api.github.com/repos/{repo}/contents/{filename}", headers=headers, timeout=5)
+        if r2.status_code == 200: return r2.json()
+    except Exception as e:
+        log.warning(f"GitHub fetch failed for {filename}: {e}")
+    return {}
 
 
 # ── GitHub sync (restore state files from repo) ───────────────────────
@@ -123,7 +142,7 @@ def api_status():
 
     return jsonify({
         "win_rate":     win_rate,
-        "total_pnl":   round(total_pnl, 4),
+        "total_pnl":    round(total_pnl, 4),
         "wins":         len(wins),
         "losses":       len(real_hist) - len(wins),
         "total_trades": len(real_hist),
@@ -143,69 +162,106 @@ def api_status():
 
 @app.route("/api/balance")
 def api_balance():
-    """Returns real Deribit balance from balance.json."""
+    """Fetches LIVE balance directly from Deribit Testnet!"""
+    try:
+        client_id = os.getenv("DERIBIT_CLIENT_ID", "")
+        client_secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
+        if client_id and client_secret:
+            from deribit_client import DeribitClient
+            client = DeribitClient(client_id, client_secret)
+            all_bals = client.get_all_balances()
+            
+            # Grab the USDC balance for the headline number
+            usdc_info = all_bals.get("USDC", {})
+            main_val = float(usdc_info.get("equity_usd", 0))
+            
+            assets_list = []
+            for cur, info in all_bals.items():
+                assets_list.append({
+                    "asset": cur, 
+                    "free": str(info.get("available", 0)), 
+                    "total": str(info.get("equity_usd", 0))
+                })
+            
+            return jsonify({
+                "ok":          True,
+                "usdt":        round(main_val, 2),
+                "equity":      round(main_val, 2),
+                "assets":      assets_list,
+                "updated_at":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "mode":        "deribit_testnet",
+                "exchange":    "Deribit(by Coinbase) Testnet"
+            })
+    except Exception as e:
+        log.warning(f"Live balance failed: {e}")
+
+    # Fallback to local file if API fails
     bal = load_json("balance.json", {})
-    return jsonify(bal)
+    return jsonify({"ok": True, "usdt": bal.get("usdt", 0), "assets": bal.get("assets", [])})
 
 
 @app.route("/api/trades/open")
 def api_open_trades():
-    trades  = load_json("trades.json", {})
-    balance = load_json("balance.json", {})
-    result  = []
+    """Fetches LIVE positions from Deribit and stitches AI targets (SL/TP/Conf) from GitHub API"""
+    try:
+        # Fetch the real AI data (Confidence, Score, SL, TP) from GitHub to fix $0.00 issue
+        local_trades = fetch_live_github_data("trades.json")
+        
+        client_id = os.getenv("DERIBIT_CLIENT_ID", "")
+        client_secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
+        if client_id and client_secret:
+            from deribit_client import DeribitClient
+            client = DeribitClient(client_id, client_secret)
+            positions = client.get_positions()
 
-    for symbol, t in trades.items():
-        if t.get("closed"):
-            continue
-        entry = float(t.get("entry", 0) or 0)
-        stop  = float(t.get("stop",  0) or 0)
-        tp1   = float(t.get("tp1",   0) or 0)
-        tp2   = float(t.get("tp2",   0) or 0)
+            formatted_trades = []
+            for p in positions:
+                inst = p.get("instrument_name", "")
+                base_coin = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+                symbol = f"{base_coin}USDT"
 
-        # Try to get live price from Binance public API
-        live_price = 0.0
-        try:
-            r = requests.get(
-                "https://data-api.binance.vision/api/v3/ticker/price",
-                params={"symbol": symbol}, timeout=5
-            )
-            if r.ok:
-                live_price = float(r.json().get("price", 0))
-        except Exception:
-            pass
+                qty = float(p.get("size", 0))
+                if qty == 0: continue
 
-        # Calculate unrealised PnL
-        upnl = 0.0
-        if live_price > 0 and entry > 0:
-            qty = float(t.get("qty", 0) or 0)
-            if t.get("signal") == "BUY":
-                upnl = (live_price - entry) * qty
-            else:
-                upnl = (entry - live_price) * qty
+                entry = float(p.get("average_price", 0))
+                live = float(p.get("mark_price", 0))
+                signal = "BUY" if qty > 0 else "SELL"
 
-        # Progress bar (0–100%) from entry to TP2
-        progress = 0
-        if entry > 0 and tp2 > 0 and live_price > 0:
-            total_dist = abs(tp2 - entry)
-            moved_dist = abs(live_price - entry)
-            if total_dist > 0:
-                progress = min(100, max(0, (moved_dist / total_dist) * 100))
+                # Correct percentage math (reverses for SELL positions)
+                if entry > 0:
+                    pct = (live - entry) / entry * 100 if signal == "BUY" else (entry - live) / entry * 100
+                else:
+                    pct = 0.0
 
-        result.append({
-            **t,
-            "symbol":      symbol,
-            "live_price":  round(live_price, 4),
-            "unrealised":  round(upnl, 4),
-            "progress":    round(progress, 1),
-            "entry":       entry,
-            "stop":        stop,
-            "tp1":         tp1,
-            "tp2":         tp2,
-            "confidence":  t.get("confidence", 0),
-            "score":       t.get("score", 0),
-        })
+                # Correct USD PNL math (Handles missing floating_profit_loss_usd on Testnet)
+                upnl = float(p.get("floating_profit_loss_usd") or 0)
+                if upnl == 0:
+                    base_pnl = float(p.get("floating_profit_loss") or 0)
+                    upnl = base_pnl * live if "USDC" not in inst else base_pnl
 
-    return jsonify(result)
+                # Pull the AI stats and targets from the GitHub data we just fetched
+                t_info = local_trades.get(symbol, {})
+
+                formatted_trades.append({
+                    "symbol": symbol,
+                    "signal": signal,
+                    "entry": entry,
+                    "qty": abs(qty),
+                    "live_price": live,
+                    "unrealised_pnl": round(upnl, 4),
+                    "pnl_pct": round(pct, 2),
+                    "stop": t_info.get("stop", 0),
+                    "tp1":  t_info.get("tp1", 0),
+                    "tp2":  t_info.get("tp2", 0),
+                    "confidence": t_info.get("confidence", 0),
+                    "score": t_info.get("score", 0),
+                    "status": "Live on Deribit",
+                    "progress": 50
+                })
+            return jsonify(formatted_trades)
+    except Exception as e:
+        log.error(f"Live trades fetch failed: {e}")
+    return jsonify([])
 
 
 @app.route("/api/trades/history")
