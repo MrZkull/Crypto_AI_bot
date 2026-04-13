@@ -138,7 +138,7 @@ def static_files(path):
 @app.route("/api/status")
 def api_status():
     history    = load_json("trade_history.json", [])
-    trades     = load_json("trades.json", {})
+    trades = fetch_live_github_data("trades.json")
     signals    = load_json("signals.json", [])
     scan_mode  = load_json("scan_mode.json", {})
     balance    = load_json("balance.json", {})
