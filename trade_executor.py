@@ -547,13 +547,22 @@ def run_execution_scan():
     log.info(f"    Tradeable: {TRADEABLE_SYMBOLS}")
 
     found = 0
+    found = 0
     for symbol in SYMBOLS:
-        if len(load_trades()) >= MAX_OPEN_TRADES: log.info("  🛑 Max trades — stop"); break
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
+        
+        # 1. Let the AI scan and log its thoughts for every coin
         sig = generate_signal(symbol, pipeline, thresholds)
         if sig is None: time.sleep(0.3); continue
+        
         found += 1
         if vol_warn: sig["reasons"] = list(sig.get("reasons",[])) + [f"⚠️ {vol_warn}"]
+        
+        # 2. BUT, check if our pockets are full BEFORE we actually execute the trade
+        if len(load_trades()) >= MAX_OPEN_TRADES: 
+            log.info("  🛑 Perfect setup found, but Max Trades reached! Skipping execution.")
+            continue
+            
         execute_trade(deribit, symbol=sig["symbol"], signal=sig["signal"],
                       entry=sig["entry"], atr=sig["atr"],
                       confidence=sig["confidence"], score=sig["score"],
