@@ -1,21 +1,4 @@
-# trade_executor.py — bad_request fix + integer contracts + all previous fixes
-#
-# FIX FOR bad_request CODE 11050:
-#   Uses deribit.calc_contracts() → always returns int
-#   Uses deribit.split_amount() → both tp1/tp2 are ints
-#   Uses deribit.to_int_amount() on any manual amount calculation
-#
-# ORDER ID EXTRACTION:
-#   place_market_order() and place_limit_order() return full result dict
-#   Order ID is in result["order"]["order_id"] — extracted here correctly
-#
-# ALL PREVIOUS FIXES RETAINED:
-#   clean_invalid_trades() removes stuck/broken state on startup
-#   is_order_filled() uses order_state == "filled"
-#   get_fill_price() reads trades[] array
-#   Trailing stop after TP1 hit
-#   save_signal() called after all orders placed with real values
-
+# trade_executor.py — bad_request fix + decimal contracts + all previous fixes
 import os, json, time, logging, requests, joblib
 import pandas as pd
 from datetime import datetime, timezone
@@ -147,12 +130,10 @@ def clean_invalid_trades(deribit: DeribitClient):
 
     to_remove = []
     for symbol, trade in trades.items():
-        # Remove trades with zero stop or tp (broken old state)
         if float(trade.get("stop", 0)) == 0 or float(trade.get("tp1", 0)) == 0:
             log.warning(f"  🗑️ {symbol}: stop=0 or tp1=0 — removing broken state")
             to_remove.append(symbol); continue
 
-        # Check if live orders still exist on Deribit
         oids  = trade.get("order_ids", {})
         live  = False
         for key, oid in oids.items():
@@ -195,7 +176,6 @@ def execute_trade(deribit: DeribitClient, symbol, signal, entry, atr,
         stop = round(entry + atr*ATR_STOP_MULT, dec); tp1 = round(entry - atr*ATR_TARGET1_MULT, dec); tp2 = round(entry - atr*ATR_TARGET2_MULT, dec)
         side = "SELL"; sl_side = "BUY"; tp_side = "BUY"
 
-    # FIXED: calc_contracts returns int, split_amount returns (int, int)
     total_contracts          = deribit.calc_contracts(symbol, balance, entry, stop, risk_mult)
     amount_tp1, amount_tp2   = deribit.split_amount(symbol, total_contracts)
     risk_usd                 = round(balance * RISK_PER_TRADE * risk_mult, 2)
@@ -203,9 +183,7 @@ def execute_trade(deribit: DeribitClient, symbol, signal, entry, atr,
     log.info(f"  {signal} {symbol} | total={total_contracts} tp1={amount_tp1} tp2={amount_tp2}")
     log.info(f"  SL={stop:.{dec}f} TP1={tp1:.{dec}f} TP2={tp2:.{dec}f}")
 
-    # Verify all amounts are integers before sending
-    assert isinstance(total_contracts, int), f"total_contracts must be int, got {type(total_contracts)}"
-    assert isinstance(amount_tp1, int),      f"amount_tp1 must be int, got {type(amount_tp1)}"
+    # (Strict int assertions removed to allow Linear Perps to trade decimal amounts)
 
     order_ids    = {}
     actual_entry = entry
@@ -215,7 +193,6 @@ def execute_trade(deribit: DeribitClient, symbol, signal, entry, atr,
         entry_result = deribit.place_market_order(symbol, side, total_contracts)
         if not entry_result: log.error("  Entry empty"); return False
 
-        # Extract order_id from result["order"] (not from result directly)
         entry_order        = entry_result.get("order", entry_result)
         order_ids["entry"] = str(entry_order.get("order_id", ""))
         actual_entry       = deribit.get_fill_price(entry_result, entry)
