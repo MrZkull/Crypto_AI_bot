@@ -18,23 +18,24 @@ TESTNET_BASE = "https://test.deribit.com/api/v2"
 
 # All USDC Linear Perpetuals — confirmed available on Deribit testnet
 # BTC/ETH use inverse (BTC/ETH margined) — keep for signal variety
+# All USDC Linear Perpetuals — Unified USDC margin!
 SYMBOL_MAP = {
-    "BTCUSDT":    {"instrument": "BTC-PERPETUAL",       "currency": "BTC",  "kind": "inverse", "min_amount": 10,  "tick_size": 0.5},
-    "ETHUSDT":    {"instrument": "ETH-PERPETUAL",       "currency": "ETH",  "kind": "inverse", "min_amount": 1,   "tick_size": 0.05},
-    "SOLUSDT":    {"instrument": "SOL_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.001},
-    "XRPUSDT":    {"instrument": "XRP_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.0001},
-    "BNBUSDT":    {"instrument": "BNB_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.1, "tick_size": 0.01},
-    "AVAXUSDT":   {"instrument": "AVAX_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.001},
-    "LINKUSDT":   {"instrument": "LINK_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.001},
-    "NEARUSDT":   {"instrument": "NEAR_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.0001},
-    "DOTUSDT":    {"instrument": "DOT_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.001},
-    "UNIUSDT":    {"instrument": "UNI_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.001},
-    "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.0001},
-    "AAVEUSDT":   {"instrument": "AAVE_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 0.1, "tick_size": 0.01},
-    "INJUSDT":    {"instrument": "INJ_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.001},
-    "ARBUSDT":    {"instrument": "ARB_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.0001},
-    "SUIUSDT":    {"instrument": "SUI_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.0001},
-    "OPUSDT":     {"instrument": "OP_USDC-PERPETUAL",   "currency": "USDC", "kind": "linear",  "min_amount": 1,   "tick_size": 0.0001},
+    "BTCUSDT":    {"instrument": "BTC_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.001, "tick_size": 0.1},
+    "ETHUSDT":    {"instrument": "ETH_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.01,  "tick_size": 0.01},
+    "SOLUSDT":    {"instrument": "SOL_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.001},
+    "XRPUSDT":    {"instrument": "XRP_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.0001},
+    "BNBUSDT":    {"instrument": "BNB_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.1,   "tick_size": 0.01},
+    "AVAXUSDT":   {"instrument": "AVAX_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.001},
+    "LINKUSDT":   {"instrument": "LINK_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.001},
+    "NEARUSDT":   {"instrument": "NEAR_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.0001},
+    "DOTUSDT":    {"instrument": "DOT_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.001},
+    "UNIUSDT":    {"instrument": "UNI_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.001},
+    "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.0001},
+    "AAVEUSDT":   {"instrument": "AAVE_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 0.1,   "tick_size": 0.01},
+    "INJUSDT":    {"instrument": "INJ_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.001},
+    "ARBUSDT":    {"instrument": "ARB_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.0001},
+    "SUIUSDT":    {"instrument": "SUI_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.0001},
+    "OPUSDT":     {"instrument": "OP_USDC-PERPETUAL",   "currency": "USDC", "kind": "linear",  "min_amount": 1,     "tick_size": 0.0001},
 }
 
 TRADEABLE_SYMBOLS = list(SYMBOL_MAP.keys())
