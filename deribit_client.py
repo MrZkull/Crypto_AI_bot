@@ -1,17 +1,9 @@
 # deribit_client.py — Master Production Version
-#
-# CONSOLIDATED FIXES:
-#   1. JSON-RPC Envelope: _post() sends exact JSON-RPC 2.0 format to prevent 11050 bad_request.
-#   2. Bulk Fetch: _verify_instruments() pulls the master list to prevent BNB rate-limiting.
-#   3. ZeroDivision Prevention: to_int_amount and split_amount handle missing min_amt data safely.
-#   4. Linear Perps: SYMBOL_MAP unified to USDC-PERPETUAL for all 20 assets.
-
 import math, time, logging, requests
 log = logging.getLogger(__name__)
 
 TESTNET_BASE = "https://test.deribit.com/api/v2"
 
-# All 20 monitored coins routed to Linear USDC Perpetuals
 SYMBOL_MAP = {
     "BTCUSDT":    {"instrument": "BTC_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.001, "tick_size": 0.1},
     "ETHUSDT":    {"instrument": "ETH_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.01,  "tick_size": 0.01},
