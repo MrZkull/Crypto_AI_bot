@@ -86,20 +86,34 @@ class DeribitClient:
     def _get(self, path: str, params: dict = None) -> dict:
         self._ensure_auth()
         r = self.session.get(f"{self.base}{path}", params=params or {}, timeout=15)
-        r.raise_for_status()
-        data = r.json()
+        
+        # 🟢 FIX: Read JSON first so we don't hide the real API error messages!
+        try:
+            data = r.json()
+        except Exception:
+            r.raise_for_status()
+            return {}
+            
         if "error" in data:
-            raise Exception(f"Deribit error GET {path}: {data['error']}")
+            err = data["error"]
+            raise Exception(f"GET {path}: {err.get('message', err)} (Code: {err.get('code', 'Unknown')})")
         return data.get("result", data)
 
     def _post(self, path: str, body: dict) -> dict:
-        # CONFIRMED FIX: real HTTP POST, never _get()
         self._ensure_auth()
+        # 🟢 FIX: Revert to standard REST body. Linear contracts don't need JSON-RPC wrappers.
         r = self.session.post(f"{self.base}{path}", json=body, timeout=15)
-        r.raise_for_status()
-        data = r.json()
+        
+        # 🟢 FIX: Read JSON first so we don't hide the 400 Bad Request details!
+        try:
+            data = r.json()
+        except Exception:
+            r.raise_for_status()
+            return {}
+            
         if "error" in data:
-            raise Exception(f"Deribit error POST {path}: {data['error']}")
+            err = data["error"]
+            raise Exception(f"{err.get('message', err)} (Code: {err.get('code', 'Unknown')})")
         return data.get("result", data)
 
     # ── Instrument verification ───────────────────────────────────────
