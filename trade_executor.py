@@ -1,4 +1,4 @@
-# trade_executor.py — bad_request fix + decimal contracts + all previous fixes
+# trade_executor.py — IOC Partial Fill Math + all previous fixes
 import os, json, time, logging, requests, joblib
 import pandas as pd
 from datetime import datetime, timezone
@@ -180,10 +180,8 @@ def execute_trade(deribit: DeribitClient, symbol, signal, entry, atr,
     amount_tp1, amount_tp2   = deribit.split_amount(symbol, total_contracts)
     risk_usd                 = round(balance * RISK_PER_TRADE * risk_mult, 2)
 
-    log.info(f"  {signal} {symbol} | total={total_contracts} tp1={amount_tp1} tp2={amount_tp2}")
+    log.info(f"  {signal} {symbol} | target_total={total_contracts} tp1={amount_tp1} tp2={amount_tp2}")
     log.info(f"  SL={stop:.{dec}f} TP1={tp1:.{dec}f} TP2={tp2:.{dec}f}")
-
-    # (Strict int assertions removed to allow Linear Perps to trade decimal amounts)
 
     order_ids    = {}
     actual_entry = entry
@@ -193,7 +191,20 @@ def execute_trade(deribit: DeribitClient, symbol, signal, entry, atr,
         entry_result = deribit.place_market_order(symbol, side, total_contracts)
         if not entry_result: log.error("  Entry empty"); return False
 
-        entry_order        = entry_result.get("order", entry_result)
+        entry_order = entry_result.get("order", entry_result)
+        
+        # 🟢 CRITICAL FIX: Read exactly how much filled from the IOC order
+        filled_qty = float(entry_order.get("filled_amount") or 0)
+        if filled_qty <= 0:
+            log.warning(f"  ⚠️ Testnet orderbook empty. Market order cancelled via IOC.")
+            return False
+            
+        # If it partially filled due to thin liquidity, dynamically adjust our target sizes!
+        if filled_qty < total_contracts:
+            log.info(f"  ⚠️ Partial fill on Testnet: {filled_qty} / {total_contracts} contracts.")
+            total_contracts = deribit.to_int_amount(symbol, filled_qty)
+            amount_tp1, amount_tp2 = deribit.split_amount(symbol, total_contracts)
+
         order_ids["entry"] = str(entry_order.get("order_id", ""))
         actual_entry       = deribit.get_fill_price(entry_result, entry)
         if actual_entry == 0: actual_entry = entry
