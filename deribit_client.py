@@ -50,7 +50,10 @@ class DeribitClient:
         r = self.session.post(f"{self.base}{path}", json=payload, timeout=15)
         data = r.json()
         if "error" in data:
-            raise Exception(f"Deribit Error: {data['error'].get('message')} (Code: {data['error'].get('code')})")
+            # 🟢 NEW: Detailed error extraction for better debugging
+            err = data["error"]
+            msg = err.get("message", "Unknown error")
+            raise Exception(f"Deribit Error: {msg} (Code: {err.get('code')})")
         return data.get("result", data)
 
     def _get(self, path, params=None):
@@ -65,7 +68,7 @@ class DeribitClient:
             if info["instrument"] in active:
                 self._instrument_cache[info["instrument"]] = active[info["instrument"]]
                 self._supported_symbols.add(sym)
-        log.info(f"✓ Tradeable: {list(self._supported_symbols)}")
+        log.info(f"✓ Tradeable symbols verified: {list(self._supported_symbols)}")
 
     def round_amount(self, symbol, raw):
         """🟢 CLEAN-ROOM PRECISION: Strips float noise using string formatting"""
@@ -87,26 +90,42 @@ class DeribitClient:
     def get_tradeable(self): return list(self._supported_symbols)
     def is_supported(self, symbol): return symbol in self._supported_symbols
     def get_instrument_name(self, symbol): return SYMBOL_MAP[symbol]["instrument"]
+    
     def calc_contracts(self, symbol, balance_usd, entry, stop, risk_mult=1.0):
+        # Default risk is 1% of balance
         raw = (balance_usd * 0.01 * risk_mult) / abs(entry - stop)
         return self.round_amount(symbol, min(raw, (balance_usd * 0.2) / entry))
 
     def split_amount(self, symbol, total):
-        q1 = self.round_amount(symbol, total / 2); return q1, self.round_amount(symbol, total - q1)
+        q1 = self.round_amount(symbol, total / 2)
+        return q1, self.round_amount(symbol, total - q1)
 
     def get_total_equity_usd(self):
         s = self._get("/private/get_account_summary", {"currency": "USDC", "extended": "true"})
         return float(s.get("equity", 0))
 
-    def get_positions(self): return [p for p in self._get("/private/get_positions", {"currency": "USDC", "kind": "future"}) if float(p.get("size", 0)) != 0]
+    def get_positions(self): 
+        return [p for p in self._get("/private/get_positions", {"currency": "USDC", "kind": "future"}) if float(p.get("size", 0)) != 0]
 
     def place_market_order(self, symbol, side, amount):
-        return self._post(f"/private/{side.lower()}", {"instrument_name": self.get_instrument_name(symbol), "amount": self.round_amount(symbol, amount), "type": "market", "time_in_force": "immediate_or_cancel"})
+        return self._post(f"/private/{side.lower()}", {
+            "instrument_name": self.get_instrument_name(symbol), 
+            "amount": self.round_amount(symbol, amount), 
+            "type": "market", 
+            "time_in_force": "immediate_or_cancel"
+        })
 
     def place_limit_order(self, symbol, side, amount, price, stop_price=None):
-        params = {"instrument_name": self.get_instrument_name(symbol), "amount": self.round_amount(symbol, amount), "price": self.round_price(symbol, price), "reduce_only": True}
-        if stop_price: params.update({"type": "stop_limit", "trigger_price": self.round_price(symbol, stop_price), "trigger": "last_price"})
-        else: params["type"] = "limit"
+        params = {
+            "instrument_name": self.get_instrument_name(symbol), 
+            "amount": self.round_amount(symbol, amount), 
+            "price": self.round_price(symbol, price), 
+            "reduce_only": True
+        }
+        if stop_price: 
+            params.update({"type": "stop_limit", "trigger_price": self.round_price(symbol, stop_price), "trigger": "last_price"})
+        else: 
+            params["type"] = "limit"
         return self._post(f"/private/{side.lower()}", params)
 
     def get_order(self, oid):
