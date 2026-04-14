@@ -98,8 +98,13 @@ class DeribitClient:
         return round(round(price / t) * t, 8)
 
     def round_amount(self, symbol, raw):
-        s = self.get_min_trade_amount(symbol)
-        return round(max(s, math.floor(raw / s) * s), 4)
+        """Dynamic rounding based on instrument tick size to stop -32602 errors"""
+        step = self.get_min_trade_amount(symbol)
+        # Calculate decimals needed based on the min_trade_amount (e.g., 0.0001 -> 4)
+        precision = abs(int(math.log10(step))) if step < 1 else 0
+        
+        res = max(step, math.floor(raw / step) * step)
+        return round(res, precision)
 
     def calc_contracts(self, symbol, balance_usd, entry, stop, risk_mult=1.0):
         risk_usd = balance_usd * 0.01 * risk_mult
@@ -122,8 +127,17 @@ class DeribitClient:
     def get_positions(self): return [p for p in self._get("/private/get_positions", {"currency": "USDC", "kind": "future"}) if float(p.get("size", 0)) != 0]
 
     def place_market_order(self, symbol, side, amount):
-        return self._post(f"/private/{side.lower()}", {"instrument_name": self.get_instrument_name(symbol), "amount": amount, "type": "market", "time_in_force": "immediate_or_cancel"})
-
+        """Ensures amount is exactly the type Deribit expects"""
+        # 🟢 THE FIX: Re-round right before sending to strip any hidden float noise
+        safe_amount = self.round_amount(symbol, amount)
+        
+        return self._post(f"/private/{side.lower()}", {
+            "instrument_name": self.get_instrument_name(symbol),
+            "amount": float(safe_amount), # Deribit USDC perps prefer explicit floats
+            "type": "market", 
+            "time_in_force": "immediate_or_cancel"
+        })
+        
     def place_limit_order(self, symbol, side, amount, price, stop_price=None):
         p = {"instrument_name": self.get_instrument_name(symbol), "amount": amount, "price": self.round_price(symbol, price), "reduce_only": True}
         if stop_price: p.update({"type": "stop_limit", "trigger_price": self.round_price(symbol, stop_price), "trigger": "last_price"})
