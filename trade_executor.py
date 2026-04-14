@@ -1,4 +1,18 @@
-# trade_executor.py — IOC Partial Fill Math + all previous fixes
+# trade_executor.py — margin-aware + import binding fix + all previous fixes
+#
+# FIX: TRADEABLE_SYMBOLS import binding
+#   'from deribit_client import TRADEABLE_SYMBOLS' captures [] at module load time.
+#   _verify_instruments() runs AFTER import, populates the module variable,
+#   but the local binding in trade_executor still points to the old empty list.
+#   Fix: use deribit.get_tradeable() instead — reads from instance at runtime.
+#
+# ALL OTHER FIXES FROM DOC 60 RETAINED:
+#   IOC partial fill detection
+#   Ghost trade killer (position-reconciliation)
+#   Scan-all-then-check-slots logic
+#   Integer amounts for inverse, float for linear
+#   Breakeven + trailing stop logic
+
 import os, json, time, logging, requests, joblib
 import pandas as pd
 from datetime import datetime, timezone
@@ -14,7 +28,9 @@ from config import (
 )
 from feature_engineering import add_indicators
 from smart_scheduler import should_scan, get_mode_thresholds, check_correlation, get_effective_risk
-from deribit_client import DeribitClient, TRADEABLE_SYMBOLS
+from deribit_client import DeribitClient
+# NOTE: Do NOT import TRADEABLE_SYMBOLS here — use deribit.get_tradeable() instead
+# 'from deribit_client import TRADEABLE_SYMBOLS' captures [] before _verify_instruments() runs
 
 TRADES_FILE     = "trades.json"
 HISTORY_FILE    = "trade_history.json"
@@ -96,8 +112,9 @@ def save_balance_json(deribit: DeribitClient) -> float:
             "updated_at":     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             "mode":           "deribit_testnet",
             "exchange":       "Deribit(by Coinbase) Testnet",
-            "tradeable":      TRADEABLE_SYMBOLS,
+            "tradeable":      deribit.get_tradeable(),   # FIX: runtime list not import binding
             "open_positions": len(positions),
+            "usdc_margin":    deribit.has_usdc_margin(),
         })
         log.info(f"  ✅ Balance: ${total_usd:.2f} | unrealised: {upnl:+.2f} | positions: {len(positions)}")
         return total_usd
@@ -124,29 +141,26 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
 # ════════════ STUCK TRADE CLEANER ════════════════════════════════════
 
 def clean_invalid_trades(deribit: DeribitClient):
-    """Remove broken trades or ghost trades with no actual Deribit position."""
+    """Ghost killer: remove trades where Deribit shows 0 position."""
     trades = load_trades()
     if not trades: return
 
-    # Get physical live positions straight from the exchange
+    # Map live positions by base symbol (e.g. BTC → BTCUSDT)
     live_positions = {}
     for p in deribit.get_positions():
         if float(p.get("size", 0)) != 0:
             inst = p.get("instrument_name", "")
             base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-            live_positions[f"{base}USDT"] = float(p.get("size"))
+            live_positions[f"{base}USDT"] = float(p.get("size", 0))
 
     to_remove = []
     for symbol, trade in trades.items():
-        # 1. Clear old broken state trades
         if float(trade.get("stop", 0)) == 0 or float(trade.get("tp1", 0)) == 0:
             log.warning(f"  🗑️ {symbol}: stop=0 or tp1=0 — removing broken state")
             to_remove.append(symbol); continue
-
-        # 2. 🟢 THE GHOST KILLER: If bot memory has it, but Deribit doesn't... kill it.
         if symbol not in live_positions:
-            log.warning(f"  🗑️ {symbol}: 0 position on Deribit — clearing ghost trade!")
-            _record_close(trade, float(trade.get("entry", 0)), 0.0, "Ghost Trade — auto-removed")
+            log.warning(f"  🗑️ {symbol}: no live position on Deribit — clearing ghost")
+            _record_close(trade, float(trade.get("entry", 0)), 0.0, "Ghost — auto-removed")
             to_remove.append(symbol)
 
     if to_remove:
@@ -176,11 +190,11 @@ def execute_trade(deribit: DeribitClient, symbol, signal, entry, atr,
         stop = round(entry + atr*ATR_STOP_MULT, dec); tp1 = round(entry - atr*ATR_TARGET1_MULT, dec); tp2 = round(entry - atr*ATR_TARGET2_MULT, dec)
         side = "SELL"; sl_side = "BUY"; tp_side = "BUY"
 
-    total_contracts          = deribit.calc_contracts(symbol, balance, entry, stop, risk_mult)
-    amount_tp1, amount_tp2   = deribit.split_amount(symbol, total_contracts)
-    risk_usd                 = round(balance * RISK_PER_TRADE * risk_mult, 2)
+    total_contracts        = deribit.calc_contracts(symbol, balance, entry, stop, risk_mult)
+    amount_tp1, amount_tp2 = deribit.split_amount(symbol, total_contracts)
+    risk_usd               = round(balance * RISK_PER_TRADE * risk_mult, 2)
 
-    log.info(f"  {signal} {symbol} | target_total={total_contracts} tp1={amount_tp1} tp2={amount_tp2}")
+    log.info(f"  {signal} {symbol} | target={total_contracts} tp1={amount_tp1} tp2={amount_tp2}")
     log.info(f"  SL={stop:.{dec}f} TP1={tp1:.{dec}f} TP2={tp2:.{dec}f}")
 
     order_ids    = {}
@@ -192,26 +206,24 @@ def execute_trade(deribit: DeribitClient, symbol, signal, entry, atr,
         if not entry_result: log.error("  Entry empty"); return False
 
         entry_order = entry_result.get("order", entry_result)
-        
-        # 🟢 CRITICAL FIX: Read exactly how much filled from the IOC order
+
+        # Handle IOC partial fills (thin testnet liquidity)
         filled_qty = float(entry_order.get("filled_amount") or 0)
         if filled_qty <= 0:
-            log.warning(f"  ⚠️ Testnet orderbook empty. Market order cancelled via IOC.")
+            log.warning(f"  ⚠️ Market order not filled (empty orderbook) — skip {symbol}")
             return False
-            
-        # If it partially filled due to thin liquidity, dynamically adjust our target sizes!
         if filled_qty < total_contracts:
-            log.info(f"  ⚠️ Partial fill on Testnet: {filled_qty} / {total_contracts} contracts.")
-            total_contracts = deribit.to_int_amount(symbol, filled_qty)
+            log.info(f"  ⚠️ Partial fill: {filled_qty} / {total_contracts}")
+            total_contracts        = deribit.to_int_amount(symbol, filled_qty)
             amount_tp1, amount_tp2 = deribit.split_amount(symbol, total_contracts)
 
         order_ids["entry"] = str(entry_order.get("order_id", ""))
-        actual_entry       = deribit.get_fill_price(entry_result, entry)
+        actual_entry = deribit.get_fill_price(entry_result, entry)
         if actual_entry == 0: actual_entry = entry
         log.info(f"  ✅ Filled @ ~{actual_entry:.{dec}f}")
         time.sleep(1.5)
 
-        # Recalculate levels from actual fill price (prevents overlap errors)
+        # Recalculate from actual fill price
         if signal == "BUY":
             stop = deribit.round_price(symbol, actual_entry - atr*ATR_STOP_MULT)
             tp1  = deribit.round_price(symbol, actual_entry + atr*ATR_TARGET1_MULT)
@@ -310,18 +322,15 @@ def check_open_trades(deribit: DeribitClient):
                     log.info(f"  🎯 TP1 {symbol} @ {fill:.{dec}f} pnl≈{pnl:+.4f}")
                     _send_close_alert(symbol, "TP1 HIT 🎯", pnl, entry, fill, trade["opened_at"])
 
-                    # Move SL to breakeven
                     if oids.get("stop_loss") and trade.get("qty_tp2", 0) > 0:
                         try:
                             deribit.cancel_order(oids["stop_loss"])
-                            sl_side  = "SELL" if trade["signal"]=="BUY" else "BUY"
-                            qty_rem  = deribit.to_int_amount(symbol, trade["qty_tp2"])
-                            sl_res   = deribit.place_limit_order(symbol, sl_side, qty_rem, entry, stop_price=entry)
-                            sl_o     = sl_res.get("order", sl_res)
-                            new_id   = str(sl_o.get("order_id",""))
-                            if new_id:
-                                trade["order_ids"]["stop_loss"] = new_id
-                                trade["stop"] = entry
+                            sl_side = "SELL" if trade["signal"]=="BUY" else "BUY"
+                            qty_rem = deribit.to_int_amount(symbol, trade["qty_tp2"])
+                            sl_res  = deribit.place_limit_order(symbol, sl_side, qty_rem, entry, stop_price=entry)
+                            sl_o    = sl_res.get("order", sl_res)
+                            new_id  = str(sl_o.get("order_id",""))
+                            if new_id: trade["order_ids"]["stop_loss"] = new_id; trade["stop"] = entry
                             _send(f"🛡️ *{symbol}* SL → breakeven `{entry:.{dec}f}` — risk-free!")
                         except Exception as e: log.warning(f"  Breakeven SL: {e}")
 
@@ -329,10 +338,10 @@ def check_open_trades(deribit: DeribitClient):
             if trade.get("tp1_hit") and not trade.get("tp2_hit") and oids.get("stop_loss"):
                 live = deribit.get_live_price(symbol)
                 if live > 0:
-                    halfway   = (entry + float(trade["tp2"])) / 2
-                    at_trail  = ((trade["signal"]=="BUY"  and live >= halfway) or
-                                 (trade["signal"]=="SELL" and live <= halfway))
-                    sl_at_be  = abs(float(trade.get("stop",0)) - entry) < 0.01 * entry
+                    halfway  = (entry + float(trade["tp2"])) / 2
+                    at_trail = ((trade["signal"]=="BUY" and live >= halfway) or
+                                (trade["signal"]=="SELL" and live <= halfway))
+                    sl_at_be = abs(float(trade.get("stop",0)) - entry) < 0.01 * entry
                     if at_trail and sl_at_be and trade.get("qty_tp2", 0) > 0:
                         try:
                             deribit.cancel_order(oids["stop_loss"])
@@ -342,10 +351,7 @@ def check_open_trades(deribit: DeribitClient):
                                           trade["tp1"], stop_price=trade["tp1"])
                             sl_o    = sl_res.get("order", sl_res)
                             new_id  = str(sl_o.get("order_id",""))
-                            if new_id:
-                                trade["order_ids"]["stop_loss"] = new_id
-                                trade["stop"] = trade["tp1"]
-                            log.info(f"  🚀 {symbol} trailing SL → TP1 {trade['tp1']:.{dec}f}")
+                            if new_id: trade["order_ids"]["stop_loss"] = new_id; trade["stop"] = trade["tp1"]
                             _send(f"🚀 *{symbol}* Trailing SL → locked profit `{trade['tp1']:.{dec}f}`")
                         except Exception as e: log.warning(f"  Trailing SL: {e}")
 
@@ -484,9 +490,7 @@ def _warn(text): log.warning(text); _send(text)
 def check_mode_switch(mode):
     last = load_json(MODE_FILE, {})
     if last.get("mode") != mode["mode"]:
-        msgs = {"active":"📈 *Active* — conf≥50% score≥1",
-                "quiet":"🌙 *Quiet* — conf≥55% score≥2",
-                "weekend":"📅 *Weekend* — conf≥50% score≥1"}
+        msgs = {"active":"📈 *Active* — conf≥50%","quiet":"🌙 *Quiet* — conf≥55%","weekend":"📅 *Weekend*"}
         _send(msgs.get(mode["mode"],"Mode changed"))
         save_json(MODE_FILE, {"mode":mode["mode"],"since":datetime.now(timezone.utc).isoformat()})
 
@@ -520,9 +524,7 @@ def _send_close_alert(symbol, result, pnl, entry, close_price, opened_at):
 # ════════════ MAIN ════════════════════════════════════════════════════
 
 def run_execution_scan():
-    log.info(f"\n{'═'*56}")
-    log.info(f"SCAN — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-    log.info(f"{'═'*56}")
+    log.info(f"\n{'═'*56}\nSCAN — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n{'═'*56}")
 
     run, mode, vol, reason = should_scan()
     check_mode_switch(mode)
@@ -543,26 +545,20 @@ def run_execution_scan():
     log.info(f"\n[2] Monitor open trades..."); check_open_trades(deribit); save_balance_json(deribit)
 
     trades = load_trades()
+    tradeable = deribit.get_tradeable()  # FIX: runtime list, not stale import binding
     log.info(f"\n[3] Scanning {len(SYMBOLS)} coins | Open:{len(trades)}/{MAX_OPEN_TRADES}")
-    log.info(f"    Tradeable: {TRADEABLE_SYMBOLS}")
+    log.info(f"    Tradeable ({len(tradeable)}): {tradeable}")
 
-    found = 0
     found = 0
     for symbol in SYMBOLS:
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
-        
-        # 1. Let the AI scan and log its thoughts for every coin
         sig = generate_signal(symbol, pipeline, thresholds)
         if sig is None: time.sleep(0.3); continue
-        
         found += 1
         if vol_warn: sig["reasons"] = list(sig.get("reasons",[])) + [f"⚠️ {vol_warn}"]
-        
-        # 2. BUT, check if our pockets are full BEFORE we actually execute the trade
-        if len(load_trades()) >= MAX_OPEN_TRADES: 
-            log.info("  🛑 Perfect setup found, but Max Trades reached! Skipping execution.")
+        if len(load_trades()) >= MAX_OPEN_TRADES:
+            log.info("  🛑 Signal found but max trades reached — logging only")
             continue
-            
         execute_trade(deribit, symbol=sig["symbol"], signal=sig["signal"],
                       entry=sig["entry"], atr=sig["atr"],
                       confidence=sig["confidence"], score=sig["score"],
@@ -580,8 +576,11 @@ def run_diagnostic():
            f"🕐 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}","━━━━━━━━━━━━━━━━━━━━"]
     try:
         d=init_deribit(); bal=save_balance_json(d); pos=d.get_positions()
-        lines+=[f"✅ Deribit OK | GET ✅ POST ✅",f"💰 Portfolio: *${bal:.2f} USD*",
-                f"📂 Positions: {len(pos)}",f"📋 Tradeable ({len(TRADEABLE_SYMBOLS)}): {TRADEABLE_SYMBOLS[:8]}"]
+        tradeable=d.get_tradeable()
+        usdc_status = f"✅ USDC ${d._usdc_balance:.0f}" if d.has_usdc_margin() else "❌ No USDC (only BTC+ETH)"
+        lines+=[f"✅ Deribit connected",f"💰 Portfolio: *${bal:.2f} USD*",
+                f"📂 Positions: {len(pos)}",f"💵 Margin: {usdc_status}",
+                f"📋 Tradeable ({len(tradeable)}): {tradeable[:8]}"]
     except Exception as e: lines.append(f"❌ Deribit: {e}")
     lines+=[f"📋 Mode: *{mode['label']}* conf≥{mode['min_confidence']}%",
             f"📊 BTC ATR: *{vol['atr_pct']:.2f}%*",f"⚡ Risk: *{int(eff*100)}%*"]
@@ -597,5 +596,5 @@ def run_diagnostic():
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "diagnostic":   run_diagnostic()
-    elif len(sys.argv) > 1 and sys.argv[1] == "clear_stuck": d=init_deribit(); clean_invalid_trades(d)
+    elif len(sys.argv) > 1 and sys.argv[1] == "clear_stuck": clean_invalid_trades(init_deribit())
     else: run_execution_scan()
