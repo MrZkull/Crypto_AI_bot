@@ -27,7 +27,6 @@ class DeribitClient:
         r = self.session.post(f"{self.base}{path}", json=payload, timeout=15)
         data = r.json()
         if "error" in data:
-            # 🟢 FIX: Print the exact payload so we NEVER have to guess what caused the error again
             raise Exception(f"Deribit: {data['error'].get('message')} | Payload: {body}")
         return data.get("result", data)
 
@@ -54,6 +53,17 @@ class DeribitClient:
 
     def get_total_equity_usd(self):
         return float(self._get("/private/get_account_summary", {"currency": "USDC"}).get("equity", 0))
+
+    # 🟢 THE FIX: Re-added for the Dashboard UI
+    def get_all_balances(self):
+        try:
+            res = self._get("/private/get_account_summary", {"currency": "USDC"})
+            available = float(res.get("available_withdrawal_funds", res.get("available_funds", 0)))
+            equity = float(res.get("equity", 0))
+            return {"USDC": {"available": available, "equity_usd": equity}}
+        except Exception as e:
+            log.warning(f"Failed to fetch balances: {e}")
+            return {}
 
     def get_tradeable(self): return list(self._supported_symbols)
     def is_supported(self, symbol): return symbol in self._supported_symbols
@@ -88,7 +98,6 @@ class DeribitClient:
 
     def place_market_order(self, symbol, side, amount):
         inst = self.get_instrument_name(symbol)
-        # 🟢 FIX: Removed 'time_in_force'. Deribit violently rejects this for Market orders.
         payload = {
             "instrument_name": inst, 
             "amount": self.round_amount(symbol, amount), 
