@@ -93,15 +93,24 @@ jobs:
           key: bot-state-v2-${{ github.run_id }}
 
       # 🟢 FIX: Push the state files directly to the repository so the Dashboard can read them
+      # 🟢 FIX: Push the state files AND the log file to the repo
       - name: Commit and Push State to Repo
         if: always()
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add trades.json trade_history.json signals.json balance.json scan_mode.json || true
+          git add trades.json trade_history.json signals.json balance.json scan_mode.json bot.log || true
           git commit -m "Auto-update bot state [skip ci]" || echo "No changes to commit"
           git push
 
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-log-${{ github.run_number }}
+          path: bot.log
+          retention-days: 7
+          
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
