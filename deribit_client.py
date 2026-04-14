@@ -1,35 +1,12 @@
-# deribit_client.py — Precision-Safe USDC Unified Version
 import math, time, logging, requests
 log = logging.getLogger(__name__)
 
 TESTNET_BASE = "https://test.deribit.com/api/v2"
 
-SYMBOL_MAP = {
-    "BTCUSDT":    {"instrument": "BTC_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.0001, "tick_size": 0.1},
-    "ETHUSDT":    {"instrument": "ETH_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.001,  "tick_size": 0.01},
-    "SOLUSDT":    {"instrument": "SOL_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.1,    "tick_size": 0.001},
-    "XRPUSDT":    {"instrument": "XRP_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,      "tick_size": 0.0001},
-    "AVAXUSDT":   {"instrument": "AVAX_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 0.1,    "tick_size": 0.001},
-    "LINKUSDT":   {"instrument": "LINK_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 0.1,    "tick_size": 0.001},
-    "NEARUSDT":   {"instrument": "NEAR_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 1,      "tick_size": 0.0001},
-    "DOTUSDT":    {"instrument": "DOT_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.1,    "tick_size": 0.001},
-    "UNIUSDT":    {"instrument": "UNI_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.1,    "tick_size": 0.001},
-    "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,      "tick_size": 0.0001},
-    "AAVEUSDT":   {"instrument": "AAVE_USDC-PERPETUAL", "currency": "USDC", "kind": "linear",  "min_amount": 0.01,   "tick_size": 0.01},
-    "SUIUSDT":    {"instrument": "SUI_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,      "tick_size": 0.0001},
-    "APTUSDT":    {"instrument": "APT_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.1,    "tick_size": 0.001},
-    "INJUSDT":    {"instrument": "INJ_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 0.1,    "tick_size": 0.001},
-    "ARBUSDT":    {"instrument": "ARB_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,      "tick_size": 0.0001},
-    "OPUSDT":     {"instrument": "OP_USDC-PERPETUAL",   "currency": "USDC", "kind": "linear",  "min_amount": 1,      "tick_size": 0.0001},
-    "SEIUSDT":    {"instrument": "SEI_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,      "tick_size": 0.0001},
-    "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",  "currency": "USDC", "kind": "linear",  "min_amount": 1,      "tick_size": 0.0001},
-}
-
 class DeribitClient:
     def __init__(self, client_id, client_secret):
         self.client_id, self.client_secret = client_id, client_secret
-        self.base = TESTNET_BASE
-        self.session = requests.Session()
+        self.base, self.session = TESTNET_BASE, requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
         self._token_expiry, self._instrument_cache, self._supported_symbols = 0, {}, set()
         self._authenticate()
@@ -49,9 +26,7 @@ class DeribitClient:
         payload = {"jsonrpc": "2.0", "id": int(time.time()*1000), "method": path.strip("/"), "params": body}
         r = self.session.post(f"{self.base}{path}", json=payload, timeout=15)
         data = r.json()
-        if "error" in data:
-            err = data["error"]
-            raise Exception(f"Deribit Error: {err.get('message')} (Code: {err.get('code')})")
+        if "error" in data: raise Exception(f"Deribit: {data['error'].get('message')}")
         return data.get("result", data)
 
     def _get(self, path, params=None):
@@ -60,69 +35,47 @@ class DeribitClient:
         return r.json().get("result", {})
 
     def _verify_instruments(self):
-        res = self._get("/public/get_instruments", {"currency": "USDC", "kind": "future", "expired": "false"})
+        res = self._get("/public/get_instruments", {"currency": "USDC", "kind": "future"})
         active = {i["instrument_name"]: i for i in res}
-        for sym, info in SYMBOL_MAP.items():
-            if info["instrument"] in active:
-                self._instrument_cache[info["instrument"]] = active[info["instrument"]]
+        from config import SYMBOLS
+        for sym in SYMBOLS:
+            inst = f"{sym.replace('USDT', '')}_USDC-PERPETUAL"
+            if inst in active:
+                self._instrument_cache[inst] = active[inst]
                 self._supported_symbols.add(sym)
         log.info(f"✓ Verified {len(self._supported_symbols)} USDC symbols")
 
     def round_amount(self, symbol, raw):
-        """Forces precision by using string formatting to strip float noise"""
-        step = float(self._instrument_cache[self.get_instrument_name(symbol)].get("min_trade_amount", 1.0))
+        inst = f"{symbol.replace('USDT', '')}_USDC-PERPETUAL"
+        step = float(self._instrument_cache[inst].get("min_trade_amount", 1.0))
         precision = len(str(step).split('.')[1].rstrip('0')) if '.' in str(step) else 0
         res = max(step, math.floor(raw / step) * step)
-        clean_val = "{: .{}f}".format(res, precision).strip()
-        return float(clean_val) if precision > 0 else int(float(clean_val))
+        return float("{: .{}f}".format(res, precision).strip()) if precision > 0 else int(res)
 
     def round_price(self, symbol, price):
-        tick = float(self._instrument_cache[self.get_instrument_name(symbol)].get("tick_size", 0.01))
+        inst = f"{symbol.replace('USDT', '')}_USDC-PERPETUAL"
+        tick = float(self._instrument_cache[inst].get("tick_size", 0.01))
         precision = len(str(tick).split('.')[1].rstrip('0')) if '.' in str(tick) else 0
         res = round(round(price / tick) * tick, precision)
-        clean_val = "{: .{}f}".format(res, precision).strip()
-        return float(clean_val) if precision > 0 else int(float(clean_val))
+        return float("{: .{}f}".format(res, precision).strip()) if precision > 0 else int(res)
 
     def test_connection(self):
-        total = self.get_total_equity_usd()
-        log.info(f"✅ Connection Verified: ${total:.2f}"); return True
-
-    def get_tradeable(self): return list(self._supported_symbols)
-    def is_supported(self, symbol): return symbol in self._supported_symbols
-    def get_instrument_name(self, symbol): return SYMBOL_MAP[symbol]["instrument"]
-    
-    def calc_contracts(self, symbol, balance_usd, entry, stop, risk_mult=1.0):
-        raw = (balance_usd * 0.01 * risk_mult) / abs(entry - stop)
-        return self.round_amount(symbol, min(raw, (balance_usd * 0.2) / entry))
-
-    def split_amount(self, symbol, total):
-        q1 = self.round_amount(symbol, total / 2)
-        return q1, self.round_amount(symbol, total - q1)
+        s = self._get("/private/get_account_summary", {"currency": "USDC", "extended": "true"})
+        log.info(f"✅ Deribit Live: ${float(s.get('equity', 0)):.2f}"); return True
 
     def get_total_equity_usd(self):
-        s = self._get("/private/get_account_summary", {"currency": "USDC", "extended": "true"})
-        return float(s.get("equity", 0))
+        return float(self._get("/private/get_account_summary", {"currency": "USDC"}).get("equity", 0))
 
-    def get_positions(self): 
-        return [p for p in self._get("/private/get_positions", {"currency": "USDC", "kind": "future"}) if float(p.get("size", 0)) != 0]
-
+    def get_positions(self): return [p for p in self._get("/private/get_positions", {"currency": "USDC"}) if float(p.get("size", 0)) != 0]
     def place_market_order(self, symbol, side, amount):
-        return self._post(f"/private/{side.lower()}", {
-            "instrument_name": self.get_instrument_name(symbol), 
-            "amount": self.round_amount(symbol, amount), 
-            "type": "market", 
-            "time_in_force": "immediate_or_cancel"
-        })
-
+        inst = f"{symbol.replace('USDT', '')}_USDC-PERPETUAL"
+        return self._post(f"/private/{side.lower()}", {"instrument_name": inst, "amount": self.round_amount(symbol, amount), "type": "market", "time_in_force": "immediate_or_cancel"})
     def place_limit_order(self, symbol, side, amount, price, stop_price=None):
-        params = {"instrument_name": self.get_instrument_name(symbol), "amount": self.round_amount(symbol, amount), "price": self.round_price(symbol, price), "reduce_only": True}
-        if stop_price: params.update({"type": "stop_limit", "trigger_price": self.round_price(symbol, stop_price), "trigger": "last_price"})
-        else: params["type"] = "limit"
-        return self._post(f"/private/{side.lower()}", params)
-
-    def get_order(self, oid):
-        try: return self._post("/private/get_order_state", {"order_id": str(oid)})
-        except: return {"order_state": "not_found"}
+        inst = f"{symbol.replace('USDT', '')}_USDC-PERPETUAL"
+        p = {"instrument_name": inst, "amount": self.round_amount(symbol, amount), "price": self.round_price(symbol, price), "reduce_only": True}
+        if stop_price: p.update({"type": "stop_limit", "trigger_price": self.round_price(symbol, stop_price), "trigger": "last_price"})
+        else: p["type"] = "limit"
+        return self._post(f"/private/{side.lower()}", p)
+    def get_order(self, oid): return self._post("/private/get_order_state", {"order_id": str(oid)})
     def is_order_filled(self, o): return o.get("order_state") == "filled"
     def cancel_order(self, oid): return self._post("/private/cancel", {"order_id": str(oid)})
-    def get_live_price(self, symbol): return float(self._post("/public/ticker", {"instrument_name": self.get_instrument_name(symbol)}).get("mark_price", 0))
