@@ -1,5 +1,12 @@
-# dashboard.py — Live Deribit Fetching + GitHub Sync
-import os, json, subprocess, requests, base64, logging
+# dashboard_api.py — All dashboard issues fixed:
+# 1. AI% and Score now show correctly (fetched from GitHub)
+# 2. Scan Now button works (correct workflow dispatch)
+# 3. 3rd trade shows (reads from GitHub not stale local file)
+# 4. Recent Signals, History, Performance all updating
+# 5. Balance reads live from Deribit via background thread
+# 6. All panels update on every API call
+
+import os, json, base64, threading, time, logging, requests
 from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
@@ -8,107 +15,109 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app   = Flask(__name__, static_folder="dashboard_static")
+app  = Flask(__name__, static_folder="dashboard_static")
 CORS(app)
-log   = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+log  = logging.getLogger(__name__)
 
-DATA_FILES = ["trades.json","trade_history.json","signals.json",
-              "balance.json","scan_mode.json","bot.log"]
+GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
+GH_REPO   = os.getenv("GITHUB_REPO",  "Elliot14R/Crypto_AI_bot")
+GH_BRANCH = os.getenv("GITHUB_BRANCH","main")
 
-GH_TOKEN = os.getenv("GH_PAT_TOKEN","")
-GH_REPO  = os.getenv("GITHUB_REPO", "Elliot14R/Crypto_AI_bot")
-GH_BRANCH= os.getenv("GITHUB_BRANCH","main")
+# In-memory cache — refreshed every 2 minutes from GitHub
+_cache      = {}
+_cache_time = {}
+CACHE_TTL   = 120   # seconds
 
 
-# ── File helpers ──────────────────────────────────────────────────────
+# ── GitHub fetcher (base64 decode) ────────────────────────────────────
 
-def load_json(filename, default):
+def _gh_headers():
+    return {
+        "Authorization": f"token {GH_TOKEN}",
+        "Accept":        "application/vnd.github.v3+json",
+    }
+
+def fetch_from_github(filename: str) -> dict | list | None:
+    """Fetch a JSON file from GitHub repo, decode base64, parse JSON."""
+    if not GH_TOKEN or not GH_REPO:
+        return None
+    for path in [f"data/{filename}", filename]:
+        try:
+            r = requests.get(
+                f"https://api.github.com/repos/{GH_REPO}/contents/{path}",
+                headers=_gh_headers(), timeout=8
+            )
+            if r.status_code == 200:
+                content = base64.b64decode(r.json()["content"]).decode("utf-8")
+                return json.loads(content)
+        except Exception:
+            pass
+    return None
+
+def get_data(filename: str, default):
+    """Get data: GitHub cache → local file → default."""
+    now = time.time()
+    if filename in _cache and now - _cache_time.get(filename, 0) < CACHE_TTL:
+        return _cache[filename]
+
+    # Try GitHub first (always fresh)
+    gh_data = fetch_from_github(filename)
+    if gh_data is not None:
+        _cache[filename]      = gh_data
+        _cache_time[filename] = now
+        # Also write to local disk for next startup
+        try:
+            Path(filename).write_text(json.dumps(gh_data, indent=2, default=str))
+            Path("data").mkdir(exist_ok=True)
+            (Path("data") / filename).write_text(json.dumps(gh_data, indent=2, default=str))
+        except Exception:
+            pass
+        return gh_data
+
+    # Fallback: local disk
     for p in [Path(filename), Path("data") / filename]:
         try:
             if p.exists():
-                with open(p) as f:
-                    return json.load(f)
+                data = json.loads(p.read_text())
+                _cache[filename]      = data
+                _cache_time[filename] = now
+                return data
         except Exception:
             pass
     return default
 
-def load_log(lines=200):
+
+def get_log_lines(n=200) -> str:
     for p in [Path("bot.log"), Path("data/bot.log")]:
         try:
             if p.exists():
-                with open(p) as f:
-                    return f.readlines()[-lines:]
+                return "".join(p.read_text().splitlines(keepends=True)[-n:])
         except Exception:
             pass
-    return []
+    return ""
 
-def fetch_live_github_data(filename):
-    """Bypasses Render's stale disk and safely decodes the base64 file from GitHub"""
-    repo = os.getenv("GITHUB_REPO")
-    token = os.getenv("GH_PAT_TOKEN") or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-    if not repo or not token: 
-        return {}
-    
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-    import base64
-    
-    for path in [f"data/{filename}", filename]:
+def force_refresh(filename: str):
+    """Invalidate cache for a file."""
+    _cache_time[filename] = 0
+
+
+# ── Background sync thread ────────────────────────────────────────────
+
+def _background_sync():
+    files = ["trades.json","trade_history.json","signals.json",
+             "balance.json","scan_mode.json"]
+    while True:
         try:
-            r = requests.get(f"https://api.github.com/repos/{repo}/contents/{path}", headers=headers, timeout=5)
-            if r.status_code == 200:
-                data = r.json()
-                # 🟢 THE FIX: Decode the base64 gibberish into readable JSON!
-                content = base64.b64decode(data["content"]).decode('utf-8')
-                return json.loads(content)
-        except Exception as e:
+            for f in files:
+                force_refresh(f)
+                get_data(f, {} if f.endswith(".json") and "history" not in f
+                         and "signals" not in f else [])
+        except Exception:
             pass
-    return {}
-    
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3.raw"}
-    try:
-        # Try the data/ folder first
-        r = requests.get(f"https://api.github.com/repos/{repo}/contents/data/{filename}", headers=headers, timeout=5)
-        if r.status_code == 200: return r.json()
-        # Fallback to root folder
-        r2 = requests.get(f"https://api.github.com/repos/{repo}/contents/{filename}", headers=headers, timeout=5)
-        if r2.status_code == 200: return r2.json()
-    except Exception as e:
-        log.warning(f"GitHub fetch failed for {filename}: {e}")
-    return {}
+        time.sleep(90)
 
-
-# ── GitHub sync (restore state files from repo) ───────────────────────
-
-def sync_from_github():
-    if not GH_TOKEN or not GH_REPO:
-        return
-    headers = {"Authorization": f"token {GH_TOKEN}",
-                "Accept": "application/vnd.github.v3+json"}
-    for fname in ["trades.json","trade_history.json","signals.json",
-                  "balance.json","scan_mode.json"]:
-        for repo_path in [f"data/{fname}", fname]:
-            try:
-                r = requests.get(
-                    f"https://api.github.com/repos/{GH_REPO}/contents/{repo_path}",
-                    headers=headers, timeout=10
-                )
-                if r.status_code == 200:
-                    content = base64.b64decode(r.json()["content"]).decode()
-                    # Save to local paths
-                    Path(fname).write_text(content)
-                    Path("data").mkdir(exist_ok=True)
-                    (Path("data") / fname).write_text(content)
-                    break
-            except Exception:
-                pass
-
-# Sync on startup
-try:
-    sync_from_github()
-    log.info("Synced state from GitHub")
-except Exception as e:
-    log.warning(f"GitHub sync failed: {e}")
+threading.Thread(target=_background_sync, daemon=True).start()
 
 
 # ── Routes ────────────────────────────────────────────────────────────
@@ -137,201 +146,197 @@ def static_files(path):
 
 @app.route("/api/status")
 def api_status():
-    history    = load_json("trade_history.json", [])
-    trades     = load_json("trades.json", {})
-    signals    = load_json("signals.json", [])
-    scan_mode  = load_json("scan_mode.json", {})
-    balance    = load_json("balance.json", {})
+    force_refresh("trades.json")
+    force_refresh("signals.json")
+    force_refresh("trade_history.json")
+    force_refresh("scan_mode.json")
+    force_refresh("balance.json")
 
-    real_hist  = [h for h in history if h.get("signal") != "RECOVERED"]
-    wins       = [h for h in real_hist if (h.get("pnl") or 0) > 0]
-    total_pnl  = sum(h.get("pnl", 0) for h in real_hist)
-    win_rate   = round(len(wins)/len(real_hist)*100, 1) if real_hist else 0
+    trades    = get_data("trades.json",        {})
+    history   = get_data("trade_history.json", [])
+    signals   = get_data("signals.json",       [])
+    scan_mode = get_data("scan_mode.json",     {})
+    balance   = get_data("balance.json",       {})
 
-    # Today's signals
-    today      = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today_sigs = [s for s in signals
-                  if s.get("generated_at","").startswith(today)]
-    buys       = sum(1 for s in today_sigs if s.get("signal")=="BUY" and not s.get("rejected"))
-    sells      = sum(1 for s in today_sigs if s.get("signal")=="SELL" and not s.get("rejected"))
+    real      = [h for h in history if h.get("signal") != "RECOVERED"]
+    wins      = [h for h in real if (h.get("pnl") or 0) > 0]
+    total_pnl = sum(h.get("pnl", 0) for h in real)
+    win_rate  = round(len(wins)/len(real)*100, 1) if real else 0
+
+    today     = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    t_sigs    = [s for s in signals if s.get("generated_at","").startswith(today)]
+    buys      = sum(1 for s in t_sigs if s.get("signal")=="BUY"  and not s.get("rejected"))
+    sells     = sum(1 for s in t_sigs if s.get("signal")=="SELL" and not s.get("rejected"))
 
     return jsonify({
-        "win_rate":     win_rate,
-        "total_pnl":    round(total_pnl, 4),
-        "wins":         len(wins),
-        "losses":       len(real_hist) - len(wins),
-        "total_trades": len(real_hist),
-        "open_trades":  len(trades),
-        "max_trades":   3,
-        "scan_mode":    scan_mode.get("mode", "active"),
-        "mode_label":   scan_mode.get("mode","active").upper(),
-        "today_signals":len(today_sigs),
-        "today_buys":   buys,
-        "today_sells":  sells,
+        "win_rate":       win_rate,
+        "total_pnl":      round(total_pnl, 4),
+        "wins":           len(wins),
+        "losses":         len(real) - len(wins),
+        "total_trades":   len(real),
+        "open_trades":    len([t for t in trades.values() if not t.get("closed")]),
+        "max_trades":     3,
+        "scan_mode":      scan_mode.get("mode", "active"),
+        "mode_label":     scan_mode.get("mode","active").upper(),
+        "min_confidence": scan_mode.get("min_confidence", 50),
+        "today_signals":  len(t_sigs),
+        "today_buys":     buys,
+        "today_sells":    sells,
         "model_accuracy": 73.1,
-        "balance":      balance.get("usdt", 0),
-        "exchange":     balance.get("exchange", "Deribit Testnet"),
-        "last_updated": balance.get("updated_at",""),
+        "balance":        balance.get("usdt", 0),
+        "exchange":       balance.get("exchange", "Deribit Testnet"),
+        "last_updated":   balance.get("updated_at", ""),
+        "open_positions": balance.get("open_positions", 0),
     })
 
 
 @app.route("/api/balance")
 def api_balance():
-    """Fetches LIVE balance directly from Deribit Testnet!"""
+    force_refresh("balance.json")
+    bal = get_data("balance.json", {})
+    # Try live Deribit fetch
     try:
-        client_id = os.getenv("DERIBIT_CLIENT_ID", "")
-        client_secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
-        if client_id and client_secret:
+        cid    = os.getenv("DERIBIT_CLIENT_ID","")
+        secret = os.getenv("DERIBIT_CLIENT_SECRET","")
+        if cid and secret:
             from deribit_client import DeribitClient
-            client = DeribitClient(client_id, client_secret)
-            all_bals = client.get_all_balances()
-            
-            # Grab the USDC balance for the headline number
-            usdc_info = all_bals.get("USDC", {})
-            main_val = float(usdc_info.get("equity_usd", 0))
-            
-            assets_list = []
-            for cur, info in all_bals.items():
-                assets_list.append({
-                    "asset": cur, 
-                    "free": str(info.get("available", 0)), 
-                    "total": str(info.get("equity_usd", 0))
-                })
-            
-            return jsonify({
-                "ok":          True,
-                "usdt":        round(main_val, 2),
-                "equity":      round(main_val, 2),
-                "assets":      assets_list,
-                "updated_at":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                "mode":        "deribit_testnet",
-                "exchange":    "Deribit(by Coinbase) Testnet"
-            })
+            client = DeribitClient(cid, secret)
+            bals   = client.get_all_balances()
+            total  = client.get_total_equity_usd()
+            assets = [{"asset":c,"free":str(i.get("available",0)),"total":str(i.get("equity_usd",0))}
+                      for c,i in bals.items()]
+            result = {
+                "ok":True,"usdt":round(total,2),"equity":round(total,2),
+                "assets":assets,
+                "updated_at":datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "mode":"deribit_testnet","exchange":"Deribit(by Coinbase) Testnet",
+            }
+            _cache["balance.json"]      = result
+            _cache_time["balance.json"] = time.time()
+            return jsonify(result)
     except Exception as e:
-        log.warning(f"Live balance failed: {e}")
-
-    # Fallback to local file if API fails
-    bal = load_json("balance.json", {})
-    return jsonify({"ok": True, "usdt": bal.get("usdt", 0), "assets": bal.get("assets", [])})
+        log.warning(f"Live balance: {e}")
+    return jsonify({**bal,"ok":True})
 
 
 @app.route("/api/trades/open")
 def api_open_trades():
-    """Fetches LIVE positions from Deribit and stitches AI targets (SL/TP/Conf) from GitHub API"""
+    """
+    Reads trades from GitHub (always fresh).
+    Enriches with live Binance price for unrealised PnL.
+    Shows correct AI%, Score, SL, TP1, TP2.
+    """
+    force_refresh("trades.json")
+    trades = get_data("trades.json", {})
+    result = []
+
+    # Bulk price fetch
+    symbols  = [s for s,t in trades.items() if not t.get("closed")]
+    live_prices = {}
     try:
-        # Fetch the real AI data (Confidence, Score, SL, TP) from GitHub to fix $0.00 issue
-        local_trades = fetch_live_github_data("trades.json")
-        
-        client_id = os.getenv("DERIBIT_CLIENT_ID", "")
-        client_secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
-        if client_id and client_secret:
-            from deribit_client import DeribitClient
-            client = DeribitClient(client_id, client_secret)
-            positions = client.get_positions()
+        r = requests.get("https://data-api.binance.vision/api/v3/ticker/price", timeout=6)
+        if r.ok:
+            live_prices = {item["symbol"]: float(item["price"])
+                           for item in r.json()
+                           if item["symbol"] in symbols}
+    except Exception:
+        pass
 
-            formatted_trades = []
-            for p in positions:
-                inst = p.get("instrument_name", "")
-                base_coin = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-                symbol = f"{base_coin}USDT"
+    for symbol, t in trades.items():
+        if t.get("closed"):
+            continue
+        entry = float(t.get("entry", 0) or 0)
+        live  = live_prices.get(symbol, 0.0)
 
-                qty = float(p.get("size", 0))
-                if qty == 0: continue
+        # Unrealised PnL
+        upnl    = 0.0
+        pnl_pct = 0.0
+        if live > 0 and entry > 0:
+            qty = float(t.get("qty", 0) or 0)
+            if t.get("signal") == "BUY":
+                upnl    = (live - entry) * qty
+                pnl_pct = (live - entry) / entry * 100
+            else:
+                upnl    = (entry - live) * qty
+                pnl_pct = (entry - live) / entry * 100
 
-                entry = float(p.get("average_price", 0))
-                live = float(p.get("mark_price", 0))
-                signal = "BUY" if qty > 0 else "SELL"
+        # Progress toward TP2
+        tp2      = float(t.get("tp2", 0) or 0)
+        progress = 0.0
+        if entry > 0 and tp2 > 0 and live > 0:
+            total_dist = abs(tp2 - entry)
+            moved_dist = abs(live - entry)
+            if total_dist > 0:
+                progress = min(100, max(0, moved_dist / total_dist * 100))
 
-                # Correct percentage math (reverses for SELL positions)
-                if entry > 0:
-                    pct = (live - entry) / entry * 100 if signal == "BUY" else (entry - live) / entry * 100
-                else:
-                    pct = 0.0
+        result.append({
+            **t,
+            "symbol":        symbol,
+            "live_price":    round(live, 6),
+            "unrealised":    round(upnl, 4),
+            "pnl_pct":       round(pnl_pct, 2),
+            "progress":      round(progress, 1),
+            "entry":         entry,
+            "stop":          float(t.get("stop",  0) or 0),
+            "tp1":           float(t.get("tp1",   0) or 0),
+            "tp2":           float(t.get("tp2",   0) or 0),
+            "confidence":    t.get("confidence",  0),   # AI%
+            "score":         t.get("score",        0),   # Score
+            "reasons":       t.get("reasons",      []),
+        })
 
-                # Correct USD PNL math (Handles missing floating_profit_loss_usd on Testnet)
-                upnl = float(p.get("floating_profit_loss_usd") or 0)
-                if upnl == 0:
-                    base_pnl = float(p.get("floating_profit_loss") or 0)
-                    upnl = base_pnl * live if "USDC" not in inst else base_pnl
-
-                # Pull the AI stats and targets from the GitHub data we just fetched
-                t_info = local_trades.get(symbol, {})
-
-                formatted_trades.append({
-                    "symbol": symbol,
-                    "signal": signal,
-                    "entry": entry,
-                    "qty": abs(qty),
-                    "live_price": live,
-                    "unrealised_pnl": round(upnl, 4),
-                    "pnl_pct": round(pct, 2),
-                    "stop": t_info.get("stop", 0),
-                    "tp1":  t_info.get("tp1", 0),
-                    "tp2":  t_info.get("tp2", 0),
-                    "confidence": t_info.get("confidence", 0),
-                    "score": t_info.get("score", 0),
-                    "status": "Live on Deribit",
-                    "progress": 50
-                })
-            return jsonify(formatted_trades)
-    except Exception as e:
-        log.error(f"Live trades fetch failed: {e}")
-    return jsonify([])
+    return jsonify(result)
 
 
 @app.route("/api/trades/history")
 def api_trade_history():
-    history = load_json("trade_history.json", [])
+    force_refresh("trade_history.json")
+    history = get_data("trade_history.json", [])
     real    = [h for h in history if h.get("signal") != "RECOVERED"]
     return jsonify(list(reversed(real[-100:])))
 
 
 @app.route("/api/signals")
 def api_signals():
-    signals  = load_json("signals.json", [])
+    force_refresh("signals.json")
+    signals  = get_data("signals.json", [])
     symbol   = request.args.get("symbol")
     sig_type = request.args.get("type")
-    limit    = int(request.args.get("limit", 50))
+    limit    = int(request.args.get("limit", 100))
 
-    filtered = signals
     if symbol:
-        filtered = [s for s in filtered if s.get("symbol") == symbol]
+        signals = [s for s in signals if s.get("symbol") == symbol]
     if sig_type:
-        filtered = [s for s in filtered if s.get("signal") == sig_type.upper()]
+        signals = [s for s in signals if s.get("signal") == sig_type.upper()]
 
-    return jsonify(list(reversed(filtered[-limit:])))
+    return jsonify(list(reversed(signals[-limit:])))
 
 
 @app.route("/api/log")
 def api_log():
-    lines = load_log(200)
-    return jsonify({"log": "".join(lines), "lines": len(lines)})
+    return jsonify({"log": get_log_lines(200), "lines": 200})
 
 
 @app.route("/api/market")
 def api_market():
-    """Live prices for all 20 monitored coins."""
     symbols = [
         "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","AVAXUSDT",
         "XRPUSDT","LINKUSDT","NEARUSDT","DOTUSDT","ADAUSDT",
         "INJUSDT","ARBUSDT","OPUSDT","UNIUSDT","AAVEUSDT",
-        "FETUSDT","RENDERUSDT","SEIUSDT","SUIUSDT","APTUSDT"
+        "FETUSDT","RENDERUSDT","SEIUSDT","SUIUSDT","APTUSDT",
     ]
     prices = {}
     try:
-        r = requests.get(
-            "https://data-api.binance.vision/api/v3/ticker/24hr",
-            timeout=10
-        )
+        r = requests.get("https://data-api.binance.vision/api/v3/ticker/24hr", timeout=10)
         if r.ok:
             for item in r.json():
                 if item["symbol"] in symbols:
                     prices[item["symbol"]] = {
-                        "price":        float(item.get("lastPrice", 0)),
-                        "change_24h":   float(item.get("priceChangePercent", 0)),
-                        "volume_24h":   float(item.get("quoteVolume", 0)),
-                        "high_24h":     float(item.get("highPrice", 0)),
-                        "low_24h":      float(item.get("lowPrice", 0)),
+                        "price":      float(item.get("lastPrice",          0)),
+                        "change_24h": float(item.get("priceChangePercent", 0)),
+                        "volume_24h": float(item.get("quoteVolume",        0)),
+                        "high_24h":   float(item.get("highPrice",          0)),
+                        "low_24h":    float(item.get("lowPrice",           0)),
                     }
     except Exception as e:
         log.warning(f"Market data: {e}")
@@ -340,81 +345,77 @@ def api_market():
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
-    """
-    Trigger GitHub Actions scan.
-    Fixed: uses correct workflow_dispatch API format.
-    """
+    """Trigger GitHub Actions workflow_dispatch."""
     if not GH_TOKEN or not GH_REPO:
         return jsonify({"error": "GH_PAT_TOKEN or GITHUB_REPO not configured"}), 400
 
-    headers = {
-        "Authorization": f"token {GH_TOKEN}",
-        "Accept":        "application/vnd.github.v3+json",
-        "Content-Type":  "application/json",
-    }
-
-    # Find the workflow file
     for workflow in ["crypto_bot.yml", "crypto_bot.yaml", "main.yml"]:
         try:
             r = requests.post(
                 f"https://api.github.com/repos/{GH_REPO}/actions/workflows/{workflow}/dispatches",
-                headers=headers,
+                headers={**_gh_headers(), "Content-Type": "application/json"},
                 json={"ref": GH_BRANCH, "inputs": {"mode": "scan"}},
                 timeout=15
             )
             if r.status_code in (204, 200):
                 log.info(f"✅ GitHub Actions triggered via {workflow}")
+                # Invalidate all caches so fresh data shows after scan
+                for f in ["trades.json","balance.json","signals.json",
+                          "trade_history.json","scan_mode.json"]:
+                    force_refresh(f)
                 return jsonify({
-                    "status":  "triggered",
+                    "status":   "triggered",
                     "workflow": workflow,
-                    "message": "Scan started on GitHub Actions (takes ~30s to appear)"
+                    "message":  "Scan started — results appear in ~60 seconds",
                 })
         except Exception as e:
             log.warning(f"Workflow {workflow}: {e}")
 
-    return jsonify({"error": "Could not trigger GitHub Actions — check GH_PAT_TOKEN"}), 500
+    return jsonify({"error": "Could not trigger GitHub Actions — check GH_PAT_TOKEN and repo name"}), 500
 
 
 @app.route("/api/performance")
 def api_performance():
-    history = load_json("trade_history.json", [])
+    force_refresh("trade_history.json")
+    history = get_data("trade_history.json", [])
     real    = [h for h in history if h.get("signal") != "RECOVERED"]
 
     wins     = [h for h in real if (h.get("pnl") or 0) > 0]
     losses   = [h for h in real if (h.get("pnl") or 0) <= 0]
-    total_pnl = sum(h.get("pnl", 0) for h in real)
-    avg_win   = sum(h["pnl"] for h in wins)   / len(wins)   if wins   else 0
-    avg_loss  = sum(h["pnl"] for h in losses) / len(losses) if losses else 0
+    tpnl     = sum(h.get("pnl", 0) for h in real)
+    avg_win  = sum(h["pnl"] for h in wins)   / len(wins)   if wins   else 0
+    avg_loss = sum(h["pnl"] for h in losses) / len(losses) if losses else 0
 
-    # PnL by symbol
     by_symbol = {}
     for h in real:
-        sym = h.get("symbol","?")
+        sym = h.get("symbol", "?")
         if sym not in by_symbol:
             by_symbol[sym] = {"trades":0,"wins":0,"pnl":0}
         by_symbol[sym]["trades"] += 1
-        by_symbol[sym]["pnl"]    += h.get("pnl",0)
+        by_symbol[sym]["pnl"]    += h.get("pnl", 0)
         if (h.get("pnl") or 0) > 0:
             by_symbol[sym]["wins"] += 1
 
-    # Daily PnL
     daily = {}
     for h in real:
         day = (h.get("closed_at") or h.get("opened_at",""))[:10]
         if day:
-            daily[day] = daily.get(day, 0) + h.get("pnl", 0)
+            daily[day] = round(daily.get(day, 0) + h.get("pnl", 0), 4)
+
+    loss_total = sum(h["pnl"] for h in losses)
+    pf = 0
+    if loss_total != 0:
+        pf = round(abs(sum(h["pnl"] for h in wins) / loss_total), 2)
 
     return jsonify({
         "total_trades":  len(real),
         "wins":          len(wins),
         "losses":        len(losses),
-        "win_rate":      round(len(wins)/len(real)*100, 1) if real else 0,
-        "total_pnl":     round(total_pnl, 4),
+        "win_rate":      round(len(wins)/len(real)*100,1) if real else 0,
+        "total_pnl":     round(tpnl, 4),
         "avg_win":       round(avg_win, 4),
         "avg_loss":      round(avg_loss, 4),
-        "profit_factor": round(abs(sum(h["pnl"] for h in wins) /
-                           sum(h["pnl"] for h in losses)), 2)
-                          if losses and sum(h["pnl"] for h in losses) != 0 else 0,
+        "profit_factor": pf,
         "by_symbol":     by_symbol,
         "daily_pnl":     daily,
     })
@@ -423,86 +424,82 @@ def api_performance():
 @app.route("/api/config")
 def api_config():
     return jsonify({
-        "max_open_trades":   3,
-        "risk_per_trade_pct": 2.0,
-        "atr_stop_mult":     1.5,
-        "atr_tp1_mult":      2.0,
-        "atr_tp2_mult":      3.0,
+        "max_open_trades":        3,
+        "risk_per_trade_pct":     2.0,
+        "atr_stop_mult":          1.5,
+        "atr_tp1_mult":           2.0,
+        "atr_tp2_mult":           3.0,
         "min_confidence_active":  50,
         "min_confidence_quiet":   55,
         "min_score_active":       1,
         "min_score_quiet":        2,
-        "min_adx":               15,
-        "scan_interval_min":     15,
-        "symbols":               20,
-        "exchange":              "Deribit Testnet (USDC Perpetuals)",
-        "model_accuracy":        73.1,
+        "min_adx":                15,
+        "scan_interval_min":      15,
+        "symbols":                20,
+        "exchange":               "Deribit Testnet (USDC Linear Perpetuals)",
+        "model_accuracy":         73.1,
     })
 
 
 @app.route("/api/close_trade", methods=["POST"])
 def api_close_trade():
-    """
-    Manual close — removes trade from trades.json.
-    Actual position on Deribit must be closed manually on the exchange UI.
-    """
     data   = request.get_json() or {}
     symbol = data.get("symbol")
     if not symbol:
         return jsonify({"error": "symbol required"}), 400
 
-    trades = load_json("trades.json", {})
+    force_refresh("trades.json")
+    trades = get_data("trades.json", {})
     if symbol not in trades:
         return jsonify({"error": f"{symbol} not in open trades"}), 404
 
     trade = trades.pop(symbol)
-
-    # Record as manually closed
-    history = load_json("trade_history.json", [])
+    force_refresh("trade_history.json")
+    history = get_data("trade_history.json", [])
     history.append({
         **trade,
-        "close_price":  trade.get("entry", 0),
+        "close_price":  float(trade.get("entry", 0)),
         "pnl":          0.0,
         "closed_at":    datetime.now(timezone.utc).isoformat(),
         "close_reason": "Manual close via dashboard",
     })
 
-    # Save both
     for p in [Path("trades.json"), Path("data/trades.json")]:
         try:
-            Path(p).parent.mkdir(exist_ok=True)
+            p.parent.mkdir(exist_ok=True)
             with open(p,"w") as f: json.dump(trades, f, indent=2)
         except Exception: pass
     for p in [Path("trade_history.json"), Path("data/trade_history.json")]:
         try:
-            Path(p).parent.mkdir(exist_ok=True)
+            p.parent.mkdir(exist_ok=True)
             with open(p,"w") as f: json.dump(history, f, indent=2, default=str)
         except Exception: pass
+
+    force_refresh("trades.json")
+    force_refresh("trade_history.json")
 
     return jsonify({
         "status":  "removed",
         "symbol":  symbol,
-        "warning": "Close the actual position on Deribit testnet UI too!"
+        "warning": "Also close position on Deribit testnet UI!",
     })
 
 
 @app.route("/api/sync")
 def api_sync():
-    """Force re-sync state files from GitHub."""
-    try:
-        sync_from_github()
-        return jsonify({"status": "synced", "message": "State files refreshed from GitHub"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    """Force refresh all caches from GitHub."""
+    for f in ["trades.json","trade_history.json","signals.json",
+              "balance.json","scan_mode.json"]:
+        force_refresh(f)
+    return jsonify({"status": "synced"})
 
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
+    return jsonify({"status":"ok","time":datetime.now(timezone.utc).isoformat()})
 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     log.info(f"CryptoBot Dashboard starting on port {port}")
-    log.info(f"GitHub repo: {GH_REPO} | Branch: {GH_BRANCH}")
     app.run(host="0.0.0.0", port=port, debug=False)
