@@ -57,14 +57,56 @@ def execute_trade(deribit, symbol, signal, entry, atr, confidence, score, reason
     except Exception as e: log.error(f"❌ Failed {symbol}: {e}"); return False
 
 def run_execution_scan():
-    run, mode, vol, _ = should_scan()
-    if not run: return
+    log.info(f"\n{'═'*56}\nSCAN START — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n{'═'*56}")
+
+    run, mode, vol, reason = should_scan()
+    if not run:
+        log.info(f"  SKIPPED: {reason}")
+        return
+
     deribit = DeribitClient(os.getenv("DERIBIT_CLIENT_ID"), os.getenv("DERIBIT_CLIENT_SECRET"))
     deribit.test_connection()
+    
+    # Load AI Model
+    pipeline = joblib.load(MODEL_FILE)
+    thresholds = get_mode_thresholds(mode)
+    eff_risk = get_effective_risk(mode, vol)
+    
     balance = deribit.get_total_equity_usd()
     
-    # Logic to load model and loop symbols...
-    log.info(f"Scanning at ${balance:.2f} balance...")
+    # Maintenance
+    clean_invalid_trades(deribit)
+    # Note: ensure check_open_trades is defined in your file or imported
+    try:
+        check_open_trades(deribit)
+    except NameError:
+        log.warning("check_open_trades not implemented, skipping monitoring...")
 
-if __name__ == "__main__":
-    run_execution_scan()
+    log.info(f"Scanning {len(SYMBOLS)} coins | Mode: {mode['label']} | Risk: {eff_risk}")
+
+    found = 0
+    for symbol in SYMBOLS:
+        # Check if we have room for more trades
+        current_trades = load_json(TRADES_FILE, {})
+        if len(current_trades) >= MAX_OPEN_TRADES:
+            log.info("  Max trades reached (3/3). Stopping scan.")
+            break
+
+        log.info(f"  ── Checking {symbol} ──")
+        sig = generate_signal(symbol, pipeline, thresholds)
+        
+        if sig:
+            found += 1
+            log.info(f"  🚀 SIGNAL FOUND: {sig['signal']} {symbol} (Conf: {sig['confidence']}%)")
+            success = execute_trade(
+                deribit, 
+                sig["symbol"], sig["signal"], sig["entry"], sig["atr"], 
+                sig["confidence"], sig["score"], sig["reasons"], 
+                eff_risk, balance
+            )
+            if success:
+                time.sleep(2) # Prevent rate limits
+        else:
+            time.sleep(0.3) # Save CPU
+
+    log.info(f"\n{'═'*56}\nSCAN COMPLETE — Found {found} signal(s)\n{'═'*56}")
