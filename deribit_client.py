@@ -98,13 +98,19 @@ class DeribitClient:
         return round(round(price / t) * t, 8)
 
     def round_amount(self, symbol, raw):
-        """Dynamic rounding based on instrument tick size to stop -32602 errors"""
+        """Exchange-Proof Rounding: Dynamically matches the exchange's precision requirements"""
         step = self.get_min_trade_amount(symbol)
-        # Calculate decimals needed based on the min_trade_amount (e.g., 0.0001 -> 4)
-        precision = abs(int(math.log10(step))) if step < 1 else 0
         
+        # Calculate precision from the actual step size (e.g. 0.0001 -> 4)
+        if step < 1:
+            precision = len(str(step).rstrip('0').split('.')[1])
+        else:
+            precision = 0
+            
         res = max(step, math.floor(raw / step) * step)
-        return round(res, precision)
+        
+        # 🟢 CRITICAL: Force type based on precision to satisfy -32602
+        return round(float(res), precision) if precision > 0 else int(res)
 
     def calc_contracts(self, symbol, balance_usd, entry, stop, risk_mult=1.0):
         risk_usd = balance_usd * 0.01 * risk_mult
@@ -127,16 +133,18 @@ class DeribitClient:
     def get_positions(self): return [p for p in self._get("/private/get_positions", {"currency": "USDC", "kind": "future"}) if float(p.get("size", 0)) != 0]
 
     def place_market_order(self, symbol, side, amount):
-        """Ensures amount is exactly the type Deribit expects"""
-        # 🟢 THE FIX: Re-round right before sending to strip any hidden float noise
+        """Sends clean, exchange-validated amounts"""
         safe_amount = self.round_amount(symbol, amount)
         
-        return self._post(f"/private/{side.lower()}", {
+        # Construct the body with the exact type needed
+        params = {
             "instrument_name": self.get_instrument_name(symbol),
-            "amount": float(safe_amount), # Deribit USDC perps prefer explicit floats
-            "type": "market", 
+            "amount": safe_amount,
+            "type": "market",
             "time_in_force": "immediate_or_cancel"
-        })
+        }
+        
+        return self._post(f"/private/{side.lower()}", params)
         
     def place_limit_order(self, symbol, side, amount, price, stop_price=None):
         p = {"instrument_name": self.get_instrument_name(symbol), "amount": amount, "price": self.round_price(symbol, price), "reduce_only": True}
