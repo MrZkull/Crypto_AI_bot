@@ -1,5 +1,6 @@
 import os, json, time, logging, requests, joblib
 import pandas as pd
+import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -34,7 +35,7 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
         except: continue
     return pd.DataFrame()
 
-# ════════════ SIGNAL LOGIC (WITH FULL DETAILS) ════════════════════════
+# ════════════ SIGNAL LOGIC (FIXED FOR NaN ERRORS) ═════════════════════
 
 def generate_signal(symbol, pipeline, thresholds):
     try:
@@ -43,36 +44,43 @@ def generate_signal(symbol, pipeline, thresholds):
             log.info(f"      ML: WAITING (Insufficient Market Data)")
             return None
         
-        df15 = add_indicators(raw_entry)
-        df1h = add_indicators(get_data(symbol, TIMEFRAME_CONFIRM))
+        # Calculate indicators
+        df15 = add_indicators(raw_entry).fillna(0) # 🟢 FIX: Fill NaNs to prevent AI crash
+        raw_1h = get_data(symbol, TIMEFRAME_CONFIRM)
+        df1h = add_indicators(raw_1h).fillna(0) if not raw_1h.empty else pd.DataFrame()
 
         row = df15.iloc[-1].copy()
-        r1h = df1h.iloc[-1] if not df1h.empty else pd.Series(dtype=float)
+        r1h = df1h.iloc[-1] if not df1h.empty else pd.Series(0, index=df15.columns)
         
-        # Prepare features
+        # Bind 1h features specifically
+        row["rsi_1h"] = float(r1h.get("rsi", 50))
+        row["adx_1h"] = float(r1h.get("adx", 0))
+        row["trend_1h"] = float(r1h.get("trend", 0))
+
+        # 🟢 PILLAR: DETAILED LOGS (ML, ADX, SCORE)
         af = pipeline["all_features"]
-        X = pd.DataFrame([row[af].values], columns=af)
-        Xs = pipeline["selector"].transform(X)
+        
+        # Final NaN check before AI
+        X_raw = pd.DataFrame([row[af].values], columns=af).replace([np.inf, -np.inf], 0).fillna(0)
+        
+        Xs = pipeline["selector"].transform(X_raw)
         prob = pipeline["ensemble"].predict_proba(Xs)[0]
         sig = {0: "BUY", 1: "SELL", 2: "NO_TRADE"}[pipeline["ensemble"].predict(Xs)[0]]
         conf = round(float(max(prob)) * 100, 1)
 
-        # 🟢 LOG DETAIL 1: ML Prediction
         log.info(f"      ML: {sig} {conf}% (need ≥{thresholds['min_confidence']}%)")
         if sig == "NO_TRADE" or conf < thresholds["min_confidence"]: 
             return None
 
-        # 🟢 LOG DETAIL 2: ADX Trend
         adx = float(row.get("adx", 0))
         log.info(f"      ADX: {adx:.1f} (need ≥{thresholds['min_adx']})")
         if adx < thresholds["min_adx"]: 
             return None
 
-        # 🟢 LOG DETAIL 3: Score
+        # Score Logic
         score = 0
         if conf >= 65: score += 1
         if adx > 20: score += 1
-        # Add RSI check for score
         rsi = float(row.get("rsi", 50))
         if (sig == "BUY" and rsi < 55) or (sig == "SELL" and rsi > 45): score += 1
         
@@ -83,7 +91,7 @@ def generate_signal(symbol, pipeline, thresholds):
         return {"symbol": symbol, "signal": sig, "confidence": conf, "score": score,
                 "entry": float(row["close"]), "atr": float(row["atr"])}
     except Exception as e:
-        log.error(f"      Error: {e}")
+        log.error(f"      Error: {e}") # 🟢 Will now catch and log instead of crashing
         return None
 
 # ════════════ EXECUTION & MAIN ════════════════════════════════════════
