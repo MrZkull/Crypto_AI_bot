@@ -1,11 +1,3 @@
-# dashboard_api.py — All dashboard issues fixed:
-# 1. AI% and Score now show correctly (fetched from GitHub)
-# 2. Scan Now button works (correct workflow dispatch)
-# 3. 3rd trade shows (reads from GitHub not stale local file)
-# 4. Recent Signals, History, Performance all updating
-# 5. Balance reads live from Deribit via background thread
-# 6. All panels update on every API call
-
 import os, json, base64, threading, time, logging, requests
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,13 +16,9 @@ GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
 GH_REPO   = os.getenv("GITHUB_REPO",  "Elliot14R/Crypto_AI_bot")
 GH_BRANCH = os.getenv("GITHUB_BRANCH","main")
 
-# In-memory cache — refreshed every 2 minutes from GitHub
 _cache      = {}
 _cache_time = {}
-CACHE_TTL   = 120   # seconds
-
-
-# ── GitHub fetcher (base64 decode) ────────────────────────────────────
+CACHE_TTL   = 120   
 
 def _gh_headers():
     return {
@@ -39,7 +27,6 @@ def _gh_headers():
     }
 
 def fetch_from_github(filename: str) -> dict | list | None:
-    """Fetch a JSON file from GitHub repo, decode base64, parse JSON."""
     if not GH_TOKEN or not GH_REPO:
         return None
     for path in [f"data/{filename}", filename]:
@@ -56,17 +43,14 @@ def fetch_from_github(filename: str) -> dict | list | None:
     return None
 
 def get_data(filename: str, default):
-    """Get data: GitHub cache → local file → default."""
     now = time.time()
     if filename in _cache and now - _cache_time.get(filename, 0) < CACHE_TTL:
         return _cache[filename]
 
-    # Try GitHub first (always fresh)
     gh_data = fetch_from_github(filename)
     if gh_data is not None:
         _cache[filename]      = gh_data
         _cache_time[filename] = now
-        # Also write to local disk for next startup
         try:
             Path(filename).write_text(json.dumps(gh_data, indent=2, default=str))
             Path("data").mkdir(exist_ok=True)
@@ -75,7 +59,6 @@ def get_data(filename: str, default):
             pass
         return gh_data
 
-    # Fallback: local disk
     for p in [Path(filename), Path("data") / filename]:
         try:
             if p.exists():
@@ -87,7 +70,6 @@ def get_data(filename: str, default):
             pass
     return default
 
-
 def get_log_lines(n=200) -> str:
     for p in [Path("bot.log"), Path("data/bot.log")]:
         try:
@@ -98,11 +80,7 @@ def get_log_lines(n=200) -> str:
     return ""
 
 def force_refresh(filename: str):
-    """Invalidate cache for a file."""
     _cache_time[filename] = 0
-
-
-# ── Background sync thread ────────────────────────────────────────────
 
 def _background_sync():
     files = ["trades.json","trade_history.json","signals.json",
@@ -118,9 +96,6 @@ def _background_sync():
         time.sleep(90)
 
 threading.Thread(target=_background_sync, daemon=True).start()
-
-
-# ── Routes ────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -142,7 +117,6 @@ def static_files(path):
         return send_from_directory("dashboard_static", path)
     except Exception:
         return send_from_directory("dashboard_static", "index.html")
-
 
 @app.route("/api/status")
 def api_status():
@@ -189,12 +163,10 @@ def api_status():
         "open_positions": balance.get("open_positions", 0),
     })
 
-
 @app.route("/api/balance")
 def api_balance():
     force_refresh("balance.json")
     bal = get_data("balance.json", {})
-    # Try live Deribit fetch
     try:
         cid    = os.getenv("DERIBIT_CLIENT_ID","")
         secret = os.getenv("DERIBIT_CLIENT_SECRET","")
@@ -218,19 +190,12 @@ def api_balance():
         log.warning(f"Live balance: {e}")
     return jsonify({**bal,"ok":True})
 
-
 @app.route("/api/trades/open")
 def api_open_trades():
-    """
-    Reads trades from GitHub (always fresh).
-    Enriches with live Binance price for unrealised PnL.
-    Shows correct AI%, Score, SL, TP1, TP2.
-    """
     force_refresh("trades.json")
     trades = get_data("trades.json", {})
     result = []
 
-    # Bulk price fetch
     symbols  = [s for s,t in trades.items() if not t.get("closed")]
     live_prices = {}
     try:
@@ -248,7 +213,6 @@ def api_open_trades():
         entry = float(t.get("entry", 0) or 0)
         live  = live_prices.get(symbol, 0.0)
 
-        # Unrealised PnL
         upnl    = 0.0
         pnl_pct = 0.0
         if live > 0 and entry > 0:
@@ -260,7 +224,6 @@ def api_open_trades():
                 upnl    = (entry - live) * qty
                 pnl_pct = (entry - live) / entry * 100
 
-        # Progress toward TP2
         tp2      = float(t.get("tp2", 0) or 0)
         progress = 0.0
         if entry > 0 and tp2 > 0 and live > 0:
@@ -280,13 +243,12 @@ def api_open_trades():
             "stop":          float(t.get("stop",  0) or 0),
             "tp1":           float(t.get("tp1",   0) or 0),
             "tp2":           float(t.get("tp2",   0) or 0),
-            "confidence":    t.get("confidence",  0),   # AI%
-            "score":         t.get("score",        0),   # Score
-            "reasons":       t.get("reasons",      []),
+            "confidence":    t.get("confidence",  0),
+            "score":         t.get("score",       0),
+            "reasons":       t.get("reasons",     []),
         })
 
     return jsonify(result)
-
 
 @app.route("/api/trades/history")
 def api_trade_history():
@@ -294,7 +256,6 @@ def api_trade_history():
     history = get_data("trade_history.json", [])
     real    = [h for h in history if h.get("signal") != "RECOVERED"]
     return jsonify(list(reversed(real[-100:])))
-
 
 @app.route("/api/signals")
 def api_signals():
@@ -311,11 +272,9 @@ def api_signals():
 
     return jsonify(list(reversed(signals[-limit:])))
 
-
 @app.route("/api/log")
 def api_log():
     return jsonify({"log": get_log_lines(200), "lines": 200})
-
 
 @app.route("/api/market")
 def api_market():
@@ -342,13 +301,13 @@ def api_market():
         log.warning(f"Market data: {e}")
     return jsonify(prices)
 
-
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
-    """Trigger GitHub Actions workflow_dispatch."""
+    """Trigger GitHub Actions workflow_dispatch with explicit error logging."""
     if not GH_TOKEN or not GH_REPO:
         return jsonify({"error": "GH_PAT_TOKEN or GITHUB_REPO not configured"}), 400
 
+    errors = []
     for workflow in ["crypto_bot.yml", "crypto_bot.yaml", "main.yml"]:
         try:
             r = requests.post(
@@ -359,20 +318,22 @@ def api_scan():
             )
             if r.status_code in (204, 200):
                 log.info(f"✅ GitHub Actions triggered via {workflow}")
-                # Invalidate all caches so fresh data shows after scan
-                for f in ["trades.json","balance.json","signals.json",
-                          "trade_history.json","scan_mode.json"]:
+                for f in ["trades.json","balance.json","signals.json","trade_history.json","scan_mode.json"]:
                     force_refresh(f)
                 return jsonify({
                     "status":   "triggered",
                     "workflow": workflow,
                     "message":  "Scan started — results appear in ~60 seconds",
                 })
+            else:
+                # 🟢 NEW: Capture the exact reason GitHub rejected the workflow dispatch
+                err_msg = f"{workflow} failed: {r.status_code} - {r.text}"
+                log.error(err_msg)
+                errors.append(err_msg)
         except Exception as e:
             log.warning(f"Workflow {workflow}: {e}")
 
-    return jsonify({"error": "Could not trigger GitHub Actions — check GH_PAT_TOKEN and repo name"}), 500
-
+    return jsonify({"error": "GitHub API rejected the request", "details": errors}), 500
 
 @app.route("/api/performance")
 def api_performance():
@@ -420,7 +381,6 @@ def api_performance():
         "daily_pnl":     daily,
     })
 
-
 @app.route("/api/config")
 def api_config():
     return jsonify({
@@ -439,7 +399,6 @@ def api_config():
         "exchange":               "Deribit Testnet (USDC Linear Perpetuals)",
         "model_accuracy":         73.1,
     })
-
 
 @app.route("/api/close_trade", methods=["POST"])
 def api_close_trade():
@@ -484,7 +443,6 @@ def api_close_trade():
         "warning": "Also close position on Deribit testnet UI!",
     })
 
-
 @app.route("/api/sync")
 def api_sync():
     """Force refresh all caches from GitHub."""
@@ -493,11 +451,9 @@ def api_sync():
         force_refresh(f)
     return jsonify({"status": "synced"})
 
-
 @app.route("/health")
 def health():
     return jsonify({"status":"ok","time":datetime.now(timezone.utc).isoformat()})
-
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
