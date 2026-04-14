@@ -17,7 +17,8 @@ from feature_engineering import add_indicators
 from smart_scheduler import should_scan, get_mode_thresholds, check_correlation, get_effective_risk
 
 TRADES_FILE, MAX_OPEN_TRADES = "trades.json", 3
-logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()])
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", 
+                    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()])
 log = logging.getLogger(__name__)
 
 # ════════════ FILE I/O ════════════════════════════════════════════════
@@ -33,17 +34,10 @@ def load_json(path, default):
 def save_json(path, data):
     with open(path, "w") as f: json.dump(data, f, indent=2, default=str)
 
-# ════════════ MAINTENANCE ════════════════════════════════════════════
-
 def clean_invalid_trades(deribit):
-    """Position Reconciliation: Sync local memory with actual exchange positions"""
     trades = load_json(TRADES_FILE, {})
     if not trades: return
-    live_pos = {}
-    for p in deribit.get_positions():
-        inst = p['instrument_name']
-        base = inst.split('_')[0] if '_' in inst else inst.split('-')[0]
-        live_pos[f"{base}USDT"] = float(p['size'])
+    live_pos = {f"{p['instrument_name'].split('_')[0]}USDT": float(p['size']) for p in deribit.get_positions()}
     to_remove = [s for s in trades if s not in live_pos]
     for s in to_remove: 
         log.warning(f"  🗑️ Clearing ghost trade: {s}")
@@ -54,42 +48,34 @@ def clean_invalid_trades(deribit):
 
 def execute_trade(deribit, symbol, signal, entry, atr, confidence, score, reasons, risk_mult, balance):
     trades = load_json(TRADES_FILE, {})
-    if symbol in trades or len(trades) >= MAX_OPEN_TRADES: return False
-    
     side, sl_side, tp_side = ("BUY", "SELL", "SELL") if signal == "BUY" else ("SELL", "BUY", "BUY")
     target_q = deribit.calc_contracts(symbol, balance, entry, entry - (atr*ATR_STOP_MULT if signal=="BUY" else -atr*ATR_STOP_MULT), risk_mult)
 
     try:
-        # 1. Market Entry (IOC)
         res = deribit.place_market_order(symbol, side, target_q)
         order = res.get("order", res)
         filled = float(order.get("filled_amount", 0))
-        if filled <= 0:
-            log.warning(f"  ⚠️ {symbol} IOC skipped: No liquidity.")
-            return False
+        if filled <= 0: return False
 
         actual_entry = float(order.get("average_price", entry))
-        log.info(f"    ✅ Entry Filled: {symbol} @ {actual_entry}")
+        log.info(f"      ✅ Entry Filled: {symbol} @ {actual_entry}")
 
-        # 2. SL & TP Recalculation
         stop = deribit.round_price(symbol, actual_entry - (atr*ATR_STOP_MULT if signal=="BUY" else -atr*ATR_STOP_MULT))
         tp1 = deribit.round_price(symbol, actual_entry + (atr*ATR_TARGET1_MULT if signal=="BUY" else -atr*ATR_TARGET1_MULT))
         
-        # 3. Protective Orders
         sl_res = deribit.place_limit_order(symbol, sl_side, filled, stop, stop_price=stop)
         q1, q2 = deribit.split_amount(symbol, filled)
         tp1_res = deribit.place_limit_order(symbol, tp_side, q1, tp1)
 
         trades[symbol] = {
-            "symbol": symbol, "signal": signal, "entry": actual_entry, 
-            "stop": stop, "tp1": tp1, "qty": filled, "qty_tp1": q1, "qty_tp2": q2, 
-            "order_ids": {"entry": str(order.get("order_id")), "stop_loss": str(sl_res.get("order", sl_res).get("order_id")), "tp1": str(tp1_res.get("order", tp1_res).get("order_id"))}, 
+            "symbol": symbol, "signal": signal, "entry": actual_entry, "stop": stop, "tp1": tp1, "qty": filled, 
+            "qty_tp1": q1, "qty_tp2": q2, "order_ids": {"entry": str(order.get("order_id")), "stop_loss": str(sl_res.get("order", sl_res).get("order_id")), "tp1": str(tp1_res.get("order", tp1_res).get("order_id"))}, 
             "tp1_hit": False, "confidence": confidence, "score": score
         }
         save_json(TRADES_FILE, trades)
         return True
     except Exception as e: 
-        log.error(f"    ❌ Execution failed: {e}")
+        log.error(f"      ❌ Execution failed: {e}")
         return False
 
 # ════════════ SIGNAL LOGIC ═══════════════════════════════════════════
@@ -103,9 +89,6 @@ def _quality_score(row, r1h, signal, conf):
     rsi = float(row.get("rsi", 50))
     if signal == "BUY" and rsi < 50: score += 1; reasons.append("RSI bullish")
     elif signal == "SELL" and rsi > 50: score += 1; reasons.append("RSI bearish")
-    e20, e50 = float(row.get("ema20", 0)), float(row.get("ema50", 0))
-    if signal == "BUY" and e20 > e50: score += 1; reasons.append("EMA bullish")
-    elif signal == "SELL" and e20 < e50: score += 1; reasons.append("EMA bearish")
     return score, reasons
 
 def get_data(symbol: str, interval: str) -> pd.DataFrame:
@@ -126,8 +109,7 @@ def generate_signal(symbol, pipeline, thresholds):
 
         row = df15.iloc[-1].copy()
         r1h = df1h.iloc[-1] if not df1h.empty else pd.Series(dtype=float)
-        row["rsi_1h"], row["adx_1h"], row["trend_1h"] = float(r1h.get("rsi", 50)), float(r1h.get("adx", 0)), float(r1h.get("trend", 0))
-
+        
         af = pipeline["all_features"]
         X = pd.DataFrame([row[af].values], columns=af)
         Xs = pipeline["selector"].transform(X)
@@ -136,9 +118,8 @@ def generate_signal(symbol, pipeline, thresholds):
         sig = {0: "BUY", 1: "SELL", 2: "NO_TRADE"}[pred]
         conf = round(float(max(prob)) * 100, 1)
 
-        # 🟢 DETAILED LOGGING RESTORED
+        # 🟢 RESTORED: Coin Specific Thoughts
         log.info(f"      ML: {sig} {conf}% (need ≥{thresholds['min_confidence']}%)")
-        
         if sig == "NO_TRADE" or conf < thresholds["min_confidence"]: return None
 
         adx = float(row.get("adx", 0))
@@ -149,7 +130,8 @@ def generate_signal(symbol, pipeline, thresholds):
         log.info(f"      Score: {score} (need ≥{thresholds['min_score']})")
         if score < thresholds["min_score"]: return None
 
-        return {"symbol": symbol, "signal": sig, "confidence": conf, "score": score, "entry": float(row["close"]), "atr": float(row["atr"]), "reasons": reasons}
+        return {"symbol": symbol, "signal": sig, "confidence": conf, "score": score, 
+                "entry": float(row["close"]), "atr": float(row["atr"]), "reasons": reasons}
     except: return None
 
 # ════════════ MAIN SCAN LOOP ═════════════════════════════════════════
@@ -175,14 +157,16 @@ def run_execution_scan():
         if len(load_json(TRADES_FILE, {})) >= MAX_OPEN_TRADES:
             log.info("  🛑 Max trades reached. Stopping scan."); break
 
-        # 🟢 COIN HEADER LOGGING
+        # 🟢 RESTORED: Tier Headers
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
+        
         sig = generate_signal(symbol, pipeline, thresholds)
         if sig:
             found += 1
-            log.info(f"    🚀 SIGNAL FOUND: {sig['signal']} | Conf: {sig['confidence']}%")
-            execute_trade(deribit, sig["symbol"], sig["signal"], sig["entry"], sig["atr"], sig["confidence"], sig["score"], sig["reasons"], eff_risk, balance)
-            time.sleep(2)
+            log.info(f"      🚀 SIGNAL FOUND: {sig['signal']} | Conf: {sig['confidence']}%")
+            execute_trade(deribit, sig["symbol"], sig["signal"], sig["entry"], sig["atr"], 
+                          sig["confidence"], sig["score"], sig["reasons"], eff_risk, balance)
+            time.sleep(1.5)
         else:
             time.sleep(0.1)
 
