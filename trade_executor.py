@@ -19,8 +19,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                     handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()])
 log = logging.getLogger(__name__)
 
-# ════════════ DATA FETCHING ═══════════════════════════════════════════
-
 def get_data(symbol: str, interval: str) -> pd.DataFrame:
     urls = ["https://data-api.binance.vision/api/v3/klines", "https://api.binance.com/api/v3/klines"]
     for url in urls:
@@ -35,8 +33,6 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
         except: continue
     return pd.DataFrame()
 
-# ════════════ SIGNAL LOGIC (FIXED FOR NaN ERRORS) ═════════════════════
-
 def generate_signal(symbol, pipeline, thresholds):
     try:
         raw_entry = get_data(symbol, TIMEFRAME_ENTRY)
@@ -44,40 +40,31 @@ def generate_signal(symbol, pipeline, thresholds):
             log.info(f"      ML: WAITING (Insufficient Market Data)")
             return None
         
-        # Calculate indicators
-        df15 = add_indicators(raw_entry).fillna(0) # 🟢 FIX: Fill NaNs to prevent AI crash
+        df15 = add_indicators(raw_entry).fillna(0)
         raw_1h = get_data(symbol, TIMEFRAME_CONFIRM)
         df1h = add_indicators(raw_1h).fillna(0) if not raw_1h.empty else pd.DataFrame()
 
         row = df15.iloc[-1].copy()
         r1h = df1h.iloc[-1] if not df1h.empty else pd.Series(0, index=df15.columns)
         
-        # Bind 1h features specifically
         row["rsi_1h"] = float(r1h.get("rsi", 50))
         row["adx_1h"] = float(r1h.get("adx", 0))
         row["trend_1h"] = float(r1h.get("trend", 0))
-
-        # 🟢 PILLAR: DETAILED LOGS (ML, ADX, SCORE)
+        
         af = pipeline["all_features"]
-        
-        # Final NaN check before AI
         X_raw = pd.DataFrame([row[af].values], columns=af).replace([np.inf, -np.inf], 0).fillna(0)
-        
         Xs = pipeline["selector"].transform(X_raw)
         prob = pipeline["ensemble"].predict_proba(Xs)[0]
         sig = {0: "BUY", 1: "SELL", 2: "NO_TRADE"}[pipeline["ensemble"].predict(Xs)[0]]
         conf = round(float(max(prob)) * 100, 1)
 
         log.info(f"      ML: {sig} {conf}% (need ≥{thresholds['min_confidence']}%)")
-        if sig == "NO_TRADE" or conf < thresholds["min_confidence"]: 
-            return None
+        if sig == "NO_TRADE" or conf < thresholds["min_confidence"]: return None
 
         adx = float(row.get("adx", 0))
         log.info(f"      ADX: {adx:.1f} (need ≥{thresholds['min_adx']})")
-        if adx < thresholds["min_adx"]: 
-            return None
+        if adx < thresholds["min_adx"]: return None
 
-        # Score Logic
         score = 0
         if conf >= 65: score += 1
         if adx > 20: score += 1
@@ -85,31 +72,38 @@ def generate_signal(symbol, pipeline, thresholds):
         if (sig == "BUY" and rsi < 55) or (sig == "SELL" and rsi > 45): score += 1
         
         log.info(f"      Score: {score} (need ≥{thresholds['min_score']})")
-        if score < thresholds["min_score"]: 
-            return None
+        if score < thresholds["min_score"]: return None
 
         return {"symbol": symbol, "signal": sig, "confidence": conf, "score": score,
                 "entry": float(row["close"]), "atr": float(row["atr"])}
     except Exception as e:
-        log.error(f"      Error: {e}") # 🟢 Will now catch and log instead of crashing
+        log.error(f"      Error: {e}")
         return None
 
-# ════════════ EXECUTION & MAIN ════════════════════════════════════════
-
 def execute_trade(deribit, symbol, signal, entry, atr, risk_mult, balance):
-    target_q = deribit.calc_contracts(symbol, balance, entry, entry - (atr*ATR_STOP_MULT if signal=="BUY" else -atr*ATR_STOP_MULT), risk_mult)
+    # 🟢 FIX: Force math into pure Python floats to prevent numpy datatypes leaking into JSON
+    target_q = deribit.calc_contracts(symbol, float(balance), float(entry), float(entry - (atr*ATR_STOP_MULT if signal=="BUY" else -atr*ATR_STOP_MULT)), float(risk_mult))
+    
+    if target_q <= 0:
+        log.warning(f"      ⚠️ Calculated quantity is 0 for {symbol}. Skipping.")
+        return False
+
+    side = "BUY" if signal == "BUY" else "SELL"
+    sl_side = "SELL" if signal == "BUY" else "BUY"
+    
     try:
-        res = deribit.place_market_order(symbol, signal, target_q)
+        res = deribit.place_market_order(symbol, side, target_q)
         order = res.get("order", res)
         filled = float(order.get("filled_amount", 0))
+        
         if filled > 0:
             actual = float(order.get("average_price", entry))
             stop = deribit.round_price(symbol, actual - (atr*ATR_STOP_MULT if signal=="BUY" else -atr*ATR_STOP_MULT))
             tp1 = deribit.round_price(symbol, actual + (atr*ATR_TARGET1_MULT if signal=="BUY" else -atr*ATR_TARGET1_MULT))
             
-            deribit.place_limit_order(symbol, "SELL" if signal=="BUY" else "BUY", filled, stop, stop_price=stop)
+            deribit.place_limit_order(symbol, sl_side, filled, stop, stop_price=stop)
             q1, _ = deribit.split_amount(symbol, filled)
-            deribit.place_limit_order(symbol, "SELL" if signal=="BUY" else "BUY", q1, tp1)
+            deribit.place_limit_order(symbol, sl_side, q1, tp1)
             
             trades = json.load(open("trades.json")) if Path("trades.json").exists() else {}
             trades[symbol] = {"symbol": symbol, "qty": filled, "entry": actual}
