@@ -99,34 +99,46 @@ def static_files(path):
 # ── /api/status ────────────────────────────────────────────────────────
 @app.route("/api/status")
 def api_status():
-    bust("trade_history.json"); bust("signals.json")
-    bust("scan_mode.json");     bust("trades.json"); bust("balance.json")
+    bust("trade_history.json")
+    bust("signals.json")
+    bust("scan_mode.json")
+    bust("trades.json")
+    bust("balance.json")
 
-    history   = get("trade_history.json", [])
-    signals   = get("signals.json",       [])
-    scan_mode = get("scan_mode.json",     {})
-    trades    = get("trades.json",         {})
-    balance   = get("balance.json",        {})
+    history = get("trade_history.json", [])
+    signals = get("signals.json", [])
+    scan_mode = get("scan_mode.json", {})
+    trades = get("trades.json", {})
+    balance = get("balance.json", {})
 
-    real      = [h for h in history if h.get("signal") != "RECOVERED"]
-    wins      = [h for h in real if (h.get("pnl") or 0) > 0]
-    tpnl      = sum(h.get("pnl", 0) for h in real)
+    # Filter out RECOVERED trades for stats
+    real = [h for h in history if h.get("signal") != "RECOVERED"]
+    wins = [h for h in real if (h.get("pnl") or 0) > 0]
+    tpnl = sum(h.get("pnl", 0) for h in real)
     win_rate = round(len(wins) / len(real) * 100, 1) if real else 0
 
-    today   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    t_sigs  = [s for s in signals if s.get("generated_at", "").startswith(today)]
-    buys    = sum(1 for s in t_sigs if s.get("signal") == "BUY")
-    sells   = sum(1 for s in t_sigs if s.get("signal") == "SELL")
-    mode    = scan_mode.get("mode", "active")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Count all signals today, not just executed ones
+    t_sigs = [s for s in signals if s.get("generated_at", "").startswith(today)]
+    buys = sum(1 for s in t_sigs if s.get("signal") == "BUY")
+    sells = sum(1 for s in t_sigs if s.get("signal") == "SELL")
+    mode = scan_mode.get("mode", "active")
 
     return jsonify({
-        "win_rate": win_rate, "wins": len(wins),
-        "losses": len(real) - len(wins), "total_pnl": round(tpnl, 4),
+        "win_rate": win_rate, 
+        "wins": len(wins),
+        "losses": len(real) - len(wins), 
+        "total_pnl": round(tpnl, 4),
         "total_trades": len(real),
         "open_trades": len([t for t in trades.values() if not t.get("closed")]),
-        "max_trades": 3, "scan_mode": mode, "mode_label": mode.upper(),
-        "min_confidence": 65, "min_score": 2,
-        "today_signals": len(t_sigs), "today_buys": buys, "today_sells": sells,
+        "max_trades": 3, 
+        "scan_mode": mode, 
+        "mode_label": mode.upper(),
+        "min_confidence": 65, 
+        "min_score": 2,
+        "today_signals": len(t_sigs), 
+        "today_buys": buys, 
+        "today_sells": sells,
         "model_accuracy": 73.1,
         "balance": balance.get("usdt", 0),
         "exchange": balance.get("exchange", "Deribit Testnet"),
