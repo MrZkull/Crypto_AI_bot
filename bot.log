@@ -7140,3 +7140,90 @@ SCAN — 2026-04-17 19:41 UTC
 ════════════════════════════════════════════════════════
 DONE — 9 signal(s) | $183816.62
 ════════════════════════════════════════════════════════
+2026-04-17 19:43:50,385 
+════════════════════════════════════════════════════════
+SCAN — 2026-04-17 19:43 UTC
+════════════════════════════════════════════════════════
+2026-04-17 19:43:51,046   ACTIVE HOURS | conf≥50% | score≥1 | ADX≥15 | ✓ Normal vol 0.42%
+2026-04-17 19:43:51,303 ✓ Deribit testnet authenticated
+2026-04-17 19:43:52,877 ✓ Tradeable: 19 — ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'AVAXUSDT', 'LINKUSDT', 'NEARUSDT', 'DOTUSDT', 'UNIUSDT', 'ADAUSDT', 'AAVEUSDT', 'INJUSDT', 'ARBUSDT', 'SUIUSDT', 'OPUSDT', 'SEIUSDT', 'FETUSDT', 'APTUSDT']
+2026-04-17 19:43:53,885 ✅ Deribit OK — $183305.96 | 19 symbols | POST:✅ (Routed as URL Params)
+2026-04-17 19:43:54,870   ACTIVE HOURS | conf≥50% | score≥1 | ADX≥15 | risk:1.00
+2026-04-17 19:43:54,871 
+[0] Balance...
+2026-04-17 19:43:58,675   Balance: $183325.76 | upnl:-2618.34 | positions:1
+2026-04-17 19:43:58,675 
+[1] Monitor open trades (TP/SL detection)...
+2026-04-17 19:43:58,675   No open trades
+2026-04-17 19:44:02,274   Balance: $183325.76 | upnl:-2618.34 | positions:1
+2026-04-17 19:44:02,274 
+[2] Clean ghost trades...
+2026-04-17 19:44:02,275 
+[3] Scanning 20 coins | Open:0/3
+2026-04-17 19:44:02,275     Tradeable: []
+2026-04-17 19:44:02,275 
+  ── BTCUSDT (👑 Big Three) ──
+2026-04-17 19:44:03,829     ML: BUY 51.2% (need ≥50%)
+2026-04-17 19:44:03,829     ADX: 24.5 (need ≥15)
+2026-04-17 19:44:03,830     Score: 2 (need ≥1)
+2026-04-17 19:44:03,830   Contracts: 0.4739 BTCUSDT (risk=$1833.26 stop_dist=514.1700)
+2026-04-17 19:44:03,830   BUY BTCUSDT total=0.4739 tp1=0.2369 tp2=0.237
+2026-04-17 19:44:03,830   SL=76847.01 TP1=78046.74 TP2=78389.52
+2026-04-17 19:44:04,353   ✅ MARKET BUY 0.4739 BTC_USDC-PERPETUAL id=USDC-198018888643 state=filled
+2026-04-17 19:44:04,353   ✅ Entry @ 77388.50
+2026-04-17 19:44:06,363   ✅ SL SELL 0.4739 BTC_USDC-PERPETUAL @ 76874.5 id=USDC-SLTS-18655 state=untriggered
+2026-04-17 19:44:06,363   ✅ SL @ 76874.50 id:USDC-SLTS-18655
+2026-04-17 19:44:06,527   ✅ TP SELL 0.2369 BTC_USDC-PERPETUAL @ 78074.0 id=USDC-198018897429 state=open
+2026-04-17 19:44:06,527   ✅ TP1 @ 78074.00 × 0.2369 id:USDC-198018897429
+2026-04-17 19:44:07,037   ✅ TP SELL 0.237 BTC_USDC-PERPETUAL @ 78417.0 id=USDC-198018899460 state=open
+2026-04-17 19:44:07,037   ✅ TP2 @ 78417.00 × 0.237 id:USDC-198018899460
+2026-04-17 19:44:07,841   ✅✅ TRADE OPENED: BTCUSDT BUY | SL:USDC-SLTS-18655 TP1:USDC-198018897429 TP2:USDC-198018899460
+2026-04-17 19:44:09,342 
+  ── ETHUSDT (👑 Big Three) ──
+2026-04-17 19:44:11,575     ML: BUY 45.5% (need ≥50%)
+2026-04-17 19:44:11,776 
+  ── BNBUSDT (👑 Big Three) ──
+2026-04-17 19:44:13,295     ML: BUY 49.6% (need ≥50%)
+2026-04-17 19:44:13,496 
+  ── SOLUSDT (⚡ High-Liquidity L1s) ──
+2026-04-17 19:44:15,077     ML: SELL 44.0% (need ≥50%)
+2026-04-17 19:44:15,277 
+  ── AVAXUSDT (⚡ High-Liquidity L1s) ──
+2026-04-17 19:44:16,405     ML: SELL 53.2% (need ≥50%)
+2026-04-17 19:44:16,406     ADX: 18.7 (need ≥15)
+2026-04-17 19:44:16,406     Score: 1 (need ≥1)
+2026-04-17 19:44:16,406   Contracts: 3733.7 AVAXUSDT (risk=$1833.26 stop_dist=0.1036)
+2026-04-17 19:44:16,406   SELL AVAXUSDT total=3733.7 tp1=1866.8 tp2=1866.9
+2026-04-17 19:44:16,406   SL=9.9236 TP1=9.6818 TP2=9.6127
+2026-04-17 19:44:16,565   ✅ MARKET SELL 3733.7 AVAX_USDC-PERPETUAL id=USDC-198018936856 state=filled
+2026-04-17 19:44:16,565   ✅ Entry @ 9.8087
+2026-04-17 19:44:18,222   ✅ SL BUY 3733.7 AVAX_USDC-PERPETUAL @ 9.912 id=USDC-SLTB-18656 state=untriggered
+2026-04-17 19:44:18,222   ✅ SL @ 9.9120 id:USDC-SLTB-18656
+2026-04-17 19:44:18,377   ✅ TP BUY 1866.8 AVAX_USDC-PERPETUAL @ 9.671 id=USDC-198018944296 state=open
+2026-04-17 19:44:18,378   ✅ TP1 @ 9.6710 × 1866.8 id:USDC-198018944296
+2026-04-17 19:44:18,539   ✅ TP BUY 1866.9 AVAX_USDC-PERPETUAL @ 9.601 id=USDC-198018945099 state=open
+2026-04-17 19:44:18,539   ✅ TP2 @ 9.6010 × 1866.9 id:USDC-198018945099
+2026-04-17 19:44:19,199   ✅✅ TRADE OPENED: AVAXUSDT SELL | SL:USDC-SLTB-18656 TP1:USDC-198018944296 TP2:USDC-198018945099
+2026-04-17 19:44:20,700 
+  ── NEARUSDT (⚡ High-Liquidity L1s) ──
+2026-04-17 19:44:22,274     ML: NO_TRADE 99.0% (need ≥50%)
+2026-04-17 19:44:22,475 
+  ── SUIUSDT (⚡ High-Liquidity L1s) ──
+2026-04-17 19:44:23,833     ML: SELL 63.0% (need ≥50%)
+2026-04-17 19:44:23,833     ADX: 24.6 (need ≥15)
+2026-04-17 19:44:23,833     Score: 2 (need ≥1)
+2026-04-17 19:44:23,834   Contracts: 36130 SUIUSDT (risk=$1833.26 stop_dist=0.0112)
+2026-04-17 19:44:23,834   SELL SUIUSDT total=36130 tp1=18065 tp2=18065
+2026-04-17 19:44:23,834   SL=1.0260 TP1=0.9999 TP2=0.9924
+2026-04-17 19:44:23,991   ✅ MARKET SELL 36130 SUI_USDC-PERPETUAL id=USDC-198018966872 state=open
+2026-04-17 19:44:23,991   ✅ Entry @ 0.9940
+2026-04-17 19:44:25,645   SL failed: invalid_trigger_price (Code:11036)
+2026-04-17 19:44:25,799   TP1 failed: other_reject invalid_reduce_only_order (Code:11030)
+2026-04-17 19:44:25,953   TP2 failed: other_reject invalid_reduce_only_order (Code:11030)
+2026-04-17 19:44:26,626   ✅✅ TRADE OPENED: SUIUSDT SELL | SL:! TP1:! TP2:!
+2026-04-17 19:44:28,127   🛑 Max trades (3) reached — stopping scan
+2026-04-17 19:44:29,848   Balance: $183532.22 | upnl:-2375.52 | positions:3
+2026-04-17 19:44:29,848 
+════════════════════════════════════════════════════════
+DONE — 3 signal(s) | $183325.76
+════════════════════════════════════════════════════════
