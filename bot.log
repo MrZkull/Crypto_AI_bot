@@ -8122,3 +8122,73 @@ SCAN — 2026-04-18 12:27 UTC
 2026-04-18 12:27:28,968 
 [3] MAX TRADES REACHED (3/3) — no new trades allowed
 2026-04-18 12:27:30,216   Balance: $180994.16 | upnl:+269.83 | positions:3
+2026-04-18 12:50:59,303 
+════════════════════════════════════════════════════════
+SCAN — 2026-04-18 12:50 UTC
+════════════════════════════════════════════════════════
+2026-04-18 12:51:00,160   WEEKEND MODE | conf≥50% | score≥1 | ADX≥15 | ✓ Normal vol 0.26%
+2026-04-18 12:51:00,513 ✓ Deribit testnet authenticated
+2026-04-18 12:51:00,613 ✓ Tradeable: 19 — ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'AVAXUSDT', 'LINKUSDT', 'NEARUSDT', 'DOTUSDT', 'UNIUSDT', 'ADAUSDT', 'AAVEUSDT', 'INJUSDT', 'ARBUSDT', 'SUIUSDT', 'OPUSDT', 'SEIUSDT', 'FETUSDT', 'APTUSDT']
+2026-04-18 12:51:01,031 ✅ Deribit OK — $179156.27 | 19 symbols | POST:✅ (Routed as URL Params)
+2026-04-18 12:51:02,143   WEEKEND MODE | conf≥50% | score≥1 | ADX≥15 | risk:0.75
+2026-04-18 12:51:02,143 
+[0] Balance...
+2026-04-18 12:51:03,278   Balance: $179156.27 | upnl:+237.80 | positions:1
+2026-04-18 12:51:03,278 
+[1] Monitor open trades (TP/SL detection)...
+2026-04-18 12:51:03,278   Monitoring 3 trade(s)
+2026-04-18 12:51:05,016   Balance: $179128.52 | upnl:+237.80 | positions:1
+2026-04-18 12:51:05,016 
+[2] Clean ghost trades...
+2026-04-18 12:51:05,317   🗑️ ETHUSDT: no live Deribit position — ghost trade
+2026-04-18 12:51:05,318   🗑️ BTCUSDT: no live Deribit position — ghost trade
+2026-04-18 12:51:05,320   ✅ Removed 2 ghost trade(s): ['ETHUSDT', 'BTCUSDT']
+2026-04-18 12:51:05,918 
+[3] Scanning 20 coins | Open:1/3
+2026-04-18 12:51:05,918     Tradeable: []
+2026-04-18 12:51:05,918 
+  ── BTCUSDT (👑 Big Three) ──
+2026-04-18 12:51:07,936     ML: BUY 46.1% (need ≥50%)
+2026-04-18 12:51:08,137 
+  ── ETHUSDT (👑 Big Three) ──
+2026-04-18 12:51:09,932     ML: SELL 52.7% (need ≥50%)
+2026-04-18 12:51:09,932     ADX: 62.2 (need ≥15)
+2026-04-18 12:51:09,932     Score: 1 (need ≥1)
+2026-04-18 12:51:09,932   Contracts: 15.194 ETHUSDT (risk=$1343.67 stop_dist=11.6700)
+2026-04-18 12:51:09,932   SELL ETHUSDT total=15.194 tp1=7.597 tp2=7.597
+2026-04-18 12:51:09,932   SL=2369.77 TP1=2342.54 TP2=2334.76
+2026-04-18 12:51:10,036   ✅ MARKET SELL 15.194 ETH_USDC-PERPETUAL id=USDC-198258146492 state=filled
+2026-04-18 12:51:10,036   ✅ Entry @ 2358.10
+2026-04-18 12:51:11,638   ✅ SL BUY 15.194 ETH_USDC-PERPETUAL @ 2369.75 id=USDC-SLTB-18733 state=untriggered
+2026-04-18 12:51:11,638   ✅ SL @ 2369.75 id:USDC-SLTB-18733
+2026-04-18 12:51:11,740   ✅ TP BUY 7.597 ETH_USDC-PERPETUAL @ 2342.55 id=USDC-198258153164 state=open
+2026-04-18 12:51:11,740   ✅ TP1 @ 2342.55 × 7.597 id:USDC-198258153164
+2026-04-18 12:51:11,841   ✅ TP BUY 7.597 ETH_USDC-PERPETUAL @ 2334.75 id=USDC-198258153649 state=open
+2026-04-18 12:51:11,841   ✅ TP2 @ 2334.75 × 7.597 id:USDC-198258153649
+2026-04-18 12:51:12,383   ✅✅ TRADE OPENED: ETHUSDT SELL | SL:USDC-SLTB-18733 TP1:USDC-198258153164 TP2:USDC-198258153649
+2026-04-18 12:51:13,884 
+  ── BNBUSDT (👑 Big Three) ──
+2026-04-18 12:51:15,723     ML: SELL 44.6% (need ≥50%)
+2026-04-18 12:51:15,924 
+  ── SOLUSDT (⚡ High-Liquidity L1s) ──
+2026-04-18 12:51:17,721     ML: SELL 53.2% (need ≥50%)
+2026-04-18 12:51:17,721     ADX: 56.6 (need ≥15)
+2026-04-18 12:51:17,721     Score: 1 (need ≥1)
+2026-04-18 12:51:17,722   Contracts: 412.1 SOLUSDT (risk=$1343.67 stop_dist=0.4500)
+2026-04-18 12:51:17,722   SELL SOLUSDT total=412.1 tp1=206.0 tp2=206.1
+2026-04-18 12:51:17,722   SL=87.39 TP1=86.34 TP2=86.04
+2026-04-18 12:51:17,824   ✅ MARKET SELL 412.1 SOL_USDC-PERPETUAL id=USDC-198258177273 state=filled
+2026-04-18 12:51:17,824   ✅ Entry @ 86.97
+2026-04-18 12:51:19,426   ✅ SL BUY 412.1 SOL_USDC-PERPETUAL @ 87.43 id=USDC-SLTB-18734 state=untriggered
+2026-04-18 12:51:19,426   ✅ SL @ 87.43 id:USDC-SLTB-18734
+2026-04-18 12:51:19,528   ✅ TP BUY 206.0 SOL_USDC-PERPETUAL @ 86.37 id=USDC-198258183871 state=open
+2026-04-18 12:51:19,528   ✅ TP1 @ 86.37 × 206.0 id:USDC-198258183871
+2026-04-18 12:51:19,631   ✅ TP BUY 206.1 SOL_USDC-PERPETUAL @ 86.07 id=USDC-198258184147 state=open
+2026-04-18 12:51:19,631   ✅ TP2 @ 86.07 × 206.1 id:USDC-198258184147
+2026-04-18 12:51:20,215   ✅✅ TRADE OPENED: SOLUSDT SELL | SL:USDC-SLTB-18734 TP1:USDC-198258183871 TP2:USDC-198258184147
+2026-04-18 12:51:21,716   🛑 Max trades (3) reached — stopping scan
+2026-04-18 12:51:22,847   Balance: $179101.65 | upnl:+246.58 | positions:3
+2026-04-18 12:51:22,848 
+════════════════════════════════════════════════════════
+DONE — 2 signal(s) | $179156.27
+════════════════════════════════════════════════════════
