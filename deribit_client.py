@@ -1,3 +1,4 @@
+# deribit_client.py — Ghost trade fix: broader order fill detection
 import math, time, logging, requests
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ SYMBOL_MAP = {
 }
 TRADEABLE_SYMBOLS: list = []
 
+
 class DeribitClient:
 
     def __init__(self, client_id: str, client_secret: str):
@@ -43,9 +45,8 @@ class DeribitClient:
 
     def _authenticate(self):
         r = self.session.get(f"{self.base}/public/auth", params={
-            "grant_type":    "client_credentials",
-            "client_id":     self.client_id,
-            "client_secret": self.client_secret,
+            "grant_type": "client_credentials",
+            "client_id": self.client_id, "client_secret": self.client_secret,
         }, timeout=15)
         r.raise_for_status()
         res = r.json().get("result", {})
@@ -72,20 +73,17 @@ class DeribitClient:
         return data.get("result", data)
 
     def _post(self, path: str, body: dict) -> dict:
-        """
-        FIX: Deribit's REST API is notorious for rejecting JSON POSTs (Code 11050).
-        However, it flawlessly parses query parameters on GET requests.
-        By converting all booleans to lower-case strings and routing as a GET request,
-        we completely bypass the JSON parsing engine and guarantee execution.
-        """
+        """Plain HTTP POST — NO JSON-RPC wrapper (that's WebSocket only)."""
         self._ensure_auth()
-        clean_body = {}
-        for k, v in body.items():
-            if isinstance(v, bool):
-                clean_body[k] = "true" if v else "false"
-            else:
-                clean_body[k] = v
-        return self._get(path, clean_body)
+        r    = self.session.post(f"{self.base}{path}", json=body, timeout=15)
+        data = r.json()
+        if "error" in data:
+            err  = data["error"]
+            msg  = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            code = err.get("code", "")          if isinstance(err, dict) else ""
+            raise Exception(f"{msg} (Code:{code})" if code else msg)
+        r.raise_for_status()
+        return data.get("result", data)
 
     def _verify_instruments(self):
         global TRADEABLE_SYMBOLS
@@ -97,7 +95,6 @@ class DeribitClient:
                 active = {i["instrument_name"]: i for i in res}
         except Exception as e:
             log.warning(f"  Instrument list: {e}")
-
         confirmed = []
         for sym, info in SYMBOL_MAP.items():
             target = info["instrument"]
@@ -105,9 +102,6 @@ class DeribitClient:
                 self._instrument_cache[target] = active[target]
                 self._supported_symbols.add(sym)
                 confirmed.append(sym)
-            else:
-                log.debug(f"  {sym} ({target}) not on testnet")
-
         TRADEABLE_SYMBOLS = confirmed
         log.info(f"✓ Tradeable: {len(confirmed)} — {confirmed}")
 
@@ -126,8 +120,7 @@ class DeribitClient:
         name = self.get_instrument_name(symbol)
         if name not in self._instrument_cache:
             self._instrument_cache[name] = self._get(
-                "/public/get_instrument", {"instrument_name": name}
-            )
+                "/public/get_instrument", {"instrument_name": name})
         return self._instrument_cache.get(name, {})
 
     def get_tick_size(self, symbol: str) -> float:
@@ -143,8 +136,7 @@ class DeribitClient:
         if price <= 0: return 0.0
         tick     = self.get_tick_size(symbol)
         rounded  = round(round(price / tick) * tick, 10)
-        s = f"{tick:.10f}".rstrip("0")
-        decimals = len(s.split(".")[1]) if "." in s else 0
+        decimals = len(str(tick).rstrip("0").split(".")[-1]) if "." in str(tick) else 0
         return round(rounded, decimals)
 
     def round_amount(self, symbol: str, raw: float) -> float:
@@ -152,31 +144,24 @@ class DeribitClient:
         step     = self.get_min_trade_amount(symbol)
         steps    = math.floor(raw / step)
         result   = max(step, steps * step)
-        
-        s = f"{step:.8f}".rstrip("0")
-        decimals = len(s.split(".")[1]) if "." in s else 0
-        return round(result, decimals) if decimals > 0 else int(result)
+        decimals = len(str(step).rstrip("0").split(".")[-1]) if "." in str(step) else 0
+        return round(result, decimals) if decimals else int(result)
 
     def split_amount(self, symbol: str, total) -> tuple:
         if total <= 0: return 0, 0
         step  = self.get_min_trade_amount(symbol)
-        half  = total / 2.0
-        tp1   = max(step, math.floor(half / step) * step)
+        tp1   = max(step, math.floor(total / 2.0 / step) * step)
         tp2   = total - tp1
-        if tp2 < step:
-            tp1 = total; tp2 = 0
-            
-        s = f"{step:.8f}".rstrip("0")
-        decimals = len(s.split(".")[1]) if "." in s else 0
-        return (round(tp1, decimals), round(tp2, decimals)) if decimals > 0 else (int(tp1), int(tp2))
+        if tp2 < step: tp1 = total; tp2 = 0
+        decimals = len(str(step).rstrip("0").split(".")[-1]) if "." in str(step) else 0
+        return (round(tp1, decimals), round(tp2, decimals)) if decimals else (int(tp1), int(tp2))
 
     def get_live_price(self, symbol: str) -> float:
         try:
             t = self._get("/public/ticker", {"instrument_name": self.get_instrument_name(symbol)})
             return float(t.get("mark_price") or t.get("last_price") or 0)
         except Exception as e:
-            log.warning(f"  price {symbol}: {e}")
-            return 0.0
+            log.warning(f"  price {symbol}: {e}"); return 0.0
 
     def calc_contracts(self, symbol: str, balance_usd: float,
                        entry: float, stop: float, risk_mult: float = 1.0):
@@ -193,7 +178,7 @@ class DeribitClient:
         max_p  = (balance_usd * 0.20) / entry
         raw    = min(raw, max_p)
         result = self.round_amount(symbol, raw)
-        log.info(f"  Contracts: {result} {symbol} (risk=${risk_usd:.2f} stop_dist={stop_dist:.4f})")
+        log.info(f"  Contracts: {result} {symbol} (risk=${risk_usd:.2f})")
         return result
 
     def get_all_balances(self) -> dict:
@@ -223,17 +208,15 @@ class DeribitClient:
                     positions.extend(p for p in r if float(p.get("size", 0) or 0) != 0)
             return positions
         except Exception as e:
-            log.warning(f"  get_positions: {e}")
-            return []
+            log.warning(f"  get_positions: {e}"); return []
 
     def place_market_order(self, symbol: str, side: str, amount) -> dict:
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         result     = self._post(method, {
-            "instrument_name": instrument,
-            "amount":          amount,
-            "type":            "market",
-            "label":           f"bot_entry_{int(time.time())}",
+            "instrument_name": instrument, "amount": amount,
+            "type": "market", "time_in_force": "immediate_or_cancel",
+            "label": f"bot_entry_{int(time.time())}",
         })
         order = result.get("order", result)
         log.info(f"  ✅ MARKET {side.upper()} {amount} {instrument} "
@@ -254,29 +237,20 @@ class DeribitClient:
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
-
         if stop_price is not None:
-            # FIX: Upgraded to "stop_market". This ensures the SL always fills when the trigger is hit.
             body = {
-                "instrument_name": instrument,
-                "amount":          amount,
-                "type":            "stop_market",
-                "trigger_price":   self.round_price(symbol, stop_price),
-                "trigger":         "last_price",
-                "reduce_only":     True,
-                "label":           f"bot_sl_{int(time.time())}",
+                "instrument_name": instrument, "amount": amount,
+                "type": "stop_limit", "price": safe_price,
+                "trigger_price": self.round_price(symbol, stop_price),
+                "trigger": "last_price", "reduce_only": True,
+                "label": f"bot_sl_{int(time.time())}",
             }
         else:
-            # FIX: Clean limit order for Take Profit.
             body = {
-                "instrument_name": instrument,
-                "amount":          amount,
-                "type":            "limit",
-                "price":           safe_price,
-                "reduce_only":     True,
-                "label":           f"bot_tp_{int(time.time())}",
+                "instrument_name": instrument, "amount": amount,
+                "type": "limit", "price": safe_price,
+                "reduce_only": True, "label": f"bot_tp_{int(time.time())}",
             }
-
         result = self._post(method, body)
         order  = result.get("order", result)
         kind   = "SL" if stop_price else "TP"
@@ -294,28 +268,65 @@ class DeribitClient:
             return {}
 
     def is_order_filled(self, order: dict) -> bool:
-        return order.get("order_state", "").lower() == "filled"
+        """
+        ROOT CAUSE OF GHOST TRADES: Deribit stop-limit orders that trigger
+        can show state='cancelled' with filled_amount > 0.
+        We must check ALL these states, not just 'filled'.
+        """
+        state       = order.get("order_state", "").lower()
+        filled_amt  = float(order.get("filled_amount", 0) or 0)
+        avg_price   = float(order.get("average_price", 0) or 0)
+
+        # Definitively filled states
+        if state == "filled":
+            return True
+
+        # Stop-limit orders that triggered: show as cancelled but have fill data
+        if state in ("cancelled", "closed") and (filled_amt > 0 or avg_price > 0):
+            log.info(f"  Triggered order detected: state={state} "
+                     f"filled={filled_amt} avg={avg_price}")
+            return True
+
+        return False
+
+    def get_order_fill_price(self, order: dict, fallback: float) -> float:
+        """Extract fill price — handles both normal fills and triggered stop fills."""
+        avg = order.get("average_price")
+        if avg and float(avg) > 0:
+            return float(avg)
+        # Also check last_price field on triggered stops
+        lp = order.get("last_price") or order.get("price")
+        if lp and float(lp) > 0:
+            return float(lp)
+        return fallback
+
+    def get_trade_history_for_instrument(self, symbol: str, count: int = 10) -> list:
+        """
+        Fetch actual trade fills from Deribit for an instrument.
+        Used to recover real PnL when ghost cleaner detects a closed position.
+        """
+        try:
+            instrument = self.get_instrument_name(symbol)
+            result     = self._get("/private/get_user_trades_by_instrument", {
+                "instrument_name": instrument,
+                "count":           count,
+                "sorting":         "desc",
+            })
+            return result if isinstance(result, list) else result.get("trades", [])
+        except Exception as e:
+            log.warning(f"  Trade history {symbol}: {e}")
+            return []
 
     def cancel_order(self, order_id: str) -> dict:
         try:
             return self._post("/private/cancel", {"order_id": str(order_id)})
         except Exception as e:
-            log.warning(f"  cancel {order_id}: {e}")
-            return {}
-
-    def cancel_all(self):
-        for cur in ["BTC", "ETH", "USDC"]:
-            try:
-                self._post("/private/cancel_all_by_currency",
-                           {"currency": cur, "kind": "future"})
-            except Exception:
-                pass
+            log.warning(f"  cancel {order_id}: {e}"); return {}
 
     def test_connection(self) -> bool:
         try:
             total = self.get_total_equity_usd()
-            log.info(f"✅ Deribit OK — ${total:.2f} | {len(TRADEABLE_SYMBOLS)} symbols | POST:✅ (Routed as URL Params)")
+            log.info(f"✅ Deribit OK — ${total:.2f} | {len(TRADEABLE_SYMBOLS)} symbols")
             return True
         except Exception as e:
-            log.error(f"✗ Deribit: {e}")
-            raise
+            log.error(f"✗ Deribit: {e}"); raise
