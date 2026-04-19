@@ -526,7 +526,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12
   </div>
 
   <!-- ════ SYSTEM MONITOR PAGE ════ -->
-  <div class="page" id="page-monitor" style="display:none;padding:20px 24px">
+  <div class="page" id="page-monitor">
 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
       <div>
@@ -649,7 +649,7 @@ const COINS = {
   ai_mom: ["FETUSDT","RENDERUSDT","ADAUSDT","INJUSDT","ARBUSDT","OPUSDT","SEIUSDT"]
 };
 const ALL_COINS = [...COINS.big3,...COINS.liq1,...COINS.inst,...COINS.ai_mom];
-const PAGES = {dashboard:'Dashboard',signals:'Signals',market:'Market',trades:'Open Trades',history:'History',performance:'Performance',config:'Configuration'};
+const PAGES = {dashboard:'Dashboard',signals:'Signals',market:'Market',trades:'Open Trades',history:'History',performance:'Performance',config:'Configuration',monitor:'System Monitor'};
 
 let allSignals   = [];
 let allTrades    = {};
