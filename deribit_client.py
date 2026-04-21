@@ -6,36 +6,36 @@ TESTNET_BASE = "https://test.deribit.com/api/v2"
 
 SYMBOL_MAP = {
         # Big 3
-        "BTCUSDT":    {"instrument": "BTC_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.001, "tick_size": 0.1},
-        "ETHUSDT":    {"instrument": "ETH_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.01,  "tick_size": 0.01},
-        "BNBUSDT":    {"instrument": "BNB_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,   "tick_size": 0.001},
+        "BTCUSDT":    {"instrument": "BTC_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.0001, "tick_size": 0.5},
+        "ETHUSDT":    {"instrument": "ETH_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.001,  "tick_size": 0.05},
+        "BNBUSDT":    {"instrument": "BNB_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.01,   "tick_size": 0.05},
         
         # High-Liquidity L1s
-        "SOLUSDT":    {"instrument": "SOL_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
-        "AVAXUSDT":   {"instrument": "AVAX_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
-        "NEARUSDT":   {"instrument": "NEAR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,     "tick_size": 0.0001},
-        "SUIUSDT":    {"instrument": "SUI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.0001},
-        "APTUSDT":    {"instrument": "APT_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,   "tick_size": 0.001},
-        "MATICUSDT":  {"instrument": "MATIC_USDC-PERPETUAL","currency": "USDC", "min_amount": 10,    "tick_size": 0.0001},
-        "ATOMUSDT":   {"instrument": "ATOM_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
+        "SOLUSDT":    {"instrument": "SOL_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.01},
+        "AVAXUSDT":   {"instrument": "AVAX_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.01},
+        "NEARUSDT":   {"instrument": "NEAR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
+        "SUIUSDT":    {"instrument": "SUI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
+        "APTUSDT":    {"instrument": "APT_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.001},
+        "MATICUSDT":  {"instrument": "MATIC_USDC-PERPETUAL","currency": "USDC", "min_amount": 10,     "tick_size": 0.0001},
+        "ATOMUSDT":   {"instrument": "ATOM_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
         
         # Institutional Alts
-        "LINKUSDT":   {"instrument": "LINK_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
-        "DOTUSDT":    {"instrument": "DOT_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
-        "UNIUSDT":    {"instrument": "UNI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
-        "AAVEUSDT":   {"instrument": "AAVE_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,   "tick_size": 0.01},
-        "XRPUSDT":    {"instrument": "XRP_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.0001},
-        "LTCUSDT":    {"instrument": "LTC_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,   "tick_size": 0.01},
-        "BCHUSDT":    {"instrument": "BCH_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.01,  "tick_size": 0.05},
+        "LINKUSDT":   {"instrument": "LINK_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
+        "DOTUSDT":    {"instrument": "DOT_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
+        "UNIUSDT":    {"instrument": "UNI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
+        "AAVEUSDT":   {"instrument": "AAVE_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.01},
+        "XRPUSDT":    {"instrument": "XRP_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 10,     "tick_size": 0.0001},
+        "LTCUSDT":    {"instrument": "LTC_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.01},
+        "BCHUSDT":    {"instrument": "BCH_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.02,   "tick_size": 0.01},
         
         # AI & Momentum
-        "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.0001},
-        "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,   "tick_size": 0.001},
-        "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.0001},
-        "INJUSDT":    {"instrument": "INJ_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
-        "ARBUSDT":    {"instrument": "ARB_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.0001},
-        "OPUSDT":     {"instrument": "OP_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
-        "SEIUSDT":    {"instrument": "SEI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.0001},
+        "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
+        "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.001},
+        "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 10,     "tick_size": 0.0001},
+        "INJUSDT":    {"instrument": "INJ_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
+        "ARBUSDT":    {"instrument": "ARB_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
+        "OPUSDT":     {"instrument": "OP_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
+        "SEIUSDT":    {"instrument": "SEI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
     }
 TRADEABLE_SYMBOLS: list = []
 
