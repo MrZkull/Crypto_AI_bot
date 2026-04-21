@@ -225,8 +225,10 @@ class DeribitClient:
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         result     = self._post(method, {
-            "instrument_name": instrument, "amount": amount,
-            "type": "market", "time_in_force": "immediate_or_cancel",
+            "instrument_name": instrument, 
+            "amount": amount,
+            "type": "market", 
+            # REMOVED time_in_force: Deribit rejects this for market orders
             "label": f"bot_entry_{int(time.time())}",
         })
         order = result.get("order", result)
