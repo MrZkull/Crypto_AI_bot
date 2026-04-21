@@ -101,22 +101,17 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # 1. Stage EVERYTHING (this fixes the mystery file issue causing exit code 128)
+          # 1. DELETE the secrets file so it never gets committed!
+          rm -f .env
+          
+          # 2. Stage EVERYTHING else
           git add -A
           
-          # 2. Commit locally so the working directory is clean
+          # 3. Commit locally
           git commit -m "Sync Bot State [skip ci]" || echo "No changes to commit"
           
-          # 3. Pull with rebase AND autostash (Guarantees no crashes on sync)
+          # 4. Pull with rebase AND autostash
           git pull --rebase origin main --autostash
           
-          # 4. Push back to the repo
+          # 5. Push back to the repo
           git push origin main
-
-      - name: Upload log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bot-log-${{ github.run_number }}
-          path: bot.log
-          retention-days: 7
