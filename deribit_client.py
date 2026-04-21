@@ -25,6 +25,10 @@ SYMBOL_MAP = {
     "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
     "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
     "APTUSDT":    {"instrument": "APT_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,     "tick_size": 0.001},
+    "MATICUSDT":  {"instrument": "MATIC_USDC-PERPETUAL", "currency": "USDC", "min_amount": 10, "tick_size": 0.0001},
+    "LTCUSDT":    {"instrument": "LTC_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1, "tick_size": 0.01},
+    "BCHUSDT":    {"instrument": "BCH_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.01, "tick_size": 0.05},
+    "ATOMUSDT":   {"instrument": "ATOM_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1, "tick_size": 0.001},
 }
 TRADEABLE_SYMBOLS: list = []
 
