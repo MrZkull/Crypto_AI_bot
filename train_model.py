@@ -152,7 +152,8 @@ def train(dataset):
         
         # If the AI wants to BUY or SELL, but is less than 65% confident, 
         # we force it to sit on its hands and predict NO_TRADE instead.
-        if best_class != notrade_idx and confidence < 0.65:
+        # Lowered to 45% (In a 3-class system, 45% is still a strong edge)
+        if best_class != notrade_idx and confidence < 0.45:
             y_pred.append(notrade_idx)
         else:
             y_pred.append(best_class)
