@@ -143,11 +143,10 @@ def train(dataset):
     log.info(f"FINAL TEST ACCURACY: {acc*100:.1f}%")
     log.info("\n" + classification_report(y_test, y_pred, target_names=list(le.classes_)))
 
-    # ---> ADD THESE 3 LINES TO FIX THE 0% CV BUG <---
+    # Cross-Validation Calculation
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     cv_scores = cross_val_score(ensemble, X_train_sel, y_train, cv=cv, n_jobs=-1)
     log.info(f"Cross-val: {cv_scores.mean()*100:.1f}% ± {cv_scores.std()*100:.1f}%")
-    # ------------------------------------------------
     
     # Save Pipeline
     pipeline = {
@@ -162,6 +161,8 @@ def train(dataset):
 
     perf = {
         "accuracy": round(acc * 100, 1),
+        "cv_mean": round(cv_scores.mean() * 100, 1),
+        "cv_std": round(cv_scores.std() * 100, 1),
         "n_train": int(len(X_train)),
         "n_test": int(len(X_test)),
         "features": ALL_FEATURES,
