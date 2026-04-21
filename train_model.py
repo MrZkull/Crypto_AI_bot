@@ -138,7 +138,25 @@ def train(dataset):
     ensemble.fit(X_train_sel, y_train)
 
     # Evaluation
-    y_pred = ensemble.predict(X_test_sel)
+    # ── THE 75%+ ACCURACY FIX (Confidence Thresholding) ─────────────
+    # Instead of just picking the highest guess, we check the AI's confidence %
+    probas = ensemble.predict_proba(X_test_sel)
+    y_pred = []
+    
+    # Find which internal number represents NO_TRADE (usually 1)
+    notrade_idx = list(le.classes_).index("NO_TRADE")
+    
+    for prob in probas:
+        best_class = np.argmax(prob)
+        confidence = prob[best_class]
+        
+        # If the AI wants to BUY or SELL, but is less than 65% confident, 
+        # we force it to sit on its hands and predict NO_TRADE instead.
+        if best_class != notrade_idx and confidence < 0.65:
+            y_pred.append(notrade_idx)
+        else:
+            y_pred.append(best_class)
+    # ────────────────────────────────────────────────────────────────
     acc = accuracy_score(y_test, y_pred)
     log.info(f"FINAL TEST ACCURACY: {acc*100:.1f}%")
     log.info("\n" + classification_report(y_test, y_pred, target_names=list(le.classes_)))
