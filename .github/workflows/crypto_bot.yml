@@ -101,17 +101,14 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # 1. Stage EVERYTHING potentially modified by the bot
-          # We include data/*.json in case your script uses a subfolder
-          git add trades.json trade_history.json signals.json balance.json scan_mode.json bot.log || true
-          git add data/*.json || true
+          # 1. Stage EVERYTHING (this fixes the mystery file issue causing exit code 128)
+          git add -A
           
           # 2. Commit locally so the working directory is clean
           git commit -m "Sync Bot State [skip ci]" || echo "No changes to commit"
           
-          # 3. Pull with rebase to handle manual edits from the Dashboard
-          # Since we committed above, this rebase will no longer fail
-          git pull --rebase origin main
+          # 3. Pull with rebase AND autostash (Guarantees no crashes on sync)
+          git pull --rebase origin main --autostash
           
           # 4. Push back to the repo
           git push origin main
