@@ -39,10 +39,18 @@ def get_tier(symbol: str) -> str:
         if symbol in t["coins"]: return t["label"]
     return "Unknown"
 
-# Timeframes
+# ── Timeframes & Scheduling ───────────────────────────────────────────
 TIMEFRAME_ENTRY   = "15m"
 TIMEFRAME_CONFIRM = "1h"
+TIMEFRAME_TREND   = "4h"  # Required for quality_score in scanner
 LIVE_LIMIT        = 300
+SCAN_INTERVAL_MIN = 15    # Wake up every 15 mins
+
+# ── AI & Strategy Filters ─────────────────────────────────────────────
+# 50.0 Threshold: ~740 trades, ~80% Win Rate (The "Sweet Spot")
+MIN_CONFIDENCE    = 50.0  
+MIN_ADX           = 20    # Minimum trend strength required
+MIN_SCORE         = 2     # Minimum quality score (out of 6) to execute
 
 # ── Risk management (professional grade) ─────────────────────────────
 RISK_PER_TRADE     = 0.01   # 1% per trade — strict, never change this
