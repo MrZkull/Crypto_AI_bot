@@ -91,7 +91,7 @@ def balance_dataset(dataset):
     notrade_rows = dataset[dataset.target == "NO_TRADE"]
     signal_avg = (len(buy_rows) + len(sell_rows)) // 2
     # Cap NO_TRADE to force learning of active patterns
-    notrade_rows = notrade_rows.sample(n=min(len(notrade_rows), int(signal_avg * 1.5)), random_state=42)
+    notrade_rows = notrade_rows.sample(n=min(len(notrade_rows), int(signal_avg * 2.5)), random_state=42)
     return pd.concat([buy_rows, sell_rows, notrade_rows]).sample(frac=1, random_state=42)
 
 def train(dataset):
