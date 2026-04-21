@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       symbols:
-        description: 'Symbols to train on (comma-separated, leave blank for default 15)'
+        description: 'Symbols to train on (comma-separated, leave blank for default)'
         required: false
         default: ''
       note:
@@ -23,9 +23,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
+    # Give the bot permission to write back to your repository
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches all history so rebase works
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -51,11 +57,11 @@ jobs:
           with open('model_performance.json') as f:
             p = json.load(f)
           print('='*50)
-          print(f'ACCURACY:  {p[\"accuracy\"]}%')
-          print(f'CV SCORE:  {p[\"cv_mean\"]}% ± {p[\"cv_std\"]}%')
-          print(f'TRAIN SET: {p[\"n_train\"]} samples')
-          print(f'TEST SET:  {p[\"n_test\"]} samples')
-          print(f'FEATURES:  {len(p[\"features\"])} total, {len(p[\"selected\"])} selected')
+          print(f'ACCURACY:  {p.get(\"accuracy\", 0)}%')
+          print(f'CV SCORE:  {p.get(\"cv_mean\", 0)}% ± {p.get(\"cv_std\", 0)}%')
+          print(f'TRAIN SET: {p.get(\"n_train\", 0)} samples')
+          print(f'TEST SET:  {p.get(\"n_test\", 0)} samples')
+          print(f'FEATURES:  {len(p.get(\"features\", []))} total')
           print('='*50)
           "
 
@@ -63,9 +69,16 @@ jobs:
         run: |
           git config user.name  "CryptoBot AI"
           git config user.email "bot@cryptobot.ai"
+          
+          # Add files
           git add pro_crypto_ai_model.pkl model_performance.json
-          git commit -m "🤖 Retrain model — $(python -c "import json; p=json.load(open('model_performance.json')); print(f'{p[\"accuracy\"]}% accuracy')")"
-          git push
+          
+          # Commit with results
+          git commit -m "🤖 Retrain model — $(python -c "import json; p=json.load(open('model_performance.json')); print(f'{p.get(\"accuracy\", 0)}% accuracy')")"
+          
+          # FIX: Pull latest manual changes then FORCE push the model
+          git pull origin main --rebase
+          git push origin main --force
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
