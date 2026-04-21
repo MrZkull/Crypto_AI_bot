@@ -44,7 +44,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     avg_l = loss.ewm(com=13, adjust=False).mean()
     rs    = avg_g / avg_l.replace(0, np.nan)
     df["rsi"] = 100 - 100 / (1 + rs)
-    df["rsi"].fillna(50, inplace=True)
+    df["rsi"] = df["rsi"].fillna(50)
 
     df["rsi_slope"] = df["rsi"].diff(3)
 
@@ -55,7 +55,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     avg_l7 = loss7.ewm(com=6, adjust=False).mean()
     rs7    = avg_g7 / avg_l7.replace(0, np.nan)
     df["rsi_fast"] = 100 - 100 / (1 + rs7)
-    df["rsi_fast"].fillna(50, inplace=True)
+    df["rsi_fast"] = df["rsi_fast"].fillna(50)
 
     # ── Stochastic ───────────────────────────────────────────────────
     low14  = l.rolling(14).min()
@@ -143,7 +143,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── Clean up ──────────────────────────────────────────────────────
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.fillna(method="ffill", inplace=True)
+    df.ffill(inplace=True)
     df.fillna(0, inplace=True)
 
     return df
