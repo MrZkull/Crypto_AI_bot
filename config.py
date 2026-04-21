@@ -3,6 +3,7 @@
 #   RISK_PER_TRADE = 1% (was inconsistent 1-2%)
 #   ATR multipliers kept at 1.5/2.0/3.0 (good risk:reward = 1:2)
 #   MAX_TRADE_AGE_HOURS = 48 (new: auto-exit stale trades)
+#   Added MATIC, ATOM, LTC, BCH to monitored assets
 
 # ── File Paths ────────────────────────────────────────────────────────
 RAW_DATA_FILE = "data/crypto_historical_15m_expanded.csv"
@@ -20,8 +21,8 @@ FEATURES = [
 
 # ── Coin Tiers ────────────────────────────────────────────────────────
 TIER_BIG3   = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
-TIER_LIQ1   = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "NEARUSDT"]
-TIER_INST   = ["DOTUSDT", "ADAUSDT", "INJUSDT", "ARBUSDT", "OPUSDT"]
+TIER_LIQ1   = ["SOLUSDT", "AVAXUSDT", "XRPUSDT", "LINKUSDT", "NEARUSDT", "MATICUSDT", "ATOMUSDT"]
+TIER_INST   = ["DOTUSDT", "ADAUSDT", "INJUSDT", "ARBUSDT", "OPUSDT", "LTCUSDT", "BCHUSDT"]
 TIER_AI_MOM = ["FETUSDT", "RENDERUSDT", "UNIUSDT", "AAVEUSDT", "SEIUSDT"]
 
 SYMBOLS = TIER_BIG3 + TIER_LIQ1 + TIER_INST + TIER_AI_MOM
