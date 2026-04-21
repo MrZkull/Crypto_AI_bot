@@ -1,4 +1,6 @@
-# train_model.py — Final Accuracy Fix (Feature Importance + Git Sync)
+# train_model.py — Retrain model with enhanced features
+# Accuracy Target: 74-77% | Coins: 24 | Fix: Pickle & Accuracy optimized
+
 import os, json, time, logging, joblib, requests
 import pandas as pd
 import numpy as np
@@ -18,16 +20,18 @@ from feature_engineering import add_indicators, ALL_FEATURES
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ── FIX: Picklable Importance Selector ──────────────────────────────
+
+# ── FIX 1: Picklable Importance Selector ──────────────────────────────
 class ImportanceSelector(BaseEstimator, TransformerMixin):
+    """Custom selector that can be safely pickled by joblib."""
     def __init__(self, feature_names):
         self.feature_names = feature_names
     def fit(self, X, y=None): return self
     def transform(self, X):
-        # Works for both DataFrames and Numpy arrays
+        # Handle both DataFrame (training) and Array (live trade)
         if isinstance(X, pd.DataFrame):
             return X[self.feature_names]
-        return X  # During live trade, X is already processed
+        return X
 
 # ── Config ────────────────────────────────────────────────────────────
 SYMBOLS = [
@@ -66,10 +70,11 @@ def build_dataset():
     log.info(f"Building dataset from {len(SYMBOLS)} symbols")
     all_rows = []
     for symbol in SYMBOLS:
+        log.info(f"  {symbol}...")
         df15 = fetch_klines(symbol, "15m", LIMIT)
         df1h = fetch_klines(symbol, "1h", LIMIT // 4)
         if df15.empty or len(df15) < 100: continue
-        time.sleep(0.1)
+        time.sleep(0.2)
         df15 = add_indicators(df15)
         if not df1h.empty:
             df1h = add_indicators(df1h)
@@ -85,50 +90,83 @@ def balance_dataset(dataset):
     sell_rows = dataset[dataset.target == "SELL"]
     notrade_rows = dataset[dataset.target == "NO_TRADE"]
     signal_avg = (len(buy_rows) + len(sell_rows)) // 2
+    # Cap NO_TRADE to force learning of active patterns
     notrade_rows = notrade_rows.sample(n=min(len(notrade_rows), int(signal_avg * 1.5)), random_state=42)
     return pd.concat([buy_rows, sell_rows, notrade_rows]).sample(frac=1, random_state=42)
 
 def train(dataset):
+    # Ensure all features exist
+    for f in ALL_FEATURES:
+        if f not in dataset.columns: dataset[f] = 0.0
+
     X = dataset[ALL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
-    y = LabelEncoder().fit_transform(dataset["target"])
+    y_raw = dataset["target"]
+    le = LabelEncoder()
+    y = le.fit_transform(y_raw)
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SPLIT, random_state=42, stratify=y)
 
-    # ── ACCURACY FIX: Feature Importance Selection ──────────────────
+    # ── ACCURACY FIX: Forced Volume + Importance Selection ──────────
     log.info("Running Importance Scan...")
     selector_model = XGBClassifier(n_estimators=100, random_state=42)
     selector_model.fit(X_train, y_train)
+    
     importances = selector_model.feature_importances_
-    indices = np.argsort(importances)[-30:] # Take top 30
-    selected_feats = [ALL_FEATURES[i] for i in indices]
-    log.info(f"Top Features: {selected_feats}")
+    indices = np.argsort(importances)[::-1] 
+    
+    # Lock-in essential Volume features for signal quality
+    essential_features = ['volume_ratio', 'volume_spike', 'bb_width', 'atr_pct']
+    selected_feats = essential_features.copy()
+    
+    for i in indices:
+        f_name = ALL_FEATURES[i]
+        if f_name not in selected_feats:
+            selected_feats.append(f_name)
+        if len(selected_feats) >= 32: break
 
+    log.info(f"Top 32 Features: {selected_feats}")
     X_train_sel = X_train[selected_feats]
     X_test_sel  = X_test[selected_feats]
 
-    # ── Training ────────────────────────────────────────────────────
-    xgb = XGBClassifier(n_estimators=600, max_depth=8, learning_rate=0.02, subsample=0.8, colsample_bytree=0.8, eval_metric="mlogloss", random_state=42)
-    rf = RandomForestClassifier(n_estimators=300, max_depth=12, random_state=42)
-    gb = GradientBoostingClassifier(n_estimators=300, max_depth=5, random_state=42)
+    # ── Model Training ──────────────────────────────────────────────
+    log.info("Training Ensemble...")
+    xgb = XGBClassifier(n_estimators=800, max_depth=7, learning_rate=0.015, subsample=0.8, colsample_bytree=0.8, eval_metric="mlogloss", random_state=42)
+    rf  = RandomForestClassifier(n_estimators=300, max_depth=12, min_samples_leaf=3, random_state=42)
+    gb  = GradientBoostingClassifier(n_estimators=300, max_depth=5, learning_rate=0.05, random_state=42)
 
     ensemble = VotingClassifier(estimators=[('xgb', xgb), ('rf', rf), ('gb', gb)], voting='soft', weights=[3, 2, 1])
     ensemble.fit(X_train_sel, y_train)
 
-    acc = accuracy_score(y_test, ensemble.predict(X_test_sel))
-    log.info(f"FINAL ACCURACY: {acc*100:.1f}%")
+    # Evaluation
+    y_pred = ensemble.predict(X_test_sel)
+    acc = accuracy_score(y_test, y_pred)
+    log.info(f"FINAL TEST ACCURACY: {acc*100:.1f}%")
+    log.info("\n" + classification_report(y_test, y_pred, target_names=list(le.classes_)))
 
-    # ── Save Pipeline ───────────────────────────────────────────────
+    # Save Pipeline
     pipeline = {
         "ensemble": ensemble,
         "selector": ImportanceSelector(selected_feats),
         "all_features": ALL_FEATURES,
-        "label_map": {0: "BUY", 1: "NO_TRADE", 2: "SELL"},
+        "label_map": {i: cls for i, cls in enumerate(le.classes_)},
         "accuracy": round(acc * 100, 1),
         "trained_at": datetime.now(timezone.utc).isoformat()
     }
     joblib.dump(pipeline, MODEL_FILE)
+
+    perf = {
+        "accuracy": round(acc * 100, 1),
+        "n_train": int(len(X_train)),
+        "n_test": int(len(X_test)),
+        "features": ALL_FEATURES,
+        "selected": selected_feats
+    }
+    with open("model_performance.json", "w") as f: json.dump(perf, f, indent=2)
     return acc
 
 if __name__ == "__main__":
-    ds = balance_dataset(build_dataset())
+    t0 = time.time()
+    ds = build_dataset()
+    ds = balance_dataset(ds)
     train(ds)
+    log.info(f"Total time: {(time.time()-t0)/60:.1f} min")
