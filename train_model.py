@@ -40,7 +40,6 @@ jobs:
 
       - name: Show results
         run: |
-          python -c "
           import json
           p = json.load(open('model_performance.json'))
           print('='*50)
