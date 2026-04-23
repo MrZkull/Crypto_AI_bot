@@ -312,6 +312,15 @@ class DeribitClient:
 
         return False
 
+    def is_sl_triggered(self, order: dict) -> bool:
+        """
+        FIX: Stop-limit SL orders go to 'triggered' state when price hits them.
+        The original order_id never reaches 'filled' — only the spawned child does.
+        Treating 'triggered' as hit is correct: price crossed the stop level.
+        """
+        state = order.get("order_state", "").lower()
+        return state in ("filled", "triggered", "cancelled")
+
     def get_order_fill_price(self, order: dict, fallback: float) -> float:
         """Extract fill price — handles both normal fills and triggered stop fills."""
         avg = order.get("average_price")
