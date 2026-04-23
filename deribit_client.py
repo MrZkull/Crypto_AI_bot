@@ -1,4 +1,4 @@
-# deribit_client.py — Ghost trade fix: broader order fill detection
+# deribit_client.py — Ghost trade fix: broader order fill detection, deribit exchange testnet
 import math, time, logging, requests
 log = logging.getLogger(__name__)
 
