@@ -27,7 +27,7 @@ jobs:
 
       - name: Download AI Model
         run: |
-          wget -q -O pro_crypto_ai_model.pkl "https://github.com/Elliot14R/Crypto_AI_bot/releases/download/v2.0/pro_crypto_ai_model.pkl"
+          wget -q -O pro_crypto_ai_model.pkl "https://github.com/MrZkull/Crypto_AI_bot/releases/download/v2.0/pro_crypto_ai_model.pkl"
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -45,7 +45,7 @@ jobs:
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}"           >> .env
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}"       >> .env
           echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"               >> .env
-          echo "GITHUB_REPO=Elliot14R/Crypto_AI_bot"                    >> .env
+          echo "GITHUB_REPO=MrZkull/Crypto_AI_bot"                    >> .env
           echo "GITHUB_BRANCH=main"                                     >> .env
           echo "DERIBIT_CLIENT_ID=${{ secrets.DERIBIT_CLIENT_ID }}"         >> .env
           echo "DERIBIT_CLIENT_SECRET=${{ secrets.DERIBIT_CLIENT_SECRET }}" >> .env
