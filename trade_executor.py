@@ -5,6 +5,7 @@
 #   2. Removed volume_ratio check (feature may not exist in all model versions)
 #   3. Lowered score requirement to 1 during active hours
 #   4. Ghost trade recovery uses Deribit trade history before falling back to $0
+#   5. Stop Loss execution fixed via is_sl_triggered and live price hard fallback
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -296,6 +297,16 @@ def check_open_trades(deribit: DeribitClient):
     to_remove = []
     log.info(f"  Monitoring {len(trades)} trade(s)")
 
+    live_positions = set()
+    try:
+        for p in deribit.get_positions():
+            if float(p.get("size", 0)) != 0:
+                inst = p.get("instrument_name","")
+                base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+                live_positions.add(f"{base}USDT")
+    except Exception as e:
+        log.warning(f"  Could not fetch live positions: {e}")
+
     for symbol, trade in list(trades.items()):
         if trade.get("closed"): to_remove.append(symbol); continue
         oids  = trade.get("order_ids", {})
@@ -358,14 +369,39 @@ def check_open_trades(deribit: DeribitClient):
 
             # ── SL ──────────────────────────────────────────────────
             if not trade.get("closed") and oids.get("stop_loss"):
-                o = get_o("stop_loss")
-                if deribit.is_order_filled(o):
-                    trade["closed"]=True
-                    fill=fp(o,trade["stop"]); pnl=_pnl(trade,fill,"sl")
-                    lbl="BREAK-EVEN ⚖️" if abs(fill-entry)<entry*0.001 else "STOPPED OUT ❌"
-                    log.info(f"  SL {symbol} @ {fill:.{dec}f} pnl≈{pnl:+.4f}")
+                o       = get_o("stop_loss")
+                o_state = o.get("order_state", "").lower()
+                
+                # 1. Check using the new triggered logic
+                sl_hit = deribit.is_sl_triggered(o)
+                
+                # 2. HARD FALLBACK: If API state is weird, manually check live price vs SL
+                if not sl_hit and symbol not in live_positions and o_state != "untriggered":
+                    live_px = deribit.get_live_price(symbol)
+                    sl_px   = float(trade.get("stop", 0))
+                    is_buy  = trade["signal"] == "BUY"
+                    
+                    if sl_px > 0 and live_px > 0:
+                        crossed = (is_buy and live_px <= sl_px * 1.002) or \
+                                  (not is_buy and live_px >= sl_px * 0.998)
+                        if crossed:
+                            log.warning(f"  ⚠️ {symbol}: price {live_px:.4f} crossed SL {sl_px:.4f} → forcing close")
+                            sl_hit = True
+
+                if sl_hit:
+                    trade["closed"] = True
+                    fill = fp(o, trade["stop"])
+                    # Fallback to live price if the order didn't log a fill price
+                    if fill == trade["stop"] or fill == 0:
+                        live = deribit.get_live_price(symbol)
+                        if live > 0: fill = live
+                        
+                    pnl  = _pnl(trade, fill, "sl")
+                    lbl  = "BREAK-EVEN ⚖️" if abs(fill-entry) < entry*0.002 else "STOPPED OUT ❌"
+                    log.info(f"  ❌ SL {symbol} @ {fill:.{dec}f} pnl≈{pnl:+.4f} (state={o_state})")
                     _send(f"{'⚖️' if 'BREAK' in lbl else '❌'} *{lbl} — {symbol}*\nPnL ≈ `{pnl:+.4f}`")
-                    _close_record(trade,fill,pnl,lbl)
+                    _close_record(trade, fill, pnl, lbl)
+                    
                     for k in ("tp1","tp2"):
                         if oids.get(k) and not trade.get(f"{k}_hit"):
                             try: deribit.cancel_order(oids[k])
@@ -437,10 +473,19 @@ def clean_ghost_trades(deribit: DeribitClient):
                     if real_close>0 and qty>0:
                         diff=(real_close-entry) if entry_dir=="BUY" else (entry-real_close)
                         real_pnl=round(diff*qty,4)
-                        if real_close >= float(trade.get("tp2",0))*0.998: reason="TP2 hit (recovered)"
-                        elif real_close >= float(trade.get("tp1",0))*0.998: reason="TP1 hit (recovered)"
-                        else: reason="SL hit (recovered)"
-                        log.info(f"  ✅ Recovered {symbol}: close={real_close:.4f} pnl={real_pnl:+.4f}")
+                        
+                        tp1_p=float(trade.get("tp1",0)); tp2_p=float(trade.get("tp2",0))
+                        
+                        if entry_dir=="BUY":
+                            if real_close >= tp2_p*0.998: reason="TP2 hit"
+                            elif real_close >= tp1_p*0.998: reason="TP1 hit"
+                            else: reason="SL hit"
+                        else:
+                            if real_close <= tp2_p*1.002: reason="TP2 hit"
+                            elif real_close <= tp1_p*1.002: reason="TP1 hit"
+                            else: reason="SL hit"
+                            
+                        log.info(f"  ✅ Recovered {symbol}: close={real_close:.4f} pnl={real_pnl:+.4f} ({reason})")
             except Exception as e: log.warning(f"  PnL recovery {symbol}: {e}")
 
             if real_pnl is not None and real_close is not None:
