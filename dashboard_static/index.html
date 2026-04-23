@@ -1099,7 +1099,7 @@ async function fetchHistory() {
       tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No closed trades yet</td></tr>';
     } else {
       tbody.innerHTML = [...real].reverse().map(t => {
-        const isWin = (t.pnl||0) > 0;
+        const isWin = (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
         const dec   = (t.entry||1) < 10 ? 4 : 2;
         const dur   = t.opened_at && t.closed_at ? 
           Math.round((new Date(t.closed_at)-new Date(t.opened_at))/60000) + 'm' : '—';
