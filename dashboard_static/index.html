@@ -385,7 +385,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12
   <!-- OPEN TRADES PAGE -->
   <div class="page" id="page-trades">
     <div class="stats-row" style="grid-template-columns:repeat(4,1fr)">
-      <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub">of 3 max</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub" id="ot-max-sub">of 4 max</div></div>
       <div class="stat-card c-amber"><div class="stat-label">Unrealised PnL</div><div class="stat-value" id="ot-upnl">+0.0000</div><div class="stat-sub">USDT combined</div></div>
       <div class="stat-card c-green"><div class="stat-label">Capital at Risk</div><div class="stat-value green" id="ot-risk">—</div><div class="stat-sub">USDT (1% each)</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Avg Confidence</div><div class="stat-value cyan" id="ot-conf">—</div><div class="stat-sub">ML score avg</div></div>
@@ -754,7 +754,9 @@ async function fetchStatus() {
   document.getElementById('statWR').className    = 'stat-value ' + (wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red');
   document.getElementById('statWRSub').textContent = (d.wins||0) + ' W / ' + (d.losses||0) + ' L';
   document.getElementById('statOpen').textContent  = d.open_trades || 0;
-  document.getElementById('statOpenSub').textContent = (d.open_trades||0) + ' of ' + (d.max_trades||3) + ' max';
+  document.getElementById('statOpenSub').textContent = (d.open_trades||0) + ' of ' + (d.max_trades||4) + ' max';
+  const _omx = document.getElementById('ot-max-sub');
+  if (_omx) _omx.textContent = 'of ' + (d.max_trades||4) + ' max';
 
   const pnl = d.total_pnl || 0;
   const pnlEl = document.getElementById('statPnl');
@@ -873,7 +875,7 @@ function renderTradeCard(t) {
       <div style="display: flex; align-items: flex-start; gap: 24px;">
         <div style="text-align: right;">
             <div style="font-size: 0.7rem; color: #8b9bb4; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">SIZE</div>
-            <div style="font-size: 1.05rem; color: #e2e8f0; font-weight: 600;">$${fmt(t.risk_usd || (t.qty * t.entry) || 0, 2)}</div>
+            <div style="font-size: 1.05rem; color: #e2e8f0; font-weight: 600;">$${fmt(t.risk_usd || 0, 2)}</div>
         </div>
         <div style="text-align:right; font-weight:bold; color:${pnlColor}">
           <div style="font-size:15px;">${pnlSign}$${Math.abs(pnl).toFixed(4)}</div>
@@ -1069,8 +1071,9 @@ async function fetchHistory() {
   const data = await apiFetch('/api/trades/history', []);
   allHistory  = data;
   const real  = data.filter(t => t.signal !== 'RECOVERED');
-  const wins  = real.filter(t => (t.pnl||0) > 0);
-  const loss  = real.filter(t => (t.pnl||0) <= 0);
+  const isTradeWin = t => (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
+  const wins  = real.filter(t => isTradeWin(t));
+  const loss  = real.filter(t => !isTradeWin(t));
   const total = real.length;
   const wr    = total ? (wins.length/total*100).toFixed(1) : 0;
   const tpnl  = real.reduce((s,t) => s+(t.pnl||0), 0);
