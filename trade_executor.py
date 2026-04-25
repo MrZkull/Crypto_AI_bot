@@ -548,19 +548,20 @@ def run_execution_scan():
     save_balance(deribit)
 
     open_count = len([t for t in load_trades().values() if not t.get("closed",False)])
-    if open_count >= MAX_OPEN_TRADES:
-        log.info(f"\n[4] Max trades ({open_count}/{MAX_OPEN_TRADES}) — no new trades"); return
-
+    
+    # We removed the early 'return' here so it always proceeds to scan and log
     log.info(f"\n[4] Scanning {len(SYMBOLS)} coins | Open:{open_count}/{MAX_OPEN_TRADES}")
+    
     found = 0
     for symbol in SYMBOLS:
-        open_count = len([t for t in load_trades().values() if not t.get("closed",False)])
-        if open_count >= MAX_OPEN_TRADES:
-            log.info(f"  🛑 Max trades — stop"); break
+        # We removed the 'break' here so it checks every single coin for logs
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
+        
         sig = generate_signal(symbol, pipeline, thresholds)
         if sig is None: time.sleep(0.2); continue
         found += 1
+        
+        # execute_trade has its own check and will reject the trade if open_count >= 4
         if execute_trade(deribit, sig, risk_mult, balance): time.sleep(1.5)
 
     save_balance(deribit)
