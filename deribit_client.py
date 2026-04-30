@@ -95,30 +95,27 @@ class DeribitClient:
         return data.get("result", data)
 
     # ═══════════════════════════════════════════════════════════════
-    # FIX 1: Plain HTTP POST — params sent DIRECTLY, NOT in JSON-RPC.
-    #
-    # The old code wrapped body in:
-    #   {"jsonrpc":"2.0","id":...,"method":"private/buy","params": body}
-    # That is WebSocket/JSON-RPC format. Deribit REST endpoints expect:
-    #   POST /private/buy   body = {"instrument_name":..., "amount":..., ...}
-    #
-    # The JSON-RPC wrapper caused error -32602 (invalid params) on EVERY
-    # SL and TP order. Orders appeared to succeed (no exception) because
-    # the error was buried inside the response body, not in HTTP status.
-    # Result: every trade opened with NO stop loss and NO take profit.
+    # FIX 1 (updated): Deribit REST uses GET with query params for ALL
+    # endpoints — including /private/buy, /private/sell, /private/cancel.
+    # POST with JSON body caused error 11050 (bad_request) because Deribit
+    # REST does not parse JSON bodies for trading endpoints. Auth is via
+    # Bearer header (set in _authenticate), params go in the query string.
     # ═══════════════════════════════════════════════════════════════
     def _post(self, path: str, body: dict) -> dict:
         """
-        Plain HTTP POST to Deribit REST endpoint.
-        Sends `body` directly as JSON — no JSON-RPC wrapping.
+        Deribit REST private endpoints (buy/sell/cancel) use GET + query params.
+        The method is named _post for API compat but sends GET internally.
         """
         self._ensure_auth()
-        r    = self.session.post(f"{self.base}{path}", json=body, timeout=15)
+        r    = self.session.get(f"{self.base}{path}", params=body, timeout=15)
         data = r.json()
         if "error" in data:
-            err  = data["error"]
-            msg  = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            code = err.get("code", "")          if isinstance(err, dict) else ""
+            err   = data["error"]
+            msg   = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            code  = err.get("code", "")          if isinstance(err, dict) else ""
+            extra = err.get("data", "")          if isinstance(err, dict) else ""
+            # Log full response to help debug future errors
+            log.error(f"  Deribit error: {msg} | Code:{code} | Data:{extra} | Path:{path} | Params:{body}")
             raise Exception(f"{msg} (Code:{code})" if code else msg)
         r.raise_for_status()
         return data.get("result", data)
@@ -212,11 +209,16 @@ class DeribitClient:
         min_amt   = self.get_min_trade_amount(symbol)
         if stop_dist <= 0 or entry <= 0:
             return self.round_amount(symbol, min_amt)
-        raw    = risk_usd / stop_dist
-        max_p  = (balance_usd * 0.20) / entry
-        raw    = min(raw, max_p)
-        result = self.round_amount(symbol, raw)
-        log.info(f"  Contracts: {result} {symbol} (risk=${risk_usd:.2f})")
+        raw = risk_usd / stop_dist
+        # Cap 1: max 5% of balance as notional (reduced from 20% — old cap caused
+        #         0.46 BTC / 626 LTC positions that hit Deribit Code:11050 limits)
+        max_pct  = (balance_usd * 0.05) / entry
+        # Cap 2: notional must not exceed 10x the risk amount
+        max_risk = (risk_usd * 10) / entry
+        raw      = min(raw, max_pct, max_risk)
+        result   = self.round_amount(symbol, max(raw, min_amt))
+        notional = result * entry
+        log.info(f"  Contracts: {result} {symbol} | notional≈${notional:.0f} | risk=${risk_usd:.2f}")
         return result
 
     def get_all_balances(self) -> dict:
@@ -253,9 +255,10 @@ class DeribitClient:
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         result     = self._post(method, {
             "instrument_name": instrument,
-            "amount": amount,
-            "type": "market",
-            "label": f"bot_entry_{int(time.time())}",
+            "amount":          amount,
+            "type":            "market",
+            "time_in_force":   "immediate_or_cancel",  # required for market orders on testnet
+            "label":           f"bot_entry_{int(time.time())}",
         })
         order = result.get("order", result)
         log.info(f"  ✅ MARKET {side.upper()} {amount} {instrument} "
