@@ -1,11 +1,18 @@
-# trade_executor.py — Fixed: no blocking bugs, trades will execute
+# trade_executor.py — FIXED: dangerous hard-fallback SL removed, all other fixes retained
 #
-# FIXES for "no trades for 1.5 days": with below issues also
-#   1. Removed daily loss circuit breaker from scan path (was blocking all scans)
-#   2. Removed volume_ratio check (feature may not exist in all model versions)
+# FIXES APPLIED:
+#   FIX 3 (this file): Removed the hard-fallback SL check that fires when
+#          o_state != "untriggered". That condition catches empty strings from
+#          API errors and was phantom-closing trades that had just had their
+#          SL replaced with a breakeven order (state briefly = "").
+#          is_sl_triggered() in deribit_client.py now handles all real cases safely.
+#
+#   Previously fixed (retained here):
+#   1. Removed daily loss circuit breaker from scan path
+#   2. Removed volume_ratio check
 #   3. Lowered score requirement to 1 during active hours
 #   4. Ghost trade recovery uses Deribit trade history before falling back to $0
-#   5. Stop Loss execution fixed via is_sl_triggered and live price hard fallback
+#   5. Stop Loss execution fixed via is_sl_triggered
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -141,7 +148,7 @@ def generate_signal(symbol, pipeline, thresholds):
         log.info(f"    ADX: {adx:.1f} (need ≥{thresholds['min_adx']})")
         if adx < thresholds["min_adx"]: return None
 
-        # NEW: BTC Trend Gate - Do not short if BTC is pumping
+        # BTC Trend Gate - Do not short if BTC is pumping
         if sig == "SELL":
             btc_df = add_indicators(get_data("BTCUSDT", TIMEFRAME_ENTRY))
             if not btc_df.empty:
@@ -377,40 +384,34 @@ def check_open_trades(deribit: DeribitClient):
                     _close_record(trade,fill,pnl,"TP2 hit"); to_remove.append(symbol)
 
             # ── SL ──────────────────────────────────────────────────
+            # FIX 3: Removed the dangerous hard-fallback price-vs-SL check.
+            #
+            # The old fallback fired when o_state != "untriggered", which
+            # catches empty strings from API errors or the brief window when
+            # a new breakeven SL order hasn't been fetched yet. This caused
+            # trades to be closed immediately after TP1 hit.
+            #
+            # is_sl_triggered() in deribit_client.py now safely handles all
+            # real SL states (triggered, filled, cancelled-with-fill).
+            # The ghost cleaner handles positions that vanish entirely.
             if not trade.get("closed") and oids.get("stop_loss"):
                 o       = get_o("stop_loss")
                 o_state = o.get("order_state", "").lower()
-                
-                # 1. Check using the new triggered logic
-                sl_hit = deribit.is_sl_triggered(o)
-                
-                # 2. HARD FALLBACK: If API state is weird, manually check live price vs SL
-                if not sl_hit and symbol not in live_positions and o_state != "untriggered":
-                    live_px = deribit.get_live_price(symbol)
-                    sl_px   = float(trade.get("stop", 0))
-                    is_buy  = trade["signal"] == "BUY"
-                    
-                    if sl_px > 0 and live_px > 0:
-                        crossed = (is_buy and live_px <= sl_px * 1.002) or \
-                                  (not is_buy and live_px >= sl_px * 0.998)
-                        if crossed:
-                            log.warning(f"  ⚠️ {symbol}: price {live_px:.4f} crossed SL {sl_px:.4f} → forcing close")
-                            sl_hit = True
+                sl_hit  = deribit.is_sl_triggered(o)
 
                 if sl_hit:
                     trade["closed"] = True
                     fill = fp(o, trade["stop"])
-                    # Fallback to live price if the order didn't log a fill price
                     if fill == trade["stop"] or fill == 0:
                         live = deribit.get_live_price(symbol)
                         if live > 0: fill = live
-                        
+
                     pnl  = _pnl(trade, fill, "sl")
                     lbl  = "BREAK-EVEN ⚖️" if abs(fill-entry) < entry*0.002 else "STOPPED OUT ❌"
                     log.info(f"  ❌ SL {symbol} @ {fill:.{dec}f} pnl≈{pnl:+.4f} (state={o_state})")
                     _send(f"{'⚖️' if 'BREAK' in lbl else '❌'} *{lbl} — {symbol}*\nPnL ≈ `{pnl:+.4f}`")
                     _close_record(trade, fill, pnl, lbl)
-                    
+
                     for k in ("tp1","tp2"):
                         if oids.get(k) and not trade.get(f"{k}_hit"):
                             try: deribit.cancel_order(oids[k])
@@ -482,9 +483,9 @@ def clean_ghost_trades(deribit: DeribitClient):
                     if real_close>0 and qty>0:
                         diff=(real_close-entry) if entry_dir=="BUY" else (entry-real_close)
                         real_pnl=round(diff*qty,4)
-                        
+
                         tp1_p=float(trade.get("tp1",0)); tp2_p=float(trade.get("tp2",0))
-                        
+
                         if entry_dir=="BUY":
                             if real_close >= tp2_p*0.998: reason="TP2 hit"
                             elif real_close >= tp1_p*0.998: reason="TP1 hit"
@@ -493,7 +494,7 @@ def clean_ghost_trades(deribit: DeribitClient):
                             if real_close <= tp2_p*1.002: reason="TP2 hit"
                             elif real_close <= tp1_p*1.002: reason="TP1 hit"
                             else: reason="SL hit"
-                            
+
                         log.info(f"  ✅ Recovered {symbol}: close={real_close:.4f} pnl={real_pnl:+.4f} ({reason})")
             except Exception as e: log.warning(f"  PnL recovery {symbol}: {e}")
 
@@ -557,20 +558,14 @@ def run_execution_scan():
     save_balance(deribit)
 
     open_count = len([t for t in load_trades().values() if not t.get("closed",False)])
-    
-    # We removed the early 'return' here so it always proceeds to scan and log
     log.info(f"\n[4] Scanning {len(SYMBOLS)} coins | Open:{open_count}/{MAX_OPEN_TRADES}")
-    
+
     found = 0
     for symbol in SYMBOLS:
-        # We removed the 'break' here so it checks every single coin for logs
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
-        
         sig = generate_signal(symbol, pipeline, thresholds)
         if sig is None: time.sleep(0.2); continue
         found += 1
-        
-        # execute_trade has its own check and will reject the trade if open_count >= 4
         if execute_trade(deribit, sig, risk_mult, balance): time.sleep(1.5)
 
     save_balance(deribit)
