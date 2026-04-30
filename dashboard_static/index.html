@@ -409,7 +409,20 @@ body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12
     </div>
     <div class="panel">
       <div class="panel-header"><span class="panel-title">Trade History</span><span class="panel-badge" id="histBadge">0 trades</span></div>
-      <div style="overflow-x:auto">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+  <button class="fbtn active" onclick="setHistRange('all',this)">All Time</button>
+  <button class="fbtn" onclick="setHistRange('today',this)">Today</button>
+  <button class="fbtn" onclick="setHistRange('7d',this)">7 Days</button>
+  <button class="fbtn" onclick="setHistRange('30d',this)">30 Days</button>
+  <button class="fbtn" onclick="setHistRange('custom',this)">Custom</button>
+  <div id="histCustomRange" style="display:none;gap:6px;align-items:center;display:none">
+    <input type="date" id="histFrom" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 7px;font-family:var(--mono);font-size:11px">
+    <span style="color:var(--text3)">→</span>
+    <input type="date" id="histTo" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 7px;font-family:var(--mono);font-size:11px">
+    <button class="fbtn" onclick="applyCustomRange()" style="border-color:var(--blue);color:var(--blue)">Apply</button>
+  </div>
+</div>
+<div style="overflow-x:auto">
         <table class="htable">
           <thead><tr><th>Symbol</th><th>Tier</th><th>Dir</th><th>Entry</th><th>Close</th><th>PnL (USDT)</th><th>Result</th><th>Opened</th><th>Duration</th><th>Reason</th></tr></thead>
           <tbody id="histBody"><tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No closed trades yet</td></tr></tbody>
@@ -675,6 +688,7 @@ const PAGES = {dashboard:'Dashboard',signals:'Signals',market:'Market',trades:'O
 let allSignals   = [];
 let allTrades    = {};
 let allHistory   = [];
+let histRange    = 'all';
 let sigFilter    = 'all';
 let confFilter   = 0;
 let scanRunning  = false;
@@ -1097,10 +1111,7 @@ async function fetchHistory() {
 
   // History table
   const tbody = document.getElementById('histBody');
-  if (tbody) {
-    if (!real.length) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No closed trades yet</td></tr>';
-    } else {
+  renderHistoryFiltered(); else {
       tbody.innerHTML = [...real].reverse().map(t => {
         const isWin = (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
         const dec   = (t.entry||1) < 10 ? 4 : 2;
@@ -1383,6 +1394,90 @@ async function apiFetchWithMethod(path, fallback, opts) {
 const _apiFetch = apiFetch;
 window.apiFetch = apiFetchWithMethod;
 
+function setHistRange(range, btn) {
+  histRange = range;
+  document.querySelectorAll('.fbtn[onclick*="setHistRange"]').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const customEl = document.getElementById('histCustomRange');
+  if (customEl) customEl.style.display = range === 'custom' ? 'flex' : 'none';
+  if (range !== 'custom') renderHistoryFiltered();
+}
+
+function applyCustomRange() {
+  renderHistoryFiltered();
+}
+
+function getHistFiltered() {
+  const now = new Date();
+  let from = null, to = null;
+  if (histRange === 'today') {
+    from = new Date(now.toISOString().slice(0,10));
+  } else if (histRange === '7d') {
+    from = new Date(now - 7*86400000);
+  } else if (histRange === '30d') {
+    from = new Date(now - 30*86400000);
+  } else if (histRange === 'custom') {
+    const f = document.getElementById('histFrom')?.value;
+    const t = document.getElementById('histTo')?.value;
+    if (f) from = new Date(f);
+    if (t) { to = new Date(t); to.setHours(23,59,59,999); }
+  }
+  return allHistory.filter(t => {
+    const d = new Date(t.opened_at || t.closed_at || 0);
+    if (from && d < from) return false;
+    if (to   && d > to)   return false;
+    return true;
+  });
+}
+
+function renderHistoryFiltered() {
+  const data = getHistFiltered();
+  const real  = data.filter(t => t.signal !== 'RECOVERED');
+  const isTradeWin = t => (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
+  const wins  = real.filter(t => isTradeWin(t));
+  const loss  = real.filter(t => !isTradeWin(t));
+  const total = real.length;
+  const wr    = total ? (wins.length/total*100).toFixed(1) : 0;
+  const tpnl  = real.reduce((s,t) => s+(t.pnl||0), 0);
+
+  // Update top stat cards
+  const el_total = document.getElementById('h-total'); if(el_total) el_total.textContent = total;
+  const el_wins  = document.getElementById('h-wins');  if(el_wins)  el_wins.textContent  = wins.length;
+  const el_loss  = document.getElementById('h-losses');if(el_loss)  el_loss.textContent  = loss.length;
+  const el_wr    = document.getElementById('h-wr');
+  if(el_wr) { el_wr.textContent = wr?(wr+'%'):'—'; el_wr.className='stat-value '+(parseFloat(wr)>=60?'green':parseFloat(wr)>=40?'amber':'red'); }
+  const el_pnl   = document.getElementById('h-pnl');
+  if(el_pnl) { el_pnl.textContent=(tpnl>0?'+':'')+tpnl.toFixed(4); el_pnl.style.color=tpnl>=0?'var(--green)':'var(--red)'; }
+
+  const histBadge = document.getElementById('histBadge');
+  if (histBadge) histBadge.textContent = total + ' trades';
+
+  const tbody = document.getElementById('histBody');
+  if (!tbody) return;
+  if (!real.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No trades in selected range</td></tr>';
+    return;
+  }
+  tbody.innerHTML = [...real].reverse().map(t => {
+    const isWin = (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
+    const dec   = (t.entry||1) < 10 ? 4 : 2;
+    const dur   = t.opened_at && t.closed_at ?
+      Math.round((new Date(t.closed_at)-new Date(t.opened_at))/60000) + 'm' : '—';
+    return `<tr>
+      <td style="color:#fff;font-weight:600">${t.symbol}</td>
+      <td style="color:var(--text3);font-size:10px">${(t.tier||'').replace(/[👑⚡🏛🤖]/g,'').trim()}</td>
+      <td><span class="tag ${t.signal==='BUY'?'buy':'sell'}">${t.signal||'—'}</span></td>
+      <td style="color:var(--blue)">${fp(t.entry,dec)}</td>
+      <td>${fp(t.close_price,dec)}</td>
+      <td style="color:${isWin?'var(--green)':'var(--red)'};font-weight:600">${(t.pnl>0?'+':'')}${(t.pnl||0).toFixed(4)}</td>
+      <td><span class="tag ${isWin?'win':'loss'}">${isWin?'WIN':'LOSS'}</span></td>
+      <td style="color:var(--text3)">${t.opened_at?new Date(t.opened_at).toLocaleDateString():' —'}</td>
+      <td style="color:var(--text3)">${dur}</td>
+      <td style="color:var(--text3);font-size:10px">${t.close_reason||'—'}</td>
+    </tr>`;
+  }).join('');
+}
+
 async function refreshAll() {
   await Promise.all([
     (typeof fetchStatus === 'function' ? fetchStatus() : Promise.resolve()),
@@ -1419,8 +1514,8 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const tp1Hit = t.tp1_hit || false;
   const prog  = Math.min(parseFloat(t.progress||0), 100);
 
-  if (!entry || !tp1 || !tp2 || !sl) {
-    return '<div style="height:6px;background:rgba(255,255,255,0.07);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+prog+'%;background:'+sigCol+';border-radius:3px;transition:width 0.8s"></div></div>';
+  if (!entry || !tp1 || !tp2 || !sl || sl === 0 || tp1 === 0) {
+    return '<div style="padding:6px 0"><div style="height:6px;background:rgba(255,255,255,0.07);border-radius:3px;overflow:hidden"><div style="height:100%;width:0%;background:'+sigCol+';border-radius:3px"></div></div><div style="font-size:9px;color:var(--red);margin-top:3px">⚠ No SL/TP set — trade unprotected</div></div>';
   }
 
   const totalRange = Math.abs(tp2 - sl);
@@ -1430,12 +1525,24 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const segTp1 = Math.abs(tp1 - entry) / totalRange * 100;
   const segTp2 = Math.abs(tp2 - tp1)   / totalRange * 100;
 
-  let dotPct = 0;
-  if (live && sl && tp2) {
-    dotPct = isBuy
-      ? Math.min(100, Math.max(0, (live - sl) / (tp2 - sl) * 100))
-      : Math.min(100, Math.max(0, (sl - live) / (sl - tp2) * 100));
+  // Recalculate progress from live price (don't rely on t.progress=0)
+  let dotPct = segSl; // default: at entry line
+  if (live > 0 && sl > 0 && tp2 > 0) {
+    const rawDot = isBuy
+      ? (live - sl) / (tp2 - sl) * 100
+      : (sl - live) / (sl - tp2) * 100;
+    dotPct = Math.min(100, Math.max(0, rawDot));
   }
+  
+  // Recalculate stage label based on live vs levels
+  const stageLabel = !live ? '⏳ Awaiting price' :
+    (isBuy
+      ? (live >= tp1 ? (tp1Hit ? '🎯 TP1 ✓ → heading to TP2' : '🎯 At TP1!') :
+         live >= entry ? '→ Above entry' :
+         live >= sl    ? '⚠ Below entry' : '🛑 Below SL!')
+      : (live <= tp1 ? (tp1Hit ? '🎯 TP1 ✓ → heading to TP2' : '🎯 At TP1!') :
+         live <= entry ? '→ Below entry' :
+         live <= sl    ? '⚠ Above entry' : '🛑 Above SL!'));
 
   const dotColor  = pnl >= 0 ? 'var(--green)' : 'var(--red)';
   const tp1Color  = tp1Hit ? 'var(--green)' : 'var(--blue)';
@@ -1451,7 +1558,7 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
 
   return `<div style="font-size:9px;color:var(--text3);margin-bottom:4px;display:flex;justify-content:space-between">
     <span>${tp1Hit ? '🎯 TP1 ✓ — moving to TP2' : 'Progress to TP1'}</span>
-    <span style="color:${tp1Hit?'var(--green)':'var(--text3)'}">${stage}</span>
+    <span style="color:${tp1Hit?'var(--green)':'var(--text3)'}">${stageLabel}</span>
   </div>
   <div style="position:relative;height:8px;border-radius:4px;background:rgba(255,255,255,0.06);overflow:visible;margin-bottom:4px">
     <div style="position:absolute;left:0;top:0;height:100%;width:${segSl.toFixed(1)}%;background:rgba(244,63,94,0.2);border-radius:4px 0 0 4px"></div>
