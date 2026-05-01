@@ -1290,7 +1290,125 @@ async function triggerScan() {
       setTimeout(() => { btn.textContent='▶ Scan Now'; btn.disabled=false; scanRunning=false; }, 3000);
     } else {
       btn.textContent = '✗ Failed';
-      setTimeout(() => { btn.textContent='▶ Scan Now'; btn.disabled=false; scanRunning=false; }, 2000);
+      setTimeout(() => { btn.textContent='▶ Scan Now'; btn.disabled=false; scanRunning=false; }, function buildTradeProgress(t, isBuy, pnl, sigCol) {
+  const entry  = parseFloat(t.entry      || 0);
+  const sl     = parseFloat(t.stop       || 0);
+  const tp1    = parseFloat(t.tp1        || 0);
+  const tp2    = parseFloat(t.tp2        || 0);
+  const live   = parseFloat(t.live_price || 0);
+  const tp1Hit = t.tp1_hit || false;
+
+  if (!entry || !sl || !tp1 || !tp2) {
+    return `<div style="padding:6px 0">
+      <div style="height:6px;background:rgba(255,255,255,0.07);border-radius:3px"></div>
+      <div style="font-size:9px;color:var(--red);margin-top:4px">⚠ SL/TP not set — orders may be missing</div>
+    </div>`;
+  }
+
+  const riskDist   = Math.abs(entry - sl);
+  const rewardDist = Math.abs(tp2 - entry);
+
+  // ── DYNAMIC DISPLAY RANGE ─────────────────────────────────────────
+  // Extend 2× riskDist below SL (BUY) / above SL (SELL) so the dot
+  // stays visible even when price is well past the stop level.
+  // Then auto-expand further if live price is still outside this range.
+  let rawLow, rawHigh;
+  if (isBuy) {
+    rawLow  = sl   - riskDist  * 2;          // 2R below SL
+    rawHigh = tp2  + rewardDist * 0.3;       // small padding above TP2
+  } else {
+    rawLow  = tp2  - rewardDist * 0.3;
+    rawHigh = sl   + riskDist  * 2;
+  }
+
+  // Guarantee live is always inside the range with 10% riskDist padding
+  const pad = riskDist * 0.1;
+  const displayLow  = Math.min(rawLow,  live - pad);
+  const displayHigh = Math.max(rawHigh, live + pad);
+  const displayRange = displayHigh - displayLow;
+
+  if (displayRange <= 0) return '';
+
+  // ── PIXEL POSITIONS (as % of bar) ────────────────────────────────
+  const toPct = v => Math.min(100, Math.max(0, (v - displayLow) / displayRange * 100));
+
+  const slPct    = toPct(sl);
+  const entryPct = toPct(entry);
+  const tp1Pct   = toPct(tp1);
+  const tp2Pct   = toPct(tp2);
+  const dotPct   = toPct(live);   // always 0–100, always moves with price
+
+  // ── COLORS ───────────────────────────────────────────────────────
+  const inProfit  = isBuy ? live >= entry : live <= entry;
+  const beyondSl  = isBuy ? live < sl     : live > sl;
+  const dotColor  = beyondSl ? 'var(--red)' : inProfit ? 'var(--green)' : 'var(--amber)';
+  const tp1Color  = tp1Hit ? 'var(--green)' : 'var(--blue)';
+
+  // ── STAGE LABEL ──────────────────────────────────────────────────
+  const pctFromEntry = entry > 0 ? ((live - entry) / entry * 100) : 0;
+  const pctStr = (pctFromEntry >= 0 ? '+' : '') + pctFromEntry.toFixed(2) + '%';
+
+  const stageLabel = !live ? '⏳ Awaiting price' :
+    (tp1Hit ? '🎯 TP1 ✓ → heading to TP2' :
+    beyondSl ? `🛑 Below SL (${pctStr} from entry)` :
+    (isBuy ? live >= tp1 : live <= tp1) ? `🎯 At TP1! (${pctStr})` :
+    (isBuy ? live >= entry : live <= entry) ? `▲ In profit (${pctStr})` :
+    `▼ ${pctStr} from entry`);
+
+  // ── ZONE BACKGROUND SEGMENTS ─────────────────────────────────────
+  // Red zone: from 0% → SL marker
+  // Risk zone: SL → Entry (amber tint)
+  // Reward zone: Entry → TP1 (blue tint)
+  // Target zone: TP1 → TP2 (green tint)
+  const slWidth    = slPct;
+  const riskWidth  = entryPct - slPct;
+  const rewardWidth= tp1Pct   - entryPct;
+  const targetWidth= tp2Pct   - tp1Pct;
+
+  return `
+  <div style="font-size:9px;color:var(--text3);margin-bottom:5px;display:flex;justify-content:space-between;align-items:center">
+    <span style="color:${dotColor};font-weight:600">${stageLabel}</span>
+    <span style="color:var(--cyan)">Live: $${live.toFixed(4)}</span>
+  </div>
+
+  <div style="position:relative;height:10px;border-radius:5px;background:rgba(255,255,255,0.05);margin-bottom:6px;overflow:visible">
+
+    <!-- Zone backgrounds -->
+    <div style="position:absolute;left:0;top:0;height:100%;width:${slWidth.toFixed(2)}%;background:rgba(244,63,94,0.15);border-radius:5px 0 0 5px"></div>
+    <div style="position:absolute;left:${slWidth.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,riskWidth).toFixed(2)}%;background:rgba(245,158,11,0.15)"></div>
+    <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,rewardWidth).toFixed(2)}%;background:rgba(59,130,246,0.2)"></div>
+    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,targetWidth).toFixed(2)}%;background:rgba(16,185,129,0.2);border-radius:0 5px 5px 0"></div>
+
+    <!-- Level markers -->
+    <div style="position:absolute;left:${slPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(244,63,94,0.7);border-radius:1px"></div>
+    <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(148,163,184,0.5);border-radius:1px"></div>
+    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(59,130,246,0.6);border-radius:1px"></div>
+    <div style="position:absolute;left:${tp2Pct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(16,185,129,0.7);border-radius:1px"></div>
+
+    <!-- Live price dot -->
+    <div style="
+      position:absolute;
+      top:50%;
+      left:${dotPct.toFixed(2)}%;
+      transform:translate(-50%,-50%);
+      width:14px;height:14px;
+      border-radius:50%;
+      background:${dotColor};
+      border:2px solid var(--bg);
+      box-shadow:0 0 8px ${dotColor}, 0 0 16px ${dotColor}40;
+      z-index:10;
+      transition:left 0.8s ease, background 0.3s ease;
+    "></div>
+  </div>
+
+  <!-- Level labels -->
+  <div style="position:relative;height:14px;margin-bottom:2px">
+    <span style="position:absolute;left:${slPct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--red)">SL</span>
+    <span style="position:absolute;left:${entryPct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--text3)">Entry</span>
+    <span style="position:absolute;left:${tp1Pct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:${tp1Color}">TP1${tp1Hit?' ✓':''}</span>
+    <span style="position:absolute;left:${tp2Pct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--green)">TP2</span>
+  </div>`;
+    }2000);
     }
   } catch(e) {
     btn.textContent = '✗ Failed';
@@ -1319,79 +1437,122 @@ function updateCoinChips() {
 // TRADE PROGRESS BAR (FIXED)
 // ═══════════════════════════════════════════════════════
 function buildTradeProgress(t, isBuy, pnl, sigCol) {
-  const entry  = parseFloat(t.entry  || 0);
-  const sl     = parseFloat(t.stop   || 0);
-  const tp1    = parseFloat(t.tp1    || 0);
-  const tp2    = parseFloat(t.tp2    || 0);
+  const entry  = parseFloat(t.entry      || 0);
+  const sl     = parseFloat(t.stop       || 0);
+  const tp1    = parseFloat(t.tp1        || 0);
+  const tp2    = parseFloat(t.tp2        || 0);
   const live   = parseFloat(t.live_price || 0);
   const tp1Hit = t.tp1_hit || false;
 
-  // Guard: if any key level is missing or zero, show warning
-  if (!entry || !tp1 || !tp2 || !sl || sl === 0 || tp1 === 0) {
+  if (!entry || !sl || !tp1 || !tp2) {
     return `<div style="padding:6px 0">
-      <div style="height:6px;background:rgba(255,255,255,0.07);border-radius:3px;overflow:hidden">
-        <div style="height:100%;width:0%;background:${sigCol};border-radius:3px"></div>
-      </div>
-      <div style="font-size:9px;color:var(--red);margin-top:3px">⚠ No SL/TP set — trade unprotected</div>
+      <div style="height:6px;background:rgba(255,255,255,0.07);border-radius:3px"></div>
+      <div style="font-size:9px;color:var(--red);margin-top:4px">⚠ SL/TP not set — orders may be missing</div>
     </div>`;
   }
 
-  const totalRange = Math.abs(tp2 - sl);
-  if (totalRange <= 0) return '';
+  const riskDist   = Math.abs(entry - sl);
+  const rewardDist = Math.abs(tp2 - entry);
 
-  // Calculate segment widths as % of full SL→TP2 range
-  const segSl  = Math.abs(entry - sl)  / totalRange * 100;
-  const segTp1 = Math.abs(tp1 - entry) / totalRange * 100;
-  const segTp2 = Math.abs(tp2 - tp1)   / totalRange * 100;
-
-  // FIXED: Calculate dot position from live price, not from t.progress (which defaults to 0)
-  let dotPct = segSl; // default: dot sits at entry line
-  if (live > 0 && sl > 0 && tp2 > 0) {
-    const rawDot = isBuy
-      ? (live - sl) / (tp2 - sl) * 100
-      : (sl - live) / (sl - tp2) * 100;
-    dotPct = Math.min(100, Math.max(0, rawDot));
+  // ── DYNAMIC DISPLAY RANGE ─────────────────────────────────────────
+  // Extend 2× riskDist below SL (BUY) / above SL (SELL) so the dot
+  // stays visible even when price is well past the stop level.
+  // Then auto-expand further if live price is still outside this range.
+  let rawLow, rawHigh;
+  if (isBuy) {
+    rawLow  = sl   - riskDist  * 2;          // 2R below SL
+    rawHigh = tp2  + rewardDist * 0.3;       // small padding above TP2
+  } else {
+    rawLow  = tp2  - rewardDist * 0.3;
+    rawHigh = sl   + riskDist  * 2;
   }
 
-  // FIXED: Stage label computed from live price vs levels
-  const stageLabel = live <= 0 ? '⏳ Awaiting price' : (
-    isBuy
-      ? (live >= tp2 * 0.998 ? '✅ At TP2!'
-       : live >= tp1 * 0.998 ? (tp1Hit ? '🎯 TP1 ✓ → heading to TP2' : '🎯 At TP1!')
-       : live >= entry       ? '→ Above entry'
-       : live >= sl          ? '⚠ Below entry'
-       : '🛑 At/Below SL!')
-      : (live <= tp2 * 1.002 ? '✅ At TP2!'
-       : live <= tp1 * 1.002 ? (tp1Hit ? '🎯 TP1 ✓ → heading to TP2' : '🎯 At TP1!')
-       : live <= entry       ? '→ Below entry'
-       : live <= sl          ? '⚠ Above entry'
-       : '🛑 At/Above SL!')
-  );
+  // Guarantee live is always inside the range with 10% riskDist padding
+  const pad = riskDist * 0.1;
+  const displayLow  = Math.min(rawLow,  live - pad);
+  const displayHigh = Math.max(rawHigh, live + pad);
+  const displayRange = displayHigh - displayLow;
 
-  const dotColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-  const tp1Color = tp1Hit ? 'var(--green)' : 'var(--blue)';
-  const seg1Bg   = tp1Hit ? 'rgba(16,185,129,0.5)' : 'rgba(59,130,246,0.3)';
-  const seg2Bg   = tp1Hit ? 'rgba(16,185,129,0.35)' : 'rgba(16,185,129,0.12)';
-  const dec      = entry < 10 ? 4 : 2;
+  if (displayRange <= 0) return '';
+
+  // ── PIXEL POSITIONS (as % of bar) ────────────────────────────────
+  const toPct = v => Math.min(100, Math.max(0, (v - displayLow) / displayRange * 100));
+
+  const slPct    = toPct(sl);
+  const entryPct = toPct(entry);
+  const tp1Pct   = toPct(tp1);
+  const tp2Pct   = toPct(tp2);
+  const dotPct   = toPct(live);   // always 0–100, always moves with price
+
+  // ── COLORS ───────────────────────────────────────────────────────
+  const inProfit  = isBuy ? live >= entry : live <= entry;
+  const beyondSl  = isBuy ? live < sl     : live > sl;
+  const dotColor  = beyondSl ? 'var(--red)' : inProfit ? 'var(--green)' : 'var(--amber)';
+  const tp1Color  = tp1Hit ? 'var(--green)' : 'var(--blue)';
+
+  // ── STAGE LABEL ──────────────────────────────────────────────────
+  const pctFromEntry = entry > 0 ? ((live - entry) / entry * 100) : 0;
+  const pctStr = (pctFromEntry >= 0 ? '+' : '') + pctFromEntry.toFixed(2) + '%';
+
+  const stageLabel = !live ? '⏳ Awaiting price' :
+    (tp1Hit ? '🎯 TP1 ✓ → heading to TP2' :
+    beyondSl ? `🛑 Below SL (${pctStr} from entry)` :
+    (isBuy ? live >= tp1 : live <= tp1) ? `🎯 At TP1! (${pctStr})` :
+    (isBuy ? live >= entry : live <= entry) ? `▲ In profit (${pctStr})` :
+    `▼ ${pctStr} from entry`);
+
+  // ── ZONE BACKGROUND SEGMENTS ─────────────────────────────────────
+  // Red zone: from 0% → SL marker
+  // Risk zone: SL → Entry (amber tint)
+  // Reward zone: Entry → TP1 (blue tint)
+  // Target zone: TP1 → TP2 (green tint)
+  const slWidth    = slPct;
+  const riskWidth  = entryPct - slPct;
+  const rewardWidth= tp1Pct   - entryPct;
+  const targetWidth= tp2Pct   - tp1Pct;
 
   return `
-  <div style="font-size:9px;color:var(--text3);margin-bottom:4px;display:flex;justify-content:space-between">
-    <span>${tp1Hit ? '🎯 TP1 ✓ — trailing to TP2' : 'Progress to TP1'}</span>
-    <span style="color:${tp1Hit?'var(--green)':live>0&&((isBuy&&live>=tp1)||(!isBuy&&live<=tp1))?'var(--green)':'var(--text3)'}">${stageLabel}</span>
+  <div style="font-size:9px;color:var(--text3);margin-bottom:5px;display:flex;justify-content:space-between;align-items:center">
+    <span style="color:${dotColor};font-weight:600">${stageLabel}</span>
+    <span style="color:var(--cyan)">Live: $${live.toFixed(4)}</span>
   </div>
-  <div style="position:relative;height:8px;border-radius:4px;background:rgba(255,255,255,0.06);overflow:visible;margin-bottom:4px">
-    <div style="position:absolute;left:0;top:0;height:100%;width:${segSl.toFixed(1)}%;background:rgba(244,63,94,0.2);border-radius:4px 0 0 4px"></div>
-    <div style="position:absolute;left:${segSl.toFixed(1)}%;top:0;height:100%;width:${segTp1.toFixed(1)}%;background:${seg1Bg}"></div>
-    <div style="position:absolute;left:${(segSl+segTp1).toFixed(1)}%;top:0;height:100%;width:${segTp2.toFixed(1)}%;background:${seg2Bg};border-radius:0 4px 4px 0"></div>
-    <div style="position:absolute;left:${segSl.toFixed(1)}%;top:-3px;bottom:-3px;width:1px;background:rgba(244,63,94,0.4)"></div>
-    <div style="position:absolute;left:${(segSl+segTp1).toFixed(1)}%;top:-3px;bottom:-3px;width:1px;background:rgba(16,185,129,0.5)"></div>
-    <div style="position:absolute;top:50%;left:${dotPct.toFixed(1)}%;transform:translate(-50%,-50%);width:12px;height:12px;border-radius:50%;background:${dotColor};border:2px solid var(--bg);box-shadow:0 0 7px ${dotColor};z-index:3;transition:left 1.2s ease"></div>
+
+  <div style="position:relative;height:10px;border-radius:5px;background:rgba(255,255,255,0.05);margin-bottom:6px;overflow:visible">
+
+    <!-- Zone backgrounds -->
+    <div style="position:absolute;left:0;top:0;height:100%;width:${slWidth.toFixed(2)}%;background:rgba(244,63,94,0.15);border-radius:5px 0 0 5px"></div>
+    <div style="position:absolute;left:${slWidth.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,riskWidth).toFixed(2)}%;background:rgba(245,158,11,0.15)"></div>
+    <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,rewardWidth).toFixed(2)}%;background:rgba(59,130,246,0.2)"></div>
+    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,targetWidth).toFixed(2)}%;background:rgba(16,185,129,0.2);border-radius:0 5px 5px 0"></div>
+
+    <!-- Level markers -->
+    <div style="position:absolute;left:${slPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(244,63,94,0.7);border-radius:1px"></div>
+    <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(148,163,184,0.5);border-radius:1px"></div>
+    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(59,130,246,0.6);border-radius:1px"></div>
+    <div style="position:absolute;left:${tp2Pct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(16,185,129,0.7);border-radius:1px"></div>
+
+    <!-- Live price dot -->
+    <div style="
+      position:absolute;
+      top:50%;
+      left:${dotPct.toFixed(2)}%;
+      transform:translate(-50%,-50%);
+      width:14px;height:14px;
+      border-radius:50%;
+      background:${dotColor};
+      border:2px solid var(--bg);
+      box-shadow:0 0 8px ${dotColor}, 0 0 16px ${dotColor}40;
+      z-index:10;
+      transition:left 0.8s ease, background 0.3s ease;
+    "></div>
   </div>
-  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);padding:0 2px">
-    <span style="color:var(--red)">SL ${parseFloat(sl).toFixed(dec)}</span>
-    <span>Entry ${parseFloat(entry).toFixed(dec)}</span>
-    <span style="color:${tp1Color}">TP1 ${tp1Hit?' ✓':''} ${parseFloat(tp1).toFixed(dec)}</span>
-    <span style="color:var(--green)">TP2 ${parseFloat(tp2).toFixed(dec)}</span>
+
+  <!-- Level labels -->
+  <div style="position:relative;height:14px;margin-bottom:2px">
+    <span style="position:absolute;left:${slPct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--red)">SL</span>
+    <span style="position:absolute;left:${entryPct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--text3)">Entry</span>
+    <span style="position:absolute;left:${tp1Pct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:${tp1Color}">TP1${tp1Hit?' ✓':''}</span>
+    <span style="position:absolute;left:${tp2Pct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--green)">TP2</span>
   </div>`;
 }
 
