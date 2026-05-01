@@ -1437,10 +1437,10 @@ function updateCoinChips() {
 // TRADE PROGRESS BAR (FIXED)
 // ═══════════════════════════════════════════════════════
 function buildTradeProgress(t, isBuy, pnl, sigCol) {
-  const entry  = parseFloat(t.entry      || 0);
-  const sl     = parseFloat(t.stop       || 0);
-  const tp1    = parseFloat(t.tp1        || 0);
-  const tp2    = parseFloat(t.tp2        || 0);
+  const entry  = parseFloat(t.entry || 0);
+  const sl     = parseFloat(t.stop || 0);
+  const tp1    = parseFloat(t.tp1 || 0);
+  const tp2    = parseFloat(t.tp2 || 0);
   const live   = parseFloat(t.live_price || 0);
   const tp1Hit = t.tp1_hit || false;
 
@@ -1455,61 +1455,62 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const rewardDist = Math.abs(tp2 - entry);
 
   // ── DYNAMIC DISPLAY RANGE ─────────────────────────────────────────
-  // Extend 2× riskDist below SL (BUY) / above SL (SELL) so the dot
-  // stays visible even when price is well past the stop level.
-  // Then auto-expand further if live price is still outside this range.
-  let rawLow, rawHigh;
+  // Extend 2x risk distance beyond SL (worst case side)
+  // Extend 0.3x reward distance beyond TP2 (best case side)
+  const worstBoundaryDist = riskDist * 2; 
+  const bestBoundaryDist = rewardDist * 0.3; 
+
+  let visualMinPrice, visualMaxPrice;
   if (isBuy) {
-    rawLow  = sl   - riskDist  * 2;          // 2R below SL
-    rawHigh = tp2  + rewardDist * 0.3;       // small padding above TP2
+      visualMinPrice = sl - worstBoundaryDist; // Worst (Left)
+      visualMaxPrice = tp2 + bestBoundaryDist; // Best (Right)
+      // Auto-expand if live price is outside this range
+      visualMinPrice = Math.min(visualMinPrice, live - riskDist * 0.1);
+      visualMaxPrice = Math.max(visualMaxPrice, live + riskDist * 0.1);
   } else {
-    rawLow  = tp2  - rewardDist * 0.3;
-    rawHigh = sl   + riskDist  * 2;
+      // For SELL, higher price is worse (Left) and lower price is better (Right)
+      visualMinPrice = sl + worstBoundaryDist; 
+      visualMaxPrice = tp2 - bestBoundaryDist; 
+      // Auto-expand if live price is outside this range
+      visualMinPrice = Math.max(visualMinPrice, live + riskDist * 0.1); 
+      visualMaxPrice = Math.min(visualMaxPrice, live - riskDist * 0.1); 
   }
 
-  // Guarantee live is always inside the range with 10% riskDist padding
-  const pad = riskDist * 0.1;
-  const displayLow  = Math.min(rawLow,  live - pad);
-  const displayHigh = Math.max(rawHigh, live + pad);
-  const displayRange = displayHigh - displayLow;
+  const priceRange = Math.abs(visualMaxPrice - visualMinPrice);
+  if (priceRange === 0) return '';
 
-  if (displayRange <= 0) return '';
-
-  // ── PIXEL POSITIONS (as % of bar) ────────────────────────────────
-  const toPct = v => Math.min(100, Math.max(0, (v - displayLow) / displayRange * 100));
+  // ── PIXEL POSITIONS (0% = Left/SL Side, 100% = Right/TP Side) ─────
+  const toPct = (p) => {
+      if (isBuy) return ((p - visualMinPrice) / priceRange) * 100;
+      return ((visualMinPrice - p) / priceRange) * 100;
+  };
 
   const slPct    = toPct(sl);
   const entryPct = toPct(entry);
   const tp1Pct   = toPct(tp1);
   const tp2Pct   = toPct(tp2);
-  const dotPct   = toPct(live);   // always 0–100, always moves with price
+  const dotPct   = Math.max(0, Math.min(100, toPct(live))); // Un-clamped relative to actual levels
 
-  // ── COLORS ───────────────────────────────────────────────────────
+  // ── COLORS & STATUS ──────────────────────────────────────────────
   const inProfit  = isBuy ? live >= entry : live <= entry;
   const beyondSl  = isBuy ? live < sl     : live > sl;
   const dotColor  = beyondSl ? 'var(--red)' : inProfit ? 'var(--green)' : 'var(--amber)';
   const tp1Color  = tp1Hit ? 'var(--green)' : 'var(--blue)';
 
-  // ── STAGE LABEL ──────────────────────────────────────────────────
-  const pctFromEntry = entry > 0 ? ((live - entry) / entry * 100) : 0;
-  const pctStr = (pctFromEntry >= 0 ? '+' : '') + pctFromEntry.toFixed(2) + '%';
+  const pctFromEntry = entry > 0 ? (Math.abs(live - entry) / entry * 100) : 0;
+  const pctStr = (inProfit ? '+' : '-') + pctFromEntry.toFixed(2) + '%';
 
   const stageLabel = !live ? '⏳ Awaiting price' :
     (tp1Hit ? '🎯 TP1 ✓ → heading to TP2' :
-    beyondSl ? `🛑 Below SL (${pctStr} from entry)` :
+    beyondSl ? `🛑 Below SL (${pctStr})` :
     (isBuy ? live >= tp1 : live <= tp1) ? `🎯 At TP1! (${pctStr})` :
-    (isBuy ? live >= entry : live <= entry) ? `▲ In profit (${pctStr})` :
-    `▼ ${pctStr} from entry`);
+    inProfit ? `▲ In profit (${pctStr})` : `▼ ${pctStr} from entry`);
 
-  // ── ZONE BACKGROUND SEGMENTS ─────────────────────────────────────
-  // Red zone: from 0% → SL marker
-  // Risk zone: SL → Entry (amber tint)
-  // Reward zone: Entry → TP1 (blue tint)
-  // Target zone: TP1 → TP2 (green tint)
-  const slWidth    = slPct;
-  const riskWidth  = entryPct - slPct;
-  const rewardWidth= tp1Pct   - entryPct;
-  const targetWidth= tp2Pct   - tp1Pct;
+  // ── ZONE WIDTHS ──────────────────────────────────────────────────
+  const slWidth    = slPct;                 // Red zone (0 to SL)
+  const riskWidth  = entryPct - slPct;      // Amber zone (SL to Entry)
+  const rewardWidth= tp1Pct - entryPct;     // Blue zone (Entry to TP1)
+  const targetWidth= tp2Pct - tp1Pct;       // Green zone (TP1 to TP2)
 
   return `
   <div style="font-size:9px;color:var(--text3);margin-bottom:5px;display:flex;justify-content:space-between;align-items:center">
@@ -1519,19 +1520,16 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
 
   <div style="position:relative;height:10px;border-radius:5px;background:rgba(255,255,255,0.05);margin-bottom:6px;overflow:visible">
 
-    <!-- Zone backgrounds -->
     <div style="position:absolute;left:0;top:0;height:100%;width:${slWidth.toFixed(2)}%;background:rgba(244,63,94,0.15);border-radius:5px 0 0 5px"></div>
-    <div style="position:absolute;left:${slWidth.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,riskWidth).toFixed(2)}%;background:rgba(245,158,11,0.15)"></div>
+    <div style="position:absolute;left:${slPct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,riskWidth).toFixed(2)}%;background:rgba(245,158,11,0.15)"></div>
     <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,rewardWidth).toFixed(2)}%;background:rgba(59,130,246,0.2)"></div>
-    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,targetWidth).toFixed(2)}%;background:rgba(16,185,129,0.2);border-radius:0 5px 5px 0"></div>
+    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,targetWidth).toFixed(2)}%;background:rgba(16,185,129,0.2)"></div>
 
-    <!-- Level markers -->
     <div style="position:absolute;left:${slPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(244,63,94,0.7);border-radius:1px"></div>
     <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(148,163,184,0.5);border-radius:1px"></div>
     <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(59,130,246,0.6);border-radius:1px"></div>
     <div style="position:absolute;left:${tp2Pct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(16,185,129,0.7);border-radius:1px"></div>
 
-    <!-- Live price dot -->
     <div style="
       position:absolute;
       top:50%;
@@ -1547,7 +1545,6 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
     "></div>
   </div>
 
-  <!-- Level labels -->
   <div style="position:relative;height:14px;margin-bottom:2px">
     <span style="position:absolute;left:${slPct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--red)">SL</span>
     <span style="position:absolute;left:${entryPct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--text3)">Entry</span>
@@ -1555,6 +1552,7 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
     <span style="position:absolute;left:${tp2Pct.toFixed(2)}%;transform:translateX(-50%);font-size:9px;color:var(--green)">TP2</span>
   </div>`;
 }
+
 
 // ═══════════════════════════════════════════════════════
 // INIT & LOOP
