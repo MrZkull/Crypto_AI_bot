@@ -33463,3 +33463,126 @@ SCAN — 2026-05-02 22:50 UTC
 ════════════════════════════════════════════════════════
 DONE — 0 signal(s) | $174819.33
 ════════════════════════════════════════════════════════
+2026-05-02 23:51:55,480 
+════════════════════════════════════════════════════════
+SCAN — 2026-05-02 23:51 UTC
+════════════════════════════════════════════════════════
+2026-05-02 23:51:56,140   WEEKEND MODE | conf≥70% | score≥3 | ADX≥22 | ✓ Normal vol — BTC ATR 0.20%
+2026-05-02 23:51:56,549 ✓ Deribit testnet authenticated
+2026-05-02 23:51:56,648 ✓ Tradeable: 22 — ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'AVAXUSDT', 'NEARUSDT', 'SUIUSDT', 'APTUSDT', 'ATOMUSDT', 'LINKUSDT', 'DOTUSDT', 'UNIUSDT', 'AAVEUSDT', 'XRPUSDT', 'LTCUSDT', 'BCHUSDT', 'FETUSDT', 'ADAUSDT', 'INJUSDT', 'ARBUSDT', 'OPUSDT', 'SEIUSDT']
+2026-05-02 23:51:57,067 ✅ Deribit OK — $174766.49 | 22 symbols
+2026-05-02 23:51:57,724   WEEKEND MODE | conf≥70% | score≥3 | ADX≥22 | risk:0.85
+2026-05-02 23:51:57,724 
+[0] Balance...
+2026-05-02 23:51:58,844   Balance: $174766.49 | upnl:+121.90 | positions:5
+2026-05-02 23:51:58,844 
+[1] Monitor trades...
+2026-05-02 23:51:58,844   Monitoring 4 trade(s)
+2026-05-02 23:51:59,234   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/sell | Params:{'instrument_name': 'UNI_USDC-PERPETUAL', 'amount': 2692.0, 'type': 'stop_limit', 'price': 3.2338, 'trigger_price': 3.2339, 'trigger': 'last_price', 'reduce_only': True, 'label': 'bot_sl_1777765919'}
+2026-05-02 23:51:59,234   SL re-place UNIUSDT: Invalid params (Code:-32602)
+2026-05-02 23:51:59,331   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/sell | Params:{'instrument_name': 'UNI_USDC-PERPETUAL', 'amount': 1346.0, 'type': 'limit', 'price': 3.2835, 'reduce_only': True, 'label': 'bot_tp_1777765919'}
+2026-05-02 23:51:59,331   TP1 re-place UNIUSDT: Invalid params (Code:-32602)
+2026-05-02 23:51:59,429   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/sell | Params:{'instrument_name': 'UNI_USDC-PERPETUAL', 'amount': 1346.0, 'type': 'limit', 'price': 3.2977, 'reduce_only': True, 'label': 'bot_tp_1777765919'}
+2026-05-02 23:51:59,429   TP2 re-place UNIUSDT: Invalid params (Code:-32602)
+2026-05-02 23:51:59,705   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'BNB_USDC-PERPETUAL', 'amount': 14.1, 'type': 'stop_limit', 'price': 620.87, 'trigger_price': 620.86, 'trigger': 'last_price', 'reduce_only': True, 'label': 'bot_sl_1777765919'}
+2026-05-02 23:51:59,705   SL re-place BNBUSDT: Invalid params (Code:-32602)
+2026-05-02 23:51:59,806   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'BNB_USDC-PERPETUAL', 'amount': 7.05, 'type': 'limit', 'price': 617.34, 'reduce_only': True, 'label': 'bot_tp_1777765919'}
+2026-05-02 23:51:59,806   TP1 re-place BNBUSDT: Invalid params (Code:-32602)
+2026-05-02 23:51:59,904   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'BNB_USDC-PERPETUAL', 'amount': 7.05, 'type': 'limit', 'price': 616.34, 'reduce_only': True, 'label': 'bot_tp_1777765919'}
+2026-05-02 23:51:59,904   TP2 re-place BNBUSDT: Invalid params (Code:-32602)
+2026-05-02 23:52:00,003   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'LTC_USDC-PERPETUAL', 'amount': 156.6, 'type': 'stop_limit', 'price': 55.98, 'trigger_price': 55.97, 'trigger': 'last_price', 'reduce_only': True, 'label': 'bot_sl_1777765919'}
+2026-05-02 23:52:00,003   SL re-place LTCUSDT: Invalid params (Code:-32602)
+2026-05-02 23:52:00,101   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'LTC_USDC-PERPETUAL', 'amount': 78.2, 'type': 'limit', 'price': 55.38, 'reduce_only': True, 'label': 'bot_tp_1777765920'}
+2026-05-02 23:52:00,101   TP1 re-place LTCUSDT: Invalid params (Code:-32602)
+2026-05-02 23:52:00,199   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'LTC_USDC-PERPETUAL', 'amount': 78.4, 'type': 'limit', 'price': 55.22, 'reduce_only': True, 'label': 'bot_tp_1777765920'}
+2026-05-02 23:52:00,199   TP2 re-place LTCUSDT: Invalid params (Code:-32602)
+2026-05-02 23:52:00,297   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'ETH_USDC-PERPETUAL', 'amount': 3.798, 'type': 'stop_limit', 'price': 2306.1, 'trigger_price': 2306.05, 'trigger': 'last_price', 'reduce_only': True, 'label': 'bot_sl_1777765920'}
+2026-05-02 23:52:00,297   SL re-place ETHUSDT: Invalid params (Code:-32602)
+2026-05-02 23:52:00,393   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'ETH_USDC-PERPETUAL', 'amount': 1.899, 'type': 'limit', 'price': 2288.9, 'reduce_only': True, 'label': 'bot_tp_1777765920'}
+2026-05-02 23:52:00,393   TP1 re-place ETHUSDT: Invalid params (Code:-32602)
+2026-05-02 23:52:00,492   Deribit error: Invalid params | Code:-32602 | Data:{'reason': 'value must be true or false', 'param': 'reduce_only'} | Path:/private/buy | Params:{'instrument_name': 'ETH_USDC-PERPETUAL', 'amount': 1.899, 'type': 'limit', 'price': 2283.95, 'reduce_only': True, 'label': 'bot_tp_1777765920'}
+2026-05-02 23:52:00,492   TP2 re-place ETHUSDT: Invalid params (Code:-32602)
+2026-05-02 23:52:00,494 
+[2] Stale trade check...
+2026-05-02 23:52:00,494 
+[3] Ghost trade recovery...
+2026-05-02 23:52:01,894   Balance: $174766.49 | upnl:+121.90 | positions:5
+2026-05-02 23:52:01,894 
+[4] Scanning 24 coins | Open:4/4
+2026-05-02 23:52:01,894 
+  ── BTCUSDT (👑 Big Three) ──
+2026-05-02 23:52:03,836     ML: NO_TRADE 46.3% (need ≥70%)
+2026-05-02 23:52:04,036 
+  ── ETHUSDT (👑 Big Three) ──
+2026-05-02 23:52:05,747     ML: SELL 49.8% (need ≥70%)
+2026-05-02 23:52:05,947 
+  ── BNBUSDT (👑 Big Three) ──
+2026-05-02 23:52:07,665     ML: SELL 62.2% (need ≥70%)
+2026-05-02 23:52:07,865 
+  ── SOLUSDT (⚡ High-Liquidity L1s) ──
+2026-05-02 23:52:09,699     ML: SELL 57.1% (need ≥70%)
+2026-05-02 23:52:09,900 
+  ── AVAXUSDT (⚡ High-Liquidity L1s) ──
+2026-05-02 23:52:11,350     ML: SELL 38.8% (need ≥70%)
+2026-05-02 23:52:11,551 
+  ── NEARUSDT (⚡ High-Liquidity L1s) ──
+2026-05-02 23:52:13,008     ML: SELL 47.7% (need ≥70%)
+2026-05-02 23:52:13,208 
+  ── SUIUSDT (⚡ High-Liquidity L1s) ──
+2026-05-02 23:52:14,743     ML: SELL 41.5% (need ≥70%)
+2026-05-02 23:52:14,943 
+  ── APTUSDT (⚡ High-Liquidity L1s) ──
+2026-05-02 23:52:16,343     ML: BUY 48.7% (need ≥70%)
+2026-05-02 23:52:16,543 
+  ── MATICUSDT (⚡ High-Liquidity L1s) ──
+2026-05-02 23:52:18,080     ML: SELL 46.7% (need ≥70%)
+2026-05-02 23:52:18,280 
+  ── ATOMUSDT (⚡ High-Liquidity L1s) ──
+2026-05-02 23:52:19,701     ML: SELL 47.9% (need ≥70%)
+2026-05-02 23:52:19,901 
+  ── LINKUSDT (🏛 Institutional Alts) ──
+2026-05-02 23:52:21,304     ML: SELL 45.9% (need ≥70%)
+2026-05-02 23:52:21,504 
+  ── DOTUSDT (🏛 Institutional Alts) ──
+2026-05-02 23:52:22,917     ML: BUY 38.5% (need ≥70%)
+2026-05-02 23:52:23,117 
+  ── UNIUSDT (🏛 Institutional Alts) ──
+2026-05-02 23:52:24,685     ML: SELL 38.5% (need ≥70%)
+2026-05-02 23:52:24,886 
+  ── AAVEUSDT (🏛 Institutional Alts) ──
+2026-05-02 23:52:26,422     ML: SELL 46.4% (need ≥70%)
+2026-05-02 23:52:26,622 
+  ── XRPUSDT (🏛 Institutional Alts) ──
+2026-05-02 23:52:28,342     ML: SELL 38.2% (need ≥70%)
+2026-05-02 23:52:28,542 
+  ── LTCUSDT (🏛 Institutional Alts) ──
+2026-05-02 23:52:30,085     ML: SELL 42.0% (need ≥70%)
+2026-05-02 23:52:30,286 
+  ── BCHUSDT (🏛 Institutional Alts) ──
+2026-05-02 23:52:31,688     ML: SELL 64.7% (need ≥70%)
+2026-05-02 23:52:31,888 
+  ── FETUSDT (🤖 AI & Momentum) ──
+2026-05-02 23:52:33,444     ML: NO_TRADE 51.7% (need ≥70%)
+2026-05-02 23:52:33,644 
+  ── RENDERUSDT (🤖 AI & Momentum) ──
+2026-05-02 23:52:35,053     ML: SELL 36.3% (need ≥70%)
+2026-05-02 23:52:35,253 
+  ── ADAUSDT (🤖 AI & Momentum) ──
+2026-05-02 23:52:36,835     ML: SELL 49.4% (need ≥70%)
+2026-05-02 23:52:37,036 
+  ── INJUSDT (🤖 AI & Momentum) ──
+2026-05-02 23:52:38,640     ML: BUY 44.2% (need ≥70%)
+2026-05-02 23:52:38,841 
+  ── ARBUSDT (🤖 AI & Momentum) ──
+2026-05-02 23:52:40,247     ML: BUY 58.4% (need ≥70%)
+2026-05-02 23:52:40,448 
+  ── OPUSDT (🤖 AI & Momentum) ──
+2026-05-02 23:52:41,986     ML: NO_TRADE 44.7% (need ≥70%)
+2026-05-02 23:52:42,187 
+  ── SEIUSDT (🤖 AI & Momentum) ──
+2026-05-02 23:52:43,740     ML: SELL 42.4% (need ≥70%)
+2026-05-02 23:52:45,060   Balance: $174759.78 | upnl:+115.25 | positions:5
+2026-05-02 23:52:45,060 
+════════════════════════════════════════════════════════
+DONE — 0 signal(s) | $174766.49
+════════════════════════════════════════════════════════
