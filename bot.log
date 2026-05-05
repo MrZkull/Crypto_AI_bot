@@ -38449,3 +38449,139 @@ SCAN — 2026-05-05 18:16 UTC
 ════════════════════════════════════════════════════════
 DONE — 0 signal(s) | $173876.40
 ════════════════════════════════════════════════════════
+2026-05-05 18:28:44,313 
+════════════════════════════════════════════════════════
+SCAN — 2026-05-05 18:28 UTC
+════════════════════════════════════════════════════════
+2026-05-05 18:28:49,067   ACTIVE HOURS | conf≥60% | score≥3 | ADX≥15 | ✓ Normal vol — BTC ATR 0.26%
+2026-05-05 18:28:49,241 ✓ Deribit testnet authenticated
+2026-05-05 18:28:49,346 ✓ Tradeable: 22 — ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'AVAXUSDT', 'NEARUSDT', 'SUIUSDT', 'APTUSDT', 'ATOMUSDT', 'LINKUSDT', 'DOTUSDT', 'UNIUSDT', 'AAVEUSDT', 'XRPUSDT', 'LTCUSDT', 'BCHUSDT', 'FETUSDT', 'ADAUSDT', 'INJUSDT', 'ARBUSDT', 'OPUSDT', 'SEIUSDT']
+2026-05-05 18:28:49,813 ✅ Deribit OK — $173878.97 | 22 symbols
+2026-05-05 18:28:50,269   ACTIVE HOURS | conf≥60% | score≥3 | ADX≥15 | risk:1.00
+2026-05-05 18:28:50,269 
+[0] Balance...
+2026-05-05 18:28:51,403   Balance: $173869.62 | upnl:-294.78 | positions:7
+2026-05-05 18:28:51,403 
+[1] Monitor trades...
+2026-05-05 18:28:51,404   Monitoring 4 trade(s)
+2026-05-05 18:28:51,809   Deribit error: trigger_price_too_low | Code:10035 | Data: | Path:/private/buy | Params:{'instrument_name': 'ETH_USDC-PERPETUAL', 'amount': 3.7, 'type': 'stop_limit', 'price': 2309.55, 'trigger_price': 2309.5, 'trigger': 'last_price', 'reduce_only': 'true', 'label': 'bot_sl_1778005731'}
+2026-05-05 18:28:51,809   SL re-place ETHUSDT: trigger_price_too_low (Code:10035)
+2026-05-05 18:28:51,809   ⚠️ ETHUSDT price past SL — closing at market
+2026-05-05 18:28:51,911   ✅ MARKET BUY 3.7 ETH_USDC-PERPETUAL id=USDC-203304747084 state=filled
+2026-05-05 18:28:53,403   ✅ TP BUY 1.85 ETH_USDC-PERPETUAL @ 2286.25 id=USDC-203304752601 state=open
+2026-05-05 18:28:53,403   🛠 Re-placed TP1 for ETHUSDT @ 2286.25 id:USDC-203304752601
+2026-05-05 18:28:53,504   ✅ TP BUY 1.85 ETH_USDC-PERPETUAL @ 2279.6 id=USDC-203304752783 state=open
+2026-05-05 18:28:53,504   🛠 Re-placed TP2 for ETHUSDT @ 2279.60 id:USDC-203304752783
+2026-05-05 18:28:53,999   Deribit error: trigger_price_too_low | Code:10035 | Data: | Path:/private/buy | Params:{'instrument_name': 'SOL_USDC-PERPETUAL', 'amount': 103.0, 'type': 'stop_limit', 'price': 85.096, 'trigger_price': 85.095, 'trigger': 'last_price', 'reduce_only': 'true', 'label': 'bot_sl_1778005733'}
+2026-05-05 18:28:53,999   SL re-place SOLUSDT: trigger_price_too_low (Code:10035)
+2026-05-05 18:28:53,999   ⚠️ SOLUSDT price past SL — closing at market
+2026-05-05 18:28:54,101   ✅ MARKET BUY 103.0 SOL_USDC-PERPETUAL id=USDC-203304755070 state=filled
+2026-05-05 18:28:54,935   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/buy | Params:{'instrument_name': 'SOL_USDC-PERPETUAL', 'amount': 51.5, 'type': 'limit', 'price': 84.339, 'reduce_only': 'true', 'label': 'bot_tp_1778005734'}
+2026-05-05 18:28:54,935   TP1 re-place SOLUSDT: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-05 18:28:55,034   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/buy | Params:{'instrument_name': 'SOL_USDC-PERPETUAL', 'amount': 51.5, 'type': 'limit', 'price': 84.123, 'reduce_only': 'true', 'label': 'bot_tp_1778005734'}
+2026-05-05 18:28:55,034   TP2 re-place SOLUSDT: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-05 18:28:55,136   ✅ TP BUY 78.2 LTC_USDC-PERPETUAL @ 55.49 id=USDC-203304758779 state=open
+2026-05-05 18:28:55,136   🛠 Re-placed TP1 for LTCUSDT @ 55.49 id:USDC-203304758779
+2026-05-05 18:28:55,236   ✅ TP BUY 78.3 LTC_USDC-PERPETUAL @ 55.35 id=USDC-203304759135 state=open
+2026-05-05 18:28:55,236   🛠 Re-placed TP2 for LTCUSDT @ 55.35 id:USDC-203304759135
+2026-05-05 18:28:55,832   Deribit error: trigger_price_too_low | Code:10035 | Data: | Path:/private/buy | Params:{'instrument_name': 'BCH_USDC-PERPETUAL', 'amount': 19.6, 'type': 'stop_limit', 'price': 446.422, 'trigger_price': 446.421, 'trigger': 'last_price', 'reduce_only': 'true', 'label': 'bot_sl_1778005735'}
+2026-05-05 18:28:55,832   SL re-place BCHUSDT: trigger_price_too_low (Code:10035)
+2026-05-05 18:28:55,832   ⚠️ BCHUSDT price past SL — closing at market
+2026-05-05 18:28:55,933   ✅ MARKET BUY 19.6 BCH_USDC-PERPETUAL id=USDC-203304761336 state=filled
+2026-05-05 18:28:56,644   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/buy | Params:{'instrument_name': 'BCH_USDC-PERPETUAL', 'amount': 9.8, 'type': 'limit', 'price': 443.159, 'reduce_only': 'true', 'label': 'bot_tp_1778005736'}
+2026-05-05 18:28:56,644   TP1 re-place BCHUSDT: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-05 18:28:56,745   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/buy | Params:{'instrument_name': 'BCH_USDC-PERPETUAL', 'amount': 9.8, 'type': 'limit', 'price': 442.227, 'reduce_only': 'true', 'label': 'bot_tp_1778005736'}
+2026-05-05 18:28:56,745   TP2 re-place BCHUSDT: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-05 18:28:56,747 
+[2] Stale trade check...
+2026-05-05 18:28:56,748 
+[3] Ghost trade recovery...
+2026-05-05 18:28:57,046   🕵️ SOLUSDT: no position — recovering PnL...
+2026-05-05 18:28:57,146   ✅ Recovered SOLUSDT: close=85.7950 pnl=-105.5063 (SL hit)
+2026-05-05 18:28:57,668   🕵️ BCHUSDT: no position — recovering PnL...
+2026-05-05 18:28:57,768   ✅ Recovered BCHUSDT: close=454.6200 pnl=-188.1012 (SL hit)
+2026-05-05 18:28:58,285   Processed 2 ghost/closed trade(s)
+2026-05-05 18:28:59,430   Balance: $173842.60 | upnl:-84.84 | positions:5
+2026-05-05 18:28:59,430 
+[4] Scanning 24 coins | Open:1/4
+2026-05-05 18:28:59,430 
+  ── BTCUSDT (👑 Big Three) ──
+2026-05-05 18:29:01,513     ML: NO_TRADE 52.9% (need ≥60%)
+2026-05-05 18:29:01,714 
+  ── ETHUSDT (👑 Big Three) ──
+2026-05-05 18:29:03,649     ML: SELL 58.9% (need ≥60%)
+2026-05-05 18:29:03,850 
+  ── BNBUSDT (👑 Big Three) ──
+2026-05-05 18:29:05,880     ML: SELL 66.4% (need ≥60%)
+2026-05-05 18:29:05,880     ADX: 27.7 (need ≥15)
+2026-05-05 18:29:06,817     BTC uptrend detected — skipping SELL signal for BNBUSDT
+2026-05-05 18:29:07,018 
+  ── SOLUSDT (⚡ High-Liquidity L1s) ──
+2026-05-05 18:29:08,957     ML: SELL 40.6% (need ≥60%)
+2026-05-05 18:29:09,157 
+  ── AVAXUSDT (⚡ High-Liquidity L1s) ──
+2026-05-05 18:29:10,883     ML: BUY 39.6% (need ≥60%)
+2026-05-05 18:29:11,084 
+  ── NEARUSDT (⚡ High-Liquidity L1s) ──
+2026-05-05 18:29:12,619     ML: SELL 39.1% (need ≥60%)
+2026-05-05 18:29:12,820 
+  ── SUIUSDT (⚡ High-Liquidity L1s) ──
+2026-05-05 18:29:14,390     ML: BUY 42.0% (need ≥60%)
+2026-05-05 18:29:14,591 
+  ── APTUSDT (⚡ High-Liquidity L1s) ──
+2026-05-05 18:29:16,010     ML: SELL 37.4% (need ≥60%)
+2026-05-05 18:29:16,211 
+  ── MATICUSDT (⚡ High-Liquidity L1s) ──
+2026-05-05 18:29:17,752     ML: SELL 46.7% (need ≥60%)
+2026-05-05 18:29:17,952 
+  ── ATOMUSDT (⚡ High-Liquidity L1s) ──
+2026-05-05 18:29:19,364     ML: SELL 46.8% (need ≥60%)
+2026-05-05 18:29:19,565 
+  ── LINKUSDT (🏛 Institutional Alts) ──
+2026-05-05 18:29:20,962     ML: SELL 35.0% (need ≥60%)
+2026-05-05 18:29:21,163 
+  ── DOTUSDT (🏛 Institutional Alts) ──
+2026-05-05 18:29:22,566     ML: NO_TRADE 37.3% (need ≥60%)
+2026-05-05 18:29:22,766 
+  ── UNIUSDT (🏛 Institutional Alts) ──
+2026-05-05 18:29:24,318     ML: BUY 37.1% (need ≥60%)
+2026-05-05 18:29:24,518 
+  ── AAVEUSDT (🏛 Institutional Alts) ──
+2026-05-05 18:29:26,089     ML: SELL 42.6% (need ≥60%)
+2026-05-05 18:29:26,290 
+  ── XRPUSDT (🏛 Institutional Alts) ──
+2026-05-05 18:29:27,989     ML: SELL 39.5% (need ≥60%)
+2026-05-05 18:29:28,190 
+  ── LTCUSDT (🏛 Institutional Alts) ──
+2026-05-05 18:29:29,748     ML: SELL 46.4% (need ≥60%)
+2026-05-05 18:29:29,949 
+  ── BCHUSDT (🏛 Institutional Alts) ──
+2026-05-05 18:29:31,360     ML: SELL 70.6% (need ≥60%)
+2026-05-05 18:29:31,360     ADX: 39.7 (need ≥15)
+2026-05-05 18:29:32,161     BTC uptrend detected — skipping SELL signal for BCHUSDT
+2026-05-05 18:29:32,361 
+  ── FETUSDT (🤖 AI & Momentum) ──
+2026-05-05 18:29:33,910     ML: NO_TRADE 43.3% (need ≥60%)
+2026-05-05 18:29:34,111 
+  ── RENDERUSDT (🤖 AI & Momentum) ──
+2026-05-05 18:29:35,514     ML: BUY 44.0% (need ≥60%)
+2026-05-05 18:29:35,714 
+  ── ADAUSDT (🤖 AI & Momentum) ──
+2026-05-05 18:29:37,312     ML: NO_TRADE 38.0% (need ≥60%)
+2026-05-05 18:29:37,513 
+  ── INJUSDT (🤖 AI & Momentum) ──
+2026-05-05 18:29:39,057     ML: BUY 45.4% (need ≥60%)
+2026-05-05 18:29:39,258 
+  ── ARBUSDT (🤖 AI & Momentum) ──
+2026-05-05 18:29:40,633     ML: BUY 45.3% (need ≥60%)
+2026-05-05 18:29:40,834 
+  ── OPUSDT (🤖 AI & Momentum) ──
+2026-05-05 18:29:42,408     ML: NO_TRADE 42.0% (need ≥60%)
+2026-05-05 18:29:42,608 
+  ── SEIUSDT (🤖 AI & Momentum) ──
+2026-05-05 18:29:44,146     ML: BUY 34.8% (need ≥60%)
+2026-05-05 18:29:45,486   Balance: $173843.45 | upnl:-83.20 | positions:5
+2026-05-05 18:29:45,486 
+════════════════════════════════════════════════════════
+DONE — 0 signal(s) | $173869.62
+════════════════════════════════════════════════════════
