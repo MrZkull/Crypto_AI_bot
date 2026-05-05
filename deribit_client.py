@@ -290,7 +290,7 @@ class DeribitClient:
             body = {
                 "instrument_name": instrument, "amount": amount,
                 "type": "limit", "price": safe_price,
-                "reduce_only": True, "label": f"bot_tp_{int(time.time())}",
+                "reduce_only": "true", "label": f"bot_tp_{int(time.time())}",
             }
         result = self._post(method, body)
         order  = result.get("order", result)
