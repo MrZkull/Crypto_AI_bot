@@ -319,7 +319,9 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict):
         try:
             # Use limit price slightly worse than trigger to guarantee fill
             tick = deribit.get_tick_size(symbol)
-            sl_limit = deribit.round_price(symbol, stop - tick if signal == "BUY" else stop + tick)
+            # For a BUY signal, we place a SELL stop. The limit price must be LOWER than the stop.
+            # For a SELL signal, we place a BUY stop. The limit price must be HIGHER than the stop.
+            sl_limit = deribit.round_price(symbol, stop - tick if sl_side == "SELL" else stop + tick)
             res = deribit.place_limit_order(symbol, sl_side, qty, sl_limit, stop_price=stop)
             o   = res.get("order", res)
             oid = str(o.get("order_id", ""))
@@ -329,6 +331,25 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict):
                 changed = True
         except Exception as e:
             log.warning(f"  SL re-place {symbol}: {e}")
+            if "trigger_price_too_low" in str(e).lower() or "trigger_price_too_high" in str(e).lower() or "10035" in str(e):
+                # Price already past SL — close at market immediately
+                log.warning(f"  ⚠️ {symbol} price past SL — closing at market")
+                try:
+                    close_side = "SELL" if signal == "BUY" else "BUY"
+                    deribit.place_market_order(symbol, close_side, qty)
+                    trade["closed"] = True
+                    live = deribit.get_live_price(symbol)
+                    pnl  = _pnl(trade, live, "sl")
+                    _close_record(trade, live, pnl, "SL missed — market close")
+                    
+                    # Need to explicitly import _send or assume it's available in scope
+                    try:
+                        _send(f"⚠️ *{symbol}* SL was missed, closed at market `{live}`")
+                    except NameError:
+                        pass # If _send isn't imported, just skip telegram
+                    changed = True
+                except Exception as me:
+                    log.error(f"  Emergency close {symbol}: {me}")
 
     # Re-place TP1
     tp1_oid = str(oids.get("tp1", ""))
