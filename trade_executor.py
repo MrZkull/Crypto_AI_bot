@@ -348,6 +348,7 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict):
                     except NameError:
                         pass # If _send isn't imported, just skip telegram
                     changed = True
+                    return changed
                 except Exception as me:
                     log.error(f"  Emergency close {symbol}: {me}")
 
