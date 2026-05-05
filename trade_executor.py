@@ -409,7 +409,19 @@ def check_open_trades(deribit: DeribitClient):
             # ── TP1 ─────────────────────────────────────────────────
             if not trade.get("tp1_hit") and "tp1" in oids:
                 o = get_o("tp1")
-                if deribit.is_order_filled(o):
+                
+                # --- NEW: Price Fallback Logic ---
+                live_now = deribit.get_live_price(symbol)
+                tp1_p = float(trade["tp1"])
+                price_reached = live_now > 0 and (
+                    (trade["signal"]=="BUY"  and live_now >= tp1_p) or
+                    (trade["signal"]=="SELL" and live_now <= tp1_p)
+                )
+                o_gone = o.get("order_state","").lower() in ("filled","cancelled","closed","not_found","")
+                
+                if deribit.is_order_filled(o) or (price_reached and o_gone):
+                # ---------------------------------
+                
                     trade["tp1_hit"] = True
                     fill = fp(o, trade["tp1"])
                     pnl  = _pnl(trade, fill, "tp1")
@@ -446,15 +458,30 @@ def check_open_trades(deribit: DeribitClient):
                         except Exception as e: log.warning(f"  Trail SL: {e}")
 
             # ── TP2 ─────────────────────────────────────────────────
-            if trade.get("tp1_hit") and not trade.get("tp2_hit") and "tp2" in oids:
+            # Notice we removed "trade.get('tp1_hit') and" from the IF statement
+            if not trade.get("tp2_hit") and "tp2" in oids:
                 o = get_o("tp2")
-                if deribit.is_order_filled(o):
+                
+                # --- NEW: Price Fallback Logic ---
+                live_now2 = deribit.get_live_price(symbol)
+                tp2_p = float(trade["tp2"])
+                price_reached2 = live_now2 > 0 and (
+                    (trade["signal"]=="BUY"  and live_now2 >= tp2_p) or
+                    (trade["signal"]=="SELL" and live_now2 <= tp2_p)
+                )
+                o_gone2 = o.get("order_state","").lower() in ("filled","cancelled","closed","not_found","")
+                
+                if deribit.is_order_filled(o) or (price_reached2 and o_gone2):
+                    if not trade.get("tp1_hit"):   # auto-mark TP1 if price blew past both
+                        trade["tp1_hit"] = True
+                # ---------------------------------
+                
                     trade["tp2_hit"]=True; trade["closed"]=True
                     fill=fp(o,trade["tp2"]); pnl=_pnl(trade,fill,"tp2")
                     log.info(f"  ✅ TP2 {symbol} @ {fill:.{dec}f} pnl≈{pnl:+.4f}")
                     _send(f"✅ *FULL WIN — {symbol}*\nTP2 @ `{fill:.{dec}f}` | PnL ≈ `{pnl:+.4f}`")
                     _close_record(trade,fill,pnl,"TP2 hit"); to_remove.append(symbol)
-
+                    
             # ── SL ──────────────────────────────────────────────────
             # FIX 3: Removed the dangerous hard-fallback price-vs-SL check.
             #
