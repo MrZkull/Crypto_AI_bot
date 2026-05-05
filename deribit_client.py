@@ -283,7 +283,7 @@ class DeribitClient:
                 "instrument_name": instrument, "amount": amount,
                 "type": "stop_limit", "price": safe_price,
                 "trigger_price": self.round_price(symbol, stop_price),
-                "trigger": "last_price", "reduce_only": True,
+                "trigger": "last_price", "reduce_only": "true",
                 "label": f"bot_sl_{int(time.time())}",
             }
         else:
