@@ -39997,3 +39997,113 @@ SCAN — 2026-05-06 17:15 UTC
 ════════════════════════════════════════════════════════
 DONE — 1 signal(s) | $173374.91
 ════════════════════════════════════════════════════════
+2026-05-06 19:01:41,477 
+════════════════════════════════════════════════════════
+SCAN — 2026-05-06 19:01 UTC
+════════════════════════════════════════════════════════
+2026-05-06 19:01:41,993   ACTIVE HOURS | conf≥60% | score≥3 | ADX≥15 | ✓ Normal vol — BTC ATR 0.25%
+2026-05-06 19:01:44,060 ✓ Deribit testnet authenticated
+2026-05-06 19:01:45,037 ✓ Tradeable: 22 — ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'AVAXUSDT', 'NEARUSDT', 'SUIUSDT', 'APTUSDT', 'ATOMUSDT', 'LINKUSDT', 'DOTUSDT', 'UNIUSDT', 'AAVEUSDT', 'XRPUSDT', 'LTCUSDT', 'BCHUSDT', 'FETUSDT', 'ADAUSDT', 'INJUSDT', 'ARBUSDT', 'OPUSDT', 'SEIUSDT']
+2026-05-06 19:01:46,636 ✅ Deribit OK — $173421.97 | 22 symbols
+2026-05-06 19:01:47,104   ACTIVE HOURS | conf≥60% | score≥3 | ADX≥15 | risk:1.00
+2026-05-06 19:01:47,105 
+[0] Balance...
+2026-05-06 19:01:52,474   Balance: $173421.97 | upnl:+89.46 | positions:2
+2026-05-06 19:01:52,474 
+[1] Monitor trades...
+2026-05-06 19:01:52,474   Monitoring 1 trade(s)
+2026-05-06 19:01:53,486   Deribit error: trigger_price_too_high | Code:10034 | Data: | Path:/private/sell | Params:{'instrument_name': 'ARB_USDC-PERPETUAL', 'amount': 69680.0, 'type': 'stop_limit', 'price': 0.1253, 'trigger_price': 0.1254, 'trigger': 'last_price', 'reduce_only': 'true', 'label': 'bot_sl_1778094113'}
+2026-05-06 19:01:53,486   SL re-place ARBUSDT: trigger_price_too_high (Code:10034)
+2026-05-06 19:01:53,487   ⚠️ ARBUSDT price past SL — closing at market
+2026-05-06 19:01:53,671   Deribit error: order_overlap | Code:10003 | Data: | Path:/private/sell | Params:{'instrument_name': 'ARB_USDC-PERPETUAL', 'amount': 69680.0, 'type': 'market', 'label': 'bot_entry_1778094113'}
+2026-05-06 19:01:53,671   Emergency close ARBUSDT: order_overlap (Code:10003)
+2026-05-06 19:01:53,873   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/sell | Params:{'instrument_name': 'ARB_USDC-PERPETUAL', 'amount': 34840.0, 'type': 'limit', 'price': 0.129, 'reduce_only': 'true', 'label': 'bot_tp_1778094113'}
+2026-05-06 19:01:53,873   TP1 re-place ARBUSDT: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-06 19:01:54,068   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/sell | Params:{'instrument_name': 'ARB_USDC-PERPETUAL', 'amount': 34840.0, 'type': 'limit', 'price': 0.13, 'reduce_only': 'true', 'label': 'bot_tp_1778094113'}
+2026-05-06 19:01:54,068   TP2 re-place ARBUSDT: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-06 19:01:54,069 
+[2] Stale trade check...
+2026-05-06 19:01:54,069 
+[3] Ghost trade recovery...
+2026-05-06 19:01:54,640   🕵️ ARBUSDT: no position — recovering PnL...
+2026-05-06 19:01:54,821   Processed 1 ghost/closed trade(s)
+2026-05-06 19:01:56,682   Balance: $173419.48 | upnl:+86.97 | positions:2
+2026-05-06 19:01:56,682 
+[4] Scanning 24 coins | Open:0/4
+2026-05-06 19:01:56,683 
+  ── BTCUSDT (👑 Big Three) ──
+2026-05-06 19:01:58,230     ML: SELL 48.9% (need ≥60%)
+2026-05-06 19:01:58,430 
+  ── ETHUSDT (👑 Big Three) ──
+2026-05-06 19:02:00,462     ML: SELL 58.7% (need ≥60%)
+2026-05-06 19:02:00,662 
+  ── BNBUSDT (👑 Big Three) ──
+2026-05-06 19:02:02,387     ML: NO_TRADE 40.5% (need ≥60%)
+2026-05-06 19:02:02,587 
+  ── SOLUSDT (⚡ High-Liquidity L1s) ──
+2026-05-06 19:02:03,940     ML: SELL 38.1% (need ≥60%)
+2026-05-06 19:02:04,140 
+  ── AVAXUSDT (⚡ High-Liquidity L1s) ──
+2026-05-06 19:02:05,286     ML: SELL 41.3% (need ≥60%)
+2026-05-06 19:02:05,486 
+  ── NEARUSDT (⚡ High-Liquidity L1s) ──
+2026-05-06 19:02:06,624     ML: BUY 47.5% (need ≥60%)
+2026-05-06 19:02:06,825 
+  ── SUIUSDT (⚡ High-Liquidity L1s) ──
+2026-05-06 19:02:08,133     ML: NO_TRADE 48.0% (need ≥60%)
+2026-05-06 19:02:08,334 
+  ── APTUSDT (⚡ High-Liquidity L1s) ──
+2026-05-06 19:02:09,536     ML: NO_TRADE 45.6% (need ≥60%)
+2026-05-06 19:02:09,737 
+  ── MATICUSDT (⚡ High-Liquidity L1s) ──
+2026-05-06 19:02:10,950     ML: SELL 46.7% (need ≥60%)
+2026-05-06 19:02:11,151 
+  ── ATOMUSDT (⚡ High-Liquidity L1s) ──
+2026-05-06 19:02:12,252     ML: NO_TRADE 38.5% (need ≥60%)
+2026-05-06 19:02:12,452 
+  ── LINKUSDT (🏛 Institutional Alts) ──
+2026-05-06 19:02:13,562     ML: SELL 38.7% (need ≥60%)
+2026-05-06 19:02:13,762 
+  ── DOTUSDT (🏛 Institutional Alts) ──
+2026-05-06 19:02:14,887     ML: NO_TRADE 35.4% (need ≥60%)
+2026-05-06 19:02:15,087 
+  ── UNIUSDT (🏛 Institutional Alts) ──
+2026-05-06 19:02:16,309     ML: NO_TRADE 40.7% (need ≥60%)
+2026-05-06 19:02:16,509 
+  ── AAVEUSDT (🏛 Institutional Alts) ──
+2026-05-06 19:02:17,731     ML: SELL 45.8% (need ≥60%)
+2026-05-06 19:02:17,932 
+  ── XRPUSDT (🏛 Institutional Alts) ──
+2026-05-06 19:02:19,262     ML: SELL 45.2% (need ≥60%)
+2026-05-06 19:02:19,462 
+  ── LTCUSDT (🏛 Institutional Alts) ──
+2026-05-06 19:02:20,689     ML: SELL 59.5% (need ≥60%)
+2026-05-06 19:02:20,889 
+  ── BCHUSDT (🏛 Institutional Alts) ──
+2026-05-06 19:02:21,998     ML: SELL 59.9% (need ≥60%)
+2026-05-06 19:02:22,199 
+  ── FETUSDT (🤖 AI & Momentum) ──
+2026-05-06 19:02:23,419     ML: BUY 40.9% (need ≥60%)
+2026-05-06 19:02:23,620 
+  ── RENDERUSDT (🤖 AI & Momentum) ──
+2026-05-06 19:02:24,731     ML: NO_TRADE 43.7% (need ≥60%)
+2026-05-06 19:02:24,932 
+  ── ADAUSDT (🤖 AI & Momentum) ──
+2026-05-06 19:02:26,143     ML: NO_TRADE 45.6% (need ≥60%)
+2026-05-06 19:02:26,344 
+  ── INJUSDT (🤖 AI & Momentum) ──
+2026-05-06 19:02:27,558     ML: NO_TRADE 37.3% (need ≥60%)
+2026-05-06 19:02:27,758 
+  ── ARBUSDT (🤖 AI & Momentum) ──
+2026-05-06 19:02:28,863     ML: BUY 41.1% (need ≥60%)
+2026-05-06 19:02:29,064 
+  ── OPUSDT (🤖 AI & Momentum) ──
+2026-05-06 19:02:30,283     ML: BUY 37.5% (need ≥60%)
+2026-05-06 19:02:30,484 
+  ── SEIUSDT (🤖 AI & Momentum) ──
+2026-05-06 19:02:31,712     ML: NO_TRADE 43.7% (need ≥60%)
+2026-05-06 19:02:33,787   Balance: $173416.97 | upnl:+84.47 | positions:2
+2026-05-06 19:02:33,787 
+════════════════════════════════════════════════════════
+DONE — 0 signal(s) | $173421.97
+════════════════════════════════════════════════════════
