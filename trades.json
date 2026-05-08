@@ -1,39 +1,4 @@
 {
-  "NEARUSDT": {
-    "symbol": "NEARUSDT",
-    "signal": "BUY",
-    "entry": 1.503,
-    "stop": 1.503,
-    "tp1": 1.536,
-    "tp2": 1.5525,
-    "qty": 5770,
-    "qty_tp1": 2880,
-    "qty_tp2": 2890,
-    "risk_usd": 867.24,
-    "balance_at_open": 173448.29,
-    "risk_mult": 0.5,
-    "order_ids": {
-      "entry": "USDC-203635092153",
-      "stop_loss": "USDC-SLTS-20277",
-      "tp1": "USDC-203635096790",
-      "tp2": "USDC-203635097229"
-    },
-    "opened_at": "2026-05-06T22:35:13.210361+00:00",
-    "tp1_hit": true,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 66.1,
-    "score": 5,
-    "reasons": [
-      "Conf (66%)",
-      "ADX 21",
-      "RSI bullish (49)",
-      "EMA bullish",
-      "1h confirms"
-    ],
-    "tier": "\u26a1 High-Liquidity L1s",
-    "exchange": "deribit_testnet"
-  },
   "BNBUSDT": {
     "symbol": "BNBUSDT",
     "signal": "SELL",
@@ -65,6 +30,37 @@
       "EMA bearish"
     ],
     "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet"
+  },
+  "INJUSDT": {
+    "symbol": "INJUSDT",
+    "signal": "BUY",
+    "entry": 4.062,
+    "stop": 3.992,
+    "tp1": 4.156,
+    "tp2": 4.203,
+    "qty": 2181,
+    "qty_tp1": 1090,
+    "qty_tp2": 1091,
+    "risk_usd": 1737.06,
+    "balance_at_open": 173706.48,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "entry": "USDC-204138910936"
+    },
+    "opened_at": "2026-05-08T09:56:47.162206+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 65.7,
+    "score": 4,
+    "reasons": [
+      "Conf (66%)",
+      "Strong ADX 32",
+      "EMA bullish",
+      "1h confirms"
+    ],
+    "tier": "\ud83e\udd16 AI & Momentum",
     "exchange": "deribit_testnet"
   }
 }
