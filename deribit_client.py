@@ -91,7 +91,7 @@ class DeribitClient:
                 time.sleep(15)
             else:
                 log.error(f"Auth failed after 3 attempts: {e}")
-                raise                 # ADD: raise on final failure
+                raise        # ADD: raise on final failure
 
     def _ensure_auth(self):
         if time.time() >= self._token_expiry:
