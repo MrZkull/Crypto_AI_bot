@@ -65,33 +65,34 @@ class DeribitClient:
         self._authenticate()
         self._verify_instruments()
 
-    def _authenticate(self):
-    for attempt in range(3):
-        try:
-            r = self.session.get(
-                f"{self.base}/public/auth",
-                params={
-                    "grant_type":    "client_credentials",
-                    "client_id":     self.client_id,
-                    "client_secret": self.client_secret,
-                },
-                timeout=15
-            )
-            r.raise_for_status()
-            res = r.json().get("result", {})
-            if not res or "access_token" not in res:
-                raise Exception(f"Auth failed: {r.text[:200]}")
-            self.session.headers["Authorization"] = f"Bearer {res['access_token']}"
-            self._token_expiry = time.time() + int(res.get("expires_in", 900)) - 60
-            log.info("✓ Deribit testnet authenticated")
-            return
-        except Exception as e:
-            if attempt < 2:
-                log.warning(f"Auth attempt {attempt+1} failed: {e} — retrying in 15s")
-                time.sleep(15)
-            else:
-                log.error(f"Auth failed after 3 attempts: {e}")
-                raise        # ADD: raise on final failure
+        def _authenticate(self):
+        for attempt in range(3):
+            try:
+                r = self.session.get(
+                    f"{self.base}/public/auth",
+                    params={
+                        "grant_type":    "client_credentials",
+                        "client_id":     self.client_id,
+                        "client_secret": self.client_secret,
+                    },
+                    timeout=15
+                )
+                r.raise_for_status()
+                res = r.json().get("result", {})
+                if not res or "access_token" not in res:
+                    raise Exception(f"Auth failed: {r.text[:200]}")
+                self.session.headers["Authorization"] = f"Bearer {res['access_token']}"
+                self._token_expiry = time.time() + int(res.get("expires_in", 900)) - 60
+                log.info("✓ Deribit testnet authenticated")
+                return
+            except Exception as e:
+                if attempt < 2:
+                    log.warning(f"Auth attempt {attempt+1} failed: {e} — retrying in 15s")
+                    time.sleep(15)
+                else:
+                    log.error(f"Auth failed after 3 attempts: {e}")
+                    raise
+
 
     def _ensure_auth(self):
         if time.time() >= self._token_expiry:
