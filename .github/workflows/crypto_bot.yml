@@ -22,7 +22,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: false
-          # Uses your PAT to ensure the bot has permissions to bypass branch protection
           token: ${{ secrets.GH_PAT_TOKEN }}
 
       - name: Download AI Model
@@ -40,15 +39,15 @@ jobs:
 
       - name: Write .env from secrets
         run: |
-          echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}"         >> .env
-          echo "BINANCE_SECRET=${{ secrets.BINANCE_SECRET }}"           >> .env
-          echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}"           >> .env
-          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}"       >> .env
-          echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"               >> .env
-          echo "GITHUB_REPO=MrZkull/Crypto_AI_bot"                    >> .env
-          echo "GITHUB_BRANCH=main"                                     >> .env
-          echo "DERIBIT_CLIENT_ID=${{ secrets.DERIBIT_CLIENT_ID }}"         >> .env
-          echo "DERIBIT_CLIENT_SECRET=${{ secrets.DERIBIT_CLIENT_SECRET }}" >> .env
+          echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}"               >> .env
+          echo "BINANCE_SECRET=${{ secrets.BINANCE_SECRET }}"                 >> .env
+          echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}"                 >> .env
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}"             >> .env
+          echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"                     >> .env
+          echo "GITHUB_REPO=MrZkull/Crypto_AI_bot"                            >> .env
+          echo "GITHUB_BRANCH=main"                                            >> .env
+          echo "DERIBIT_CLIENT_ID=${{ secrets.DERIBIT_CLIENT_ID }}"           >> .env
+          echo "DERIBIT_CLIENT_SECRET=${{ secrets.DERIBIT_CLIENT_SECRET }}"   >> .env
 
       - name: Restore state files
         uses: actions/cache@v4
@@ -75,7 +74,20 @@ jobs:
           mkdir -p data
 
       - name: Run bot
+        id: run_bot
         run: |
+          if [ "${{ github.event.inputs.mode }}" = "diagnostic" ]; then
+            python trade_executor.py diagnostic
+          else
+            python trade_executor.py
+          fi
+
+      # If bot failed (e.g. Deribit 502), wait 30s and try once more
+      - name: Retry bot on failure
+        if: failure() && steps.run_bot.outcome == 'failure'
+        run: |
+          echo "First attempt failed — waiting 30s for Deribit to recover..."
+          sleep 30
           if [ "${{ github.event.inputs.mode }}" = "diagnostic" ]; then
             python trade_executor.py diagnostic
           else
@@ -100,18 +112,15 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # 1. DELETE the secrets file so it never gets committed!
+
+          # Remove secrets file — never commit this
           rm -f .env
-          
-          # 2. Stage EVERYTHING else
+
           git add -A
-          
-          # 3. Commit locally
           git commit -m "Sync Bot State [skip ci]" || echo "No changes to commit"
-          
-          # 4. Pull with rebase AND autostash
-          git pull --rebase origin main --autostash
-          
-          # 5. Push back to the repo
+
+          # Pull with rebase and autostash, retry once on conflict
+          git pull --rebase origin main --autostash || \
+            (git rebase --abort && git pull origin main && git push origin main && exit 0)
+
           git push origin main
