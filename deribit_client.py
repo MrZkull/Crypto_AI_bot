@@ -65,7 +65,7 @@ class DeribitClient:
         self._authenticate()
         self._verify_instruments()
 
-        def _authenticate(self):
+    def _authenticate(self):
         for attempt in range(3):
             try:
                 r = self.session.get(
