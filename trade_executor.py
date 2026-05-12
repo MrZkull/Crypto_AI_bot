@@ -1,4 +1,4 @@
-# trade_executor.py — FULL 12-SCENARIO SL/TP MONITORING INTEGRATION + EDGE CASE FIXES
+# trade_executor.py — FULL 12-SCENARIO SL/TP MONITORING + LIQUIDITY FIXES
 #
 # FIXES APPLIED:
 #   1. Drop-in replacement of SL/TP monitoring logic (12 Scenarios Handled)
@@ -6,9 +6,9 @@
 #   3. Code:11030 invalid_reduce_only noise silenced in missing order re-place
 #   4. Isolated cancel_order for BE SL to prevent skip on missing orders
 #   5. Removed dangerous hard-fallback SL check
-#   6. Daily loss circuit breaker removed from scan path
-#   7. Ghost trade recovery uses Deribit trade history
-#   8. All other signal/execution flows retained perfectly
+#   6. Ghost trade recovery uses Deribit trade history
+#   7. NEW: SL limit offset increased to tick * 3 to survive rounding (Code:11036)
+#   8. NEW: 6-second polling loop to confirm entry fill before SL/TP placement (Code:11030)
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -235,9 +235,36 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         eo = er.get("order", er)
         order_ids["entry"] = str(eo.get("order_id",""))
         actual_entry = deribit.get_fill_price(er, entry) or entry
-        if eo.get("order_state","") == "cancelled" and float(eo.get("filled_amount",0) or 0) == 0:
-            log.warning(f"  Market cancelled (thin book) — skip"); return False
-        log.info(f"  ✅ Entry @ {actual_entry:.{dec}f}"); time.sleep(1.5)
+        
+        o_state = eo.get("order_state", "").lower()
+        filled  = float(eo.get("filled_amount", 0) or 0)
+        
+        if o_state == "cancelled" and filled == 0:
+            log.warning(f"  Market cancelled (thin book) — skip")
+            return False
+            
+        if o_state == "open" and filled == 0:
+            log.warning(f"  Market order stuck as 'open' (zero liquidity) — cancelling & skipping")
+            try: deribit.cancel_order(order_ids["entry"])
+            except Exception: pass
+            return False
+
+        log.info(f"  ✅ Entry @ {actual_entry:.{dec}f}")
+        
+        # Wait for position to register on exchange (up to 6 seconds) to prevent TP code 11030
+        entry_oid = order_ids.get("entry", "")
+        for _attempt in range(12):
+            time.sleep(0.5)
+            if not entry_oid:
+                break
+            try:
+                chk = deribit.get_order(entry_oid)
+                if chk.get("order_state", "") == "filled":
+                    break
+            except Exception:
+                break
+        else:
+            log.warning(f"  ⚠️ {symbol}: entry order still not 'filled' after 6s — SL/TP may fail")
 
         if signal=="BUY":
             stop=deribit.round_price(symbol,actual_entry-atr*ATR_STOP_MULT)
@@ -249,7 +276,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
             tp2 =deribit.round_price(symbol,actual_entry-atr*ATR_TARGET2_MULT)
 
         tick = deribit.get_tick_size(symbol)
-        sl_limit = deribit.round_price(symbol, stop - tick if signal=="BUY" else stop + tick)
+        sl_limit = deribit.round_price(symbol, stop - (tick * 3) if signal=="BUY" else stop + (tick * 3))
 
         for label, qty, price, sl_p, key in [
             ("SL",  total_q, sl_limit, stop, "stop_loss"),
@@ -297,14 +324,12 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 # HELPER — safe order fetch (never throws)
 # ─────────────────────────────────────────────────────────────────────────────
 def _safe_get_order(deribit, oid_str):
-    """Fetch an order safely; returns {} on any error or missing ID."""
     if not oid_str or oid_str in ("", "None"):
         return {}
     try:
         return deribit.get_order(oid_str)
     except Exception:
         return {}
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPER — fill price with live fallback
@@ -313,7 +338,6 @@ def fp(o, fb):
     p = float(o.get("average_price") or o.get("last_price") or o.get("price") or 0)
     return p if p > 0 else fb
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPER — PnL calculation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -321,7 +345,6 @@ def _pnl(t, cp, ct):
     qty  = float(t["qty_tp1"] if ct == "tp1" else t["qty_tp2"] if ct == "tp2" else t["qty"])
     diff = (cp - float(t["entry"])) if t["signal"] == "BUY" else (float(t["entry"]) - cp)
     return round(diff * qty, 4)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPER — close record
@@ -356,7 +379,7 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
         try:
             tick     = deribit.get_tick_size(symbol)
             sl_limit = deribit.round_price(
-                symbol, stop - tick if sl_side == "SELL" else stop + tick
+                symbol, stop - (tick * 3) if sl_side == "SELL" else stop + (tick * 3)
             )
             res = deribit.place_limit_order(symbol, sl_side, qty, sl_limit, stop_price=stop)
             o   = res.get("order", res)
@@ -532,7 +555,7 @@ def check_open_trades(deribit: DeribitClient):
                         try:
                             deribit.cancel_order(oids["stop_loss"])
                         except Exception:
-                            pass  # Already cancelled by exchange — fine
+                            pass
 
                         try:
                             sl_s = "SELL" if signal == "BUY" else "BUY"
