@@ -1,11 +1,14 @@
-# trade_executor.py — FULL 12-SCENARIO SL/TP MONITORING INTEGRATION
+# trade_executor.py — FULL 12-SCENARIO SL/TP MONITORING INTEGRATION + EDGE CASE FIXES
 #
 # FIXES APPLIED:
 #   1. Drop-in replacement of SL/TP monitoring logic (12 Scenarios Handled)
-#   2. Removed dangerous hard-fallback SL check
-#   3. Daily loss circuit breaker removed from scan path
-#   4. Ghost trade recovery uses Deribit trade history
-#   5. All other signal/execution flows retained perfectly
+#   2. BE SL trigger_price_too_low fixed (added tick offset)
+#   3. Code:11030 invalid_reduce_only noise silenced in missing order re-place
+#   4. Isolated cancel_order for BE SL to prevent skip on missing orders
+#   5. Removed dangerous hard-fallback SL check
+#   6. Daily loss circuit breaker removed from scan path
+#   7. Ghost trade recovery uses Deribit trade history
+#   8. All other signal/execution flows retained perfectly
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -332,14 +335,6 @@ def _close_record(t, cp, pnl, reason):
 # SCENARIO J + B: Re-place missing SL/TP; market-close if trigger past price
 # ─────────────────────────────────────────────────────────────────────────────
 def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) -> bool:
-    """
-    Re-place SL / TP1 / TP2 if their order IDs are missing or empty.
-    Returns True if anything changed (so caller can save_trades).
-
-    Also handles SCENARIO J: if Deribit rejects SL re-place with
-    trigger_price_too_low / trigger_price_too_high (price already past SL),
-    immediately market-closes and marks trade as closed.
-    """
     oids   = trade.get("order_ids", {})
     signal = trade["signal"]
     entry  = float(trade["entry"])
@@ -360,7 +355,6 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
     if need_sl and not trade.get("closed"):
         try:
             tick     = deribit.get_tick_size(symbol)
-            # Limit price one tick worse than trigger to guarantee fill on normal moves
             sl_limit = deribit.round_price(
                 symbol, stop - tick if sl_side == "SELL" else stop + tick
             )
@@ -377,25 +371,17 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
             err = str(e).lower()
             log.warning(f"  SL re-place {symbol}: {e}")
 
-            # SCENARIO J: price already past SL trigger — market close now
-            if any(x in err for x in ("trigger_price_too_low", "trigger_price_too_high",
-                                       "10035", "10036")):
+            if any(x in err for x in ("trigger_price_too_low", "trigger_price_too_high", "10035", "10036")):
                 log.warning(f"  🚨 {symbol}: SL trigger already passed — MARKET CLOSE")
                 try:
                     close_side = "SELL" if signal == "BUY" else "BUY"
-                    # Use remaining qty (account for TP1 already closed)
-                    close_qty = (
-                        float(trade.get("qty_tp2", qty))
-                        if trade.get("tp1_hit") else qty
-                    )
+                    close_qty = (float(trade.get("qty_tp2", qty)) if trade.get("tp1_hit") else qty)
                     if close_qty > 0:
                         deribit.place_market_order(symbol, close_side, close_qty)
                     live = deribit.get_live_price(symbol)
                     pnl  = _pnl(trade, live if live > 0 else stop, "sl")
-                    _close_record(trade, live if live > 0 else stop, pnl,
-                                  "SL missed — market close")
-                    _send(f"🚨 *SL MISSED — {symbol}*\n"
-                          f"Price past trigger. Closed @ `{live:.{dec}f}` | PnL≈`{pnl:+.4f}`")
+                    _close_record(trade, live if live > 0 else stop, pnl, "SL missed — market close")
+                    _send(f"🚨 *SL MISSED — {symbol}*\nPrice past trigger. Closed @ `{live:.{dec}f}` | PnL≈`{pnl:+.4f}`")
                     trade["closed"] = True
                     changed = True
                 except Exception as me:
@@ -414,7 +400,10 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
                 log.info(f"  🛠 Re-placed TP1 {symbol} @ {tp1:.{dec}f}  id:{oid}")
                 changed = True
         except Exception as e:
-            log.warning(f"  TP1 re-place {symbol}: {e}")
+            if "11030" in str(e) or "invalid_reduce_only" in str(e).lower():
+                log.info(f"  TP1 re-place {symbol}: position gone — ghost cleaner will handle")
+            else:
+                log.warning(f"  TP1 re-place {symbol}: {e}")
 
     # ── Re-place TP2 ──────────────────────────────────────────────────────
     tp2_oid  = str(oids.get("tp2", ""))
@@ -429,7 +418,10 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
                 log.info(f"  🛠 Re-placed TP2 {symbol} @ {tp2:.{dec}f}  id:{oid}")
                 changed = True
         except Exception as e:
-            log.warning(f"  TP2 re-place {symbol}: {e}")
+            if "11030" in str(e) or "invalid_reduce_only" in str(e).lower():
+                log.info(f"  TP2 re-place {symbol}: position gone — ghost cleaner will handle")
+            else:
+                log.warning(f"  TP2 re-place {symbol}: {e}")
 
     return changed
 
@@ -445,7 +437,6 @@ def check_open_trades(deribit: DeribitClient):
     to_remove = []
     log.info(f"  Monitoring {len(trades)} trade(s)")
 
-    # Fetch live positions once — used for liquidation detection
     live_positions = set()
     try:
         for p in deribit.get_positions():
@@ -458,7 +449,6 @@ def check_open_trades(deribit: DeribitClient):
 
     for symbol, trade in list(trades.items()):
 
-        # Already closed in this run — schedule removal
         if trade.get("closed"):
             to_remove.append(symbol)
             continue
@@ -471,16 +461,13 @@ def check_open_trades(deribit: DeribitClient):
         signal = trade["signal"]
         oids   = trade.get("order_ids", {})
 
-        # ── Step 1: Re-place any missing orders ───────────────────────────
         if _replace_missing_orders(deribit, symbol, trade):
             save_trades(trades)
 
-        # trade may have been market-closed inside _replace_missing_orders
         if trade.get("closed"):
             to_remove.append(symbol)
             continue
 
-        # ── Step 2: Get live price (critical — skip symbol if unavailable) ─
         try:
             live = deribit.get_live_price(symbol)
         except Exception as e:
@@ -488,44 +475,30 @@ def check_open_trades(deribit: DeribitClient):
         if live <= 0:
             log.warning(f"  {symbol}: live price = 0 — skip"); continue
 
-        # ── Step 3: SCENARIO G — position liquidated by exchange ──────────
-        # If no position exists and TP1 hasn't been hit, ghost cleaner handles it.
-        # If TP1 was hit, we only have a partial position left; ghost cleaner
-        # will reconcile if that also disappears.
         if live_positions and symbol not in live_positions and not trade.get("tp1_hit"):
             log.warning(f"  {symbol}: no live position found — ghost cleaner will handle")
-            continue  # Don't force-close; ghost cleaner recovers PnL from history
+            continue
 
-        # ── Step 4: SCENARIO H — Max Adverse Excursion guard ─────────────
-        # If losing more than 3× risk_usd, force-close immediately.
-        # This catches extreme moves (e.g. 20% flash crash on an altcoin).
         risk_usd = float(trade.get("risk_usd", 0))
         if risk_usd > 0:
-            # Use tp2 qty if TP1 already hit (only partial position remains)
             mae_qty  = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") \
                        else float(trade["qty"])
             mae_diff = (live - entry) if signal == "BUY" else (entry - live)
             mae_pnl  = round(mae_diff * mae_qty, 4)
 
             if mae_pnl < -(risk_usd * 3):
-                log.warning(
-                    f"  🚨 {symbol}: MAE ${mae_pnl:.2f} > 3× risk ${risk_usd:.2f} "
-                    f"— FORCE CLOSE"
-                )
+                log.warning(f"  🚨 {symbol}: MAE ${mae_pnl:.2f} > 3× risk ${risk_usd:.2f} — FORCE CLOSE")
                 try:
                     close_side = "SELL" if signal == "BUY" else "BUY"
                     if mae_qty > 0:
                         deribit.place_market_order(symbol, close_side, mae_qty)
-                    # Cancel open TP orders
                     for k in ("tp1", "tp2"):
                         if oids.get(k) and not trade.get(f"{k}_hit"):
                             try: deribit.cancel_order(oids[k])
                             except Exception: pass
                     lbl = "Max adverse excursion ❌"
                     _close_record(trade, live, mae_pnl, lbl)
-                    _send(f"🚨 *FORCE CLOSE — {symbol}*\n"
-                          f"Loss `{mae_pnl:+.4f}` exceeded 3× risk\n"
-                          f"Live @ `{live:.{dec}f}`")
+                    _send(f"🚨 *FORCE CLOSE — {symbol}*\nLoss `{mae_pnl:+.4f}` exceeded 3× risk\nLive @ `{live:.{dec}f}`")
                     trade["closed"] = True
                     to_remove.append(symbol)
                     continue
@@ -538,44 +511,38 @@ def check_open_trades(deribit: DeribitClient):
                 o      = _safe_get_order(deribit, str(oids.get("tp1", "")))
                 state  = o.get("order_state", "").lower()
 
-                # Normal: Deribit says the order is filled
                 tp1_order_filled = deribit.is_order_filled(o)
 
-                # SCENARIO K: Partial fill — order still open but partially filled
-                # (treat as TP1 hit if ≥80% filled)
                 filled_amt = float(o.get("filled_amount", 0) or 0)
                 total_amt  = float(o.get("amount", 0) or 0)
-                tp1_partial = (total_amt > 0 and filled_amt / total_amt >= 0.8
-                               and filled_amt > 0)
+                tp1_partial = (total_amt > 0 and filled_amt / total_amt >= 0.8 and filled_amt > 0)
 
-                # SCENARIO C: TP order cancelled/missing but price reached level
-                tp1_price_hit = tp1_p > 0 and (
-                    (signal == "BUY"  and live >= tp1_p) or
-                    (signal == "SELL" and live <= tp1_p)
-                )
-                # Only trigger price fallback if order is gone (not still "open")
+                tp1_price_hit = tp1_p > 0 and ((signal == "BUY" and live >= tp1_p) or (signal == "SELL" and live <= tp1_p))
                 tp1_o_gone = state in ("filled", "cancelled", "closed", "rejected", "")
 
                 if tp1_order_filled or tp1_partial or (tp1_price_hit and tp1_o_gone):
                     trade["tp1_hit"] = True
-                    method = ("order" if tp1_order_filled
-                              else "partial" if tp1_partial else "price-fallback")
+                    method = ("order" if tp1_order_filled else "partial" if tp1_partial else "price-fallback")
                     fill   = fp(o, tp1_p) if (tp1_order_filled or tp1_partial) else live
                     pnl    = _pnl(trade, fill, "tp1")
-                    log.info(f"  🎯 TP1 {symbol} @ {fill:.{dec}f}  pnl≈{pnl:+.4f}"
-                             f"  [{method}]")
-                    _send(f"🎯 *TP1 HIT — {symbol}*\n"
-                          f"@ `{fill:.{dec}f}` | PnL ≈ `{pnl:+.4f}` | [{method}]")
+                    log.info(f"  🎯 TP1 {symbol} @ {fill:.{dec}f}  pnl≈{pnl:+.4f}  [{method}]")
+                    _send(f"🎯 *TP1 HIT — {symbol}*\n@ `{fill:.{dec}f}` | PnL ≈ `{pnl:+.4f}` | [{method}]")
 
-                    # Move SL to break-even
                     if oids.get("stop_loss") and float(trade.get("qty_tp2", 0)) > 0:
                         try:
                             deribit.cancel_order(oids["stop_loss"])
+                        except Exception:
+                            pass  # Already cancelled by exchange — fine
+
+                        try:
                             sl_s = "SELL" if signal == "BUY" else "BUY"
+                            tick = deribit.get_tick_size(symbol)
+                            be_limit = entry + tick if sl_s == "BUY" else entry - tick
+
                             be   = deribit.place_limit_order(
                                 symbol, sl_s,
                                 float(trade["qty_tp2"]),
-                                entry, stop_price=entry
+                                be_limit, stop_price=entry
                             )
                             be_o = be.get("order", be)
                             nid  = str(be_o.get("order_id", ""))
@@ -589,17 +556,23 @@ def check_open_trades(deribit: DeribitClient):
             # ── TRAILING STOP (TP1 hit → halfway to TP2) ──────────────────
             if trade.get("tp1_hit") and not trade.get("tp2_hit") and oids.get("stop_loss"):
                 halfway = (entry + tp2_p) / 2
-                at_half = ((signal == "BUY"  and live >= halfway) or
-                           (signal == "SELL" and live <= halfway))
+                at_half = ((signal == "BUY"  and live >= halfway) or (signal == "SELL" and live <= halfway))
                 sl_at_be = abs(float(trade.get("stop", 0)) - entry) < entry * 0.001
                 if at_half and sl_at_be and float(trade.get("qty_tp2", 0)) > 0:
                     try:
-                        deribit.cancel_order(oids["stop_loss"])
+                        try:
+                            deribit.cancel_order(oids["stop_loss"])
+                        except Exception:
+                            pass
+
                         sl_s = "SELL" if signal == "BUY" else "BUY"
+                        tick = deribit.get_tick_size(symbol)
+                        sl_lim = tp1_p + tick if sl_s == "BUY" else tp1_p - tick
+
                         sl_r = deribit.place_limit_order(
                             symbol, sl_s,
                             float(trade["qty_tp2"]),
-                            tp1_p, stop_price=tp1_p
+                            sl_lim, stop_price=tp1_p
                         )
                         sl_o = sl_r.get("order", sl_r)
                         nid  = str(sl_o.get("order_id", ""))
@@ -617,111 +590,76 @@ def check_open_trades(deribit: DeribitClient):
 
                 tp2_order_filled = deribit.is_order_filled(o)
 
-                # SCENARIO K: Partial fill on TP2
                 filled_amt2 = float(o.get("filled_amount", 0) or 0)
                 total_amt2  = float(o.get("amount", 0) or 0)
-                tp2_partial = (total_amt2 > 0 and filled_amt2 / total_amt2 >= 0.8
-                               and filled_amt2 > 0)
+                tp2_partial = (total_amt2 > 0 and filled_amt2 / total_amt2 >= 0.8 and filled_amt2 > 0)
 
-                # SCENARIO C + D: Price reached TP2 and order is gone
-                tp2_price_hit = tp2_p > 0 and (
-                    (signal == "BUY"  and live >= tp2_p) or
-                    (signal == "SELL" and live <= tp2_p)
-                )
+                tp2_price_hit = tp2_p > 0 and ((signal == "BUY" and live >= tp2_p) or (signal == "SELL" and live <= tp2_p))
                 tp2_o_gone = state2 in ("filled", "cancelled", "closed", "rejected", "")
 
                 if tp2_order_filled or tp2_partial or (tp2_price_hit and tp2_o_gone):
-                    # SCENARIO D: Huge candle blew past both targets
                     if not trade.get("tp1_hit"):
                         trade["tp1_hit"] = True
                         log.info(f"  🎯 TP1 {symbol} auto-marked (huge candle blew past both)")
 
-                    method2 = ("order" if tp2_order_filled
-                               else "partial" if tp2_partial else "price-fallback")
+                    method2 = ("order" if tp2_order_filled else "partial" if tp2_partial else "price-fallback")
                     fill2   = fp(o, tp2_p) if (tp2_order_filled or tp2_partial) else live
                     pnl2    = _pnl(trade, fill2, "tp2")
 
                     trade["tp2_hit"] = True
                     trade["closed"]  = True
-                    log.info(f"  ✅ TP2 {symbol} @ {fill2:.{dec}f}  pnl≈{pnl2:+.4f}"
-                             f"  [{method2}]")
-                    _send(f"✅ *FULL WIN — {symbol}*\n"
-                          f"TP2 @ `{fill2:.{dec}f}` | PnL ≈ `{pnl2:+.4f}` | [{method2}]")
+                    log.info(f"  ✅ TP2 {symbol} @ {fill2:.{dec}f}  pnl≈{pnl2:+.4f}  [{method2}]")
+                    _send(f"✅ *FULL WIN — {symbol}*\nTP2 @ `{fill2:.{dec}f}` | PnL ≈ `{pnl2:+.4f}` | [{method2}]")
                     _close_record(trade, fill2, pnl2, "TP2 hit")
 
-                    # Cancel any remaining SL order
                     if oids.get("stop_loss"):
                         try: deribit.cancel_order(oids["stop_loss"])
                         except Exception: pass
 
                     to_remove.append(symbol)
-                    continue  # Don't check SL — trade is fully closed
+                    continue
 
             # ── SL CHECK ──────────────────────────────────────────────────
             if not trade.get("closed") and oids.get("stop_loss"):
                 sl_o      = _safe_get_order(deribit, str(oids["stop_loss"]))
                 sl_state  = sl_o.get("order_state", "").lower()
 
-                # Normal: Deribit confirms SL triggered + filled
                 sl_hit = deribit.is_sl_triggered(sl_o)
 
-                # ── SCENARIO B: Flash crash / gap ─────────────────────────
-                # Stop_limit fired but limit order couldn't fill.
-                # Result: order is "cancelled" with 0 fill, but price is past SL.
-                # We detect: price breached SL by >0.1% AND order is not waiting.
-                sl_breached = stop > 0 and (
-                    (signal == "BUY"  and live <= stop * 0.999) or  # 0.1% buffer
-                    (signal == "SELL" and live >= stop * 1.001)
-                )
-                # "not waiting" = order is not in an active/pending state
+                sl_breached = stop > 0 and ((signal == "BUY" and live <= stop * 0.999) or (signal == "SELL" and live >= stop * 1.001))
                 sl_not_waiting = sl_state not in ("untriggered", "open") or not sl_state
 
                 if not sl_hit and sl_breached and sl_not_waiting:
-                    # SCENARIO B confirmed — price is past SL, order is not protecting us
-                    log.warning(
-                        f"  ⚠️ {symbol}: price {live:.{dec}f} past SL {stop:.{dec}f} "
-                        f"(state='{sl_state}') — SCENARIO B market close"
-                    )
+                    log.warning(f"  ⚠️ {symbol}: price {live:.{dec}f} past SL {stop:.{dec}f} (state='{sl_state}') — SCENARIO B market close")
                     try:
                         close_side = "SELL" if signal == "BUY" else "BUY"
-                        close_qty  = (float(trade.get("qty_tp2", 0))
-                                      if trade.get("tp1_hit")
-                                      else float(trade["qty"]))
+                        close_qty  = (float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade["qty"]))
                         if close_qty > 0:
                             deribit.place_market_order(symbol, close_side, close_qty)
-                        # Cancel remaining TP orders
                         for k in ("tp1", "tp2"):
                             if oids.get(k) and not trade.get(f"{k}_hit"):
                                 try: deribit.cancel_order(oids[k])
                                 except Exception: pass
-                        sl_hit = True  # Fall through to close record below
+                        sl_hit = True
                     except Exception as e:
                         log.error(f"  Scenario-B close {symbol}: {e}")
 
                 if sl_hit:
                     trade["closed"] = True
                     fill = fp(sl_o, stop)
-                    # Gap scenario: order fill price is unavailable — use live
                     if fill == 0 or fill == stop or fill == float(trade.get("stop", 0)):
                         fill = live if live > 0 else stop
 
-                    # Log slippage warning (gap severity indicator)
                     slippage_pct = abs(fill - stop) / stop * 100
                     if slippage_pct > 0.5:
-                        log.warning(f"  ⚠️ {symbol}: SL slippage {slippage_pct:.2f}%"
-                                    f" (expected {stop:.{dec}f}, got {fill:.{dec}f})")
+                        log.warning(f"  ⚠️ {symbol}: SL slippage {slippage_pct:.2f}% (expected {stop:.{dec}f}, got {fill:.{dec}f})")
 
                     pnl = _pnl(trade, fill, "sl")
-                    lbl = ("BREAK-EVEN ⚖️" if abs(fill - entry) < entry * 0.002
-                           else "STOPPED OUT ❌")
-                    log.info(f"  ❌ SL {symbol} @ {fill:.{dec}f}  pnl≈{pnl:+.4f}"
-                             f"  [state={sl_state}]")
-                    _send(f"{'⚖️' if 'BREAK' in lbl else '❌'} *{lbl} — {symbol}*\n"
-                          f"@ `{fill:.{dec}f}` | PnL ≈ `{pnl:+.4f}`"
-                          + (f"\n⚠️ Slippage: {slippage_pct:.2f}%" if slippage_pct > 0.5 else ""))
+                    lbl = ("BREAK-EVEN ⚖️" if abs(fill - entry) < entry * 0.002 else "STOPPED OUT ❌")
+                    log.info(f"  ❌ SL {symbol} @ {fill:.{dec}f}  pnl≈{pnl:+.4f}  [state={sl_state}]")
+                    _send(f"{'⚖️' if 'BREAK' in lbl else '❌'} *{lbl} — {symbol}*\n@ `{fill:.{dec}f}` | PnL ≈ `{pnl:+.4f}`" + (f"\n⚠️ Slippage: {slippage_pct:.2f}%" if slippage_pct > 0.5 else ""))
                     _close_record(trade, fill, pnl, lbl)
 
-                    # Cancel remaining TP orders
                     for k in ("tp1", "tp2"):
                         if oids.get(k) and not trade.get(f"{k}_hit"):
                             try: deribit.cancel_order(oids[k])
@@ -760,18 +698,13 @@ def check_stale_trades(deribit: DeribitClient):
 
         log.warning(f"  ⏰ {symbol}: {age_h:.0f}h — time-based exit")
         try:
-            # Cancel all open orders first
             for k, oid in trade.get("order_ids", {}).items():
                 if k != "entry" and oid and str(oid) not in ("", "None"):
                     try: deribit.cancel_order(oid)
                     except Exception: pass
 
-            # Close position at market
             live    = deribit.get_live_price(symbol)
-            # Use remaining qty based on TP1 status
-            close_qty = (float(trade.get("qty_tp2", 0))
-                         if trade.get("tp1_hit")
-                         else float(trade["qty"]))
+            close_qty = (float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade["qty"]))
             if close_qty > 0:
                 close_side = "SELL" if trade["signal"] == "BUY" else "BUY"
                 try:
@@ -783,8 +716,7 @@ def check_stale_trades(deribit: DeribitClient):
             pnl         = _pnl(trade, close_price, "sl")
             reason      = f"Time exit ({age_h:.0f}h)"
             _close_record(trade, close_price, pnl, reason)
-            _send(f"⏰ *TIME EXIT — {symbol}*\n"
-                  f"{age_h:.0f}h | PnL≈`{pnl:+.4f}` | @ `{close_price:.4f}`")
+            _send(f"⏰ *TIME EXIT — {symbol}*\n{age_h:.0f}h | PnL≈`{pnl:+.4f}` | @ `{close_price:.4f}`")
             to_remove.append(symbol)
 
         except Exception as e:
@@ -797,7 +729,6 @@ def check_stale_trades(deribit: DeribitClient):
 
 
 def clean_ghost_trades(deribit: DeribitClient):
-    """Recover real PnL before marking as ghost."""
     trades=load_trades()
     if not trades: return
     live_pos = {}
