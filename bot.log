@@ -44462,3 +44462,130 @@ SCAN — 2026-05-12 12:28 UTC
 ════════════════════════════════════════════════════════
 DONE — 1 signal(s) | $173777.94
 ════════════════════════════════════════════════════════
+2026-05-12 15:25:46,521 
+════════════════════════════════════════════════════════
+SCAN — 2026-05-12 15:25 UTC
+════════════════════════════════════════════════════════
+2026-05-12 15:25:47,004   ACTIVE HOURS | conf≥60% | score≥3 | ADX≥15 | ✓ Normal vol — BTC ATR 0.34%
+2026-05-12 15:25:47,202 ✓ Deribit testnet authenticated
+2026-05-12 15:25:47,347 ✓ Tradeable: 22 — ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'AVAXUSDT', 'NEARUSDT', 'SUIUSDT', 'APTUSDT', 'ATOMUSDT', 'LINKUSDT', 'DOTUSDT', 'UNIUSDT', 'AAVEUSDT', 'XRPUSDT', 'LTCUSDT', 'BCHUSDT', 'FETUSDT', 'ADAUSDT', 'INJUSDT', 'ARBUSDT', 'OPUSDT', 'SEIUSDT']
+2026-05-12 15:25:47,934 ✅ Deribit OK — $173969.87 | 22 symbols
+2026-05-12 15:25:48,397   ACTIVE HOURS | conf≥60% | score≥3 | ADX≥15 | risk:1.00
+2026-05-12 15:25:48,398 
+[0] Balance...
+2026-05-12 15:25:49,992   Balance: $173969.87 | upnl:+188.14 | positions:3
+2026-05-12 15:25:49,992 
+[1] Monitor trades...
+2026-05-12 15:25:49,992   Monitoring 1 trade(s)
+2026-05-12 15:25:51,127 
+[2] Stale trade check...
+2026-05-12 15:25:51,127 
+[3] Ghost trade recovery...
+2026-05-12 15:25:53,132   Balance: $173974.21 | upnl:+192.48 | positions:3
+2026-05-12 15:25:53,132 
+[4] Scanning 24 coins | Open:1/4
+2026-05-12 15:25:53,132 
+  ── BTCUSDT (👑 Big Three) ──
+2026-05-12 15:25:54,470     ML: NO_TRADE 46.9% (need ≥60%)
+2026-05-12 15:25:54,671 
+  ── ETHUSDT (👑 Big Three) ──
+2026-05-12 15:25:55,980     ML: BUY 43.3% (need ≥60%)
+2026-05-12 15:25:56,181 
+  ── BNBUSDT (👑 Big Three) ──
+2026-05-12 15:25:57,485     ML: SELL 44.8% (need ≥60%)
+2026-05-12 15:25:57,685 
+  ── SOLUSDT (⚡ High-Liquidity L1s) ──
+2026-05-12 15:25:58,993     ML: BUY 39.8% (need ≥60%)
+2026-05-12 15:25:59,194 
+  ── AVAXUSDT (⚡ High-Liquidity L1s) ──
+2026-05-12 15:26:00,302     ML: BUY 46.2% (need ≥60%)
+2026-05-12 15:26:00,503 
+  ── NEARUSDT (⚡ High-Liquidity L1s) ──
+2026-05-12 15:26:01,620     ML: NO_TRADE 39.7% (need ≥60%)
+2026-05-12 15:26:01,821 
+  ── SUIUSDT (⚡ High-Liquidity L1s) ──
+2026-05-12 15:26:03,154     ML: BUY 60.4% (need ≥60%)
+2026-05-12 15:26:03,154     ADX: 32.2 (need ≥15)
+2026-05-12 15:26:03,154     Score: 4 (need ≥3)
+2026-05-12 15:26:03,155   Contracts: 7146 SUIUSDT | notional≈$8697 | risk=$1739.70
+2026-05-12 15:26:03,155   BUY SUIUSDT total=7146 risk=$1739.70
+2026-05-12 15:26:03,155   SL=1.1945 TP1=1.2472 TP2=1.2623
+2026-05-12 15:26:03,302   ✅ MARKET BUY 7146 SUI_USDC-PERPETUAL id=USDC-204697948103 state=open
+2026-05-12 15:26:03,303   ✅ Entry @ 1.2420
+2026-05-12 15:26:04,945   Deribit error: invalid_trigger_price | Code:11036 | Data: | Path:/private/sell | Params:{'instrument_name': 'SUI_USDC-PERPETUAL', 'amount': 7146, 'type': 'stop_limit', 'price': 1.218, 'trigger_price': 1.219, 'trigger': 'last_price', 'reduce_only': 'true', 'label': 'bot_sl_1778599564'}
+2026-05-12 15:26:04,945   SL failed: invalid_trigger_price (Code:11036)
+2026-05-12 15:26:05,085   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/sell | Params:{'instrument_name': 'SUI_USDC-PERPETUAL', 'amount': 3573, 'type': 'limit', 'price': 1.272, 'reduce_only': 'true', 'label': 'bot_tp_1778599564'}
+2026-05-12 15:26:05,085   TP1 failed: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-12 15:26:05,225   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/sell | Params:{'instrument_name': 'SUI_USDC-PERPETUAL', 'amount': 3573, 'type': 'limit', 'price': 1.287, 'reduce_only': 'true', 'label': 'bot_tp_1778599565'}
+2026-05-12 15:26:05,225   TP2 failed: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-12 15:26:06,050   ✅✅ TRADE OPENED: SUIUSDT BUY
+2026-05-12 15:26:07,550 
+  ── APTUSDT (⚡ High-Liquidity L1s) ──
+2026-05-12 15:26:08,756     ML: BUY 51.4% (need ≥60%)
+2026-05-12 15:26:08,956 
+  ── MATICUSDT (⚡ High-Liquidity L1s) ──
+2026-05-12 15:26:10,167     ML: SELL 46.7% (need ≥60%)
+2026-05-12 15:26:10,368 
+  ── ATOMUSDT (⚡ High-Liquidity L1s) ──
+2026-05-12 15:26:11,452     ML: NO_TRADE 38.5% (need ≥60%)
+2026-05-12 15:26:11,652 
+  ── LINKUSDT (🏛 Institutional Alts) ──
+2026-05-12 15:26:12,814     ML: BUY 43.6% (need ≥60%)
+2026-05-12 15:26:13,014 
+  ── DOTUSDT (🏛 Institutional Alts) ──
+2026-05-12 15:26:14,124     ML: BUY 44.2% (need ≥60%)
+2026-05-12 15:26:14,324 
+  ── UNIUSDT (🏛 Institutional Alts) ──
+2026-05-12 15:26:15,628     ML: BUY 48.3% (need ≥60%)
+2026-05-12 15:26:15,829 
+  ── AAVEUSDT (🏛 Institutional Alts) ──
+2026-05-12 15:26:17,151     ML: BUY 56.4% (need ≥60%)
+2026-05-12 15:26:17,351 
+  ── XRPUSDT (🏛 Institutional Alts) ──
+2026-05-12 15:26:18,669     ML: BUY 48.3% (need ≥60%)
+2026-05-12 15:26:18,870 
+  ── LTCUSDT (🏛 Institutional Alts) ──
+2026-05-12 15:26:20,067     ML: SELL 45.9% (need ≥60%)
+2026-05-12 15:26:20,267 
+  ── BCHUSDT (🏛 Institutional Alts) ──
+2026-05-12 15:26:21,372     ML: BUY 57.7% (need ≥60%)
+2026-05-12 15:26:21,573 
+  ── FETUSDT (🤖 AI & Momentum) ──
+2026-05-12 15:26:22,772     ML: NO_TRADE 38.0% (need ≥60%)
+2026-05-12 15:26:22,973 
+  ── RENDERUSDT (🤖 AI & Momentum) ──
+2026-05-12 15:26:24,189     ML: BUY 50.7% (need ≥60%)
+2026-05-12 15:26:24,390 
+  ── ADAUSDT (🤖 AI & Momentum) ──
+2026-05-12 15:26:25,610     ML: BUY 54.4% (need ≥60%)
+2026-05-12 15:26:25,810 
+  ── INJUSDT (🤖 AI & Momentum) ──
+2026-05-12 15:26:27,010     ML: BUY 68.8% (need ≥60%)
+2026-05-12 15:26:27,010     ADX: 28.4 (need ≥15)
+2026-05-12 15:26:27,010     Score: 5 (need ≥3)
+2026-05-12 15:26:27,011   Contracts: 1868 INJUSDT | notional≈$8697 | risk=$1739.70
+2026-05-12 15:26:27,011   BUY INJUSDT total=1868 risk=$1739.70
+2026-05-12 15:26:27,011   SL=4.4868 TP1=4.8816 TP2=4.9943
+2026-05-12 15:26:27,156   ✅ MARKET BUY 1868 INJ_USDC-PERPETUAL id=USDC-204698025973 state=open
+2026-05-12 15:26:27,156   ✅ Entry @ 4.7630
+2026-05-12 15:26:28,798   Deribit error: invalid_trigger_price | Code:11036 | Data: | Path:/private/sell | Params:{'instrument_name': 'INJ_USDC-PERPETUAL', 'amount': 1868, 'type': 'stop_limit', 'price': 4.593, 'trigger_price': 4.594, 'trigger': 'last_price', 'reduce_only': 'true', 'label': 'bot_sl_1778599588'}
+2026-05-12 15:26:28,798   SL failed: invalid_trigger_price (Code:11036)
+2026-05-12 15:26:28,940   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/sell | Params:{'instrument_name': 'INJ_USDC-PERPETUAL', 'amount': 934, 'type': 'limit', 'price': 4.989, 'reduce_only': 'true', 'label': 'bot_tp_1778599588'}
+2026-05-12 15:26:28,941   TP1 failed: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-12 15:26:29,083   Deribit error: other_reject invalid_reduce_only_order | Code:11030 | Data: | Path:/private/sell | Params:{'instrument_name': 'INJ_USDC-PERPETUAL', 'amount': 934, 'type': 'limit', 'price': 5.101, 'reduce_only': 'true', 'label': 'bot_tp_1778599588'}
+2026-05-12 15:26:29,083   TP2 failed: other_reject invalid_reduce_only_order (Code:11030)
+2026-05-12 15:26:29,802   ✅✅ TRADE OPENED: INJUSDT BUY
+2026-05-12 15:26:31,302 
+  ── ARBUSDT (🤖 AI & Momentum) ──
+2026-05-12 15:26:32,507     ML: NO_TRADE 43.0% (need ≥60%)
+2026-05-12 15:26:32,707 
+  ── OPUSDT (🤖 AI & Momentum) ──
+2026-05-12 15:26:33,932     ML: BUY 50.3% (need ≥60%)
+2026-05-12 15:26:34,132 
+  ── SEIUSDT (🤖 AI & Momentum) ──
+2026-05-12 15:26:35,441     ML: BUY 58.2% (need ≥60%)
+2026-05-12 15:26:37,235   Balance: $173981.82 | upnl:+200.06 | positions:3
+2026-05-12 15:26:37,235 
+════════════════════════════════════════════════════════
+DONE — 2 signal(s) | $173969.87
+════════════════════════════════════════════════════════
