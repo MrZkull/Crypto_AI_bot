@@ -1,14 +1,4 @@
-# deribit_client.py — FIXED: REST _post (no JSON-RPC), is_sl_triggered (no false positives)
-#
-# CRITICAL FIXES:
-#   FIX 1: _post() — Removed JSON-RPC envelope. Deribit REST expects params directly,
-#           NOT wrapped in {"jsonrpc":"2.0","method":...,"params":body}.
-#           Old code caused EVERY SL/TP order to fail silently → trades had NO protection.
-#   FIX 2: is_sl_triggered() — "cancelled" alone no longer counts as triggered.
-#           Only "filled", "triggered", or "cancelled" WITH real fill data (amt+price).
-#           Prevents false SL-close when breakeven SL replaces original SL.
-#   FIX 3: Dangerous hard-fallback SL check removed from trade_executor.
-#           (See trade_executor.py for that fix.)
+# deribit_client.py — V2: Includes mark_price, funding rates, and position size checks
 
 import math, time, logging, requests
 log = logging.getLogger(__name__)
@@ -93,7 +83,6 @@ class DeribitClient:
                     log.error(f"Auth failed after 3 attempts: {e}")
                     raise
 
-
     def _ensure_auth(self):
         if time.time() >= self._token_expiry:
             self._authenticate()
@@ -110,18 +99,7 @@ class DeribitClient:
         r.raise_for_status()
         return data.get("result", data)
 
-    # ═══════════════════════════════════════════════════════════════
-    # FIX 1 (updated): Deribit REST uses GET with query params for ALL
-    # endpoints — including /private/buy, /private/sell, /private/cancel.
-    # POST with JSON body caused error 11050 (bad_request) because Deribit
-    # REST does not parse JSON bodies for trading endpoints. Auth is via
-    # Bearer header (set in _authenticate), params go in the query string.
-    # ═══════════════════════════════════════════════════════════════
     def _post(self, path: str, body: dict) -> dict:
-        """
-        Deribit REST private endpoints (buy/sell/cancel) use GET + query params.
-        The method is named _post for API compat but sends GET internally.
-        """
         self._ensure_auth()
         r    = self.session.get(f"{self.base}{path}", params=body, timeout=15)
         data = r.json()
@@ -130,7 +108,6 @@ class DeribitClient:
             msg   = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             code  = err.get("code", "")          if isinstance(err, dict) else ""
             extra = err.get("data", "")          if isinstance(err, dict) else ""
-            # Log full response to help debug future errors
             log.error(f"  Deribit error: {msg} | Code:{code} | Data:{extra} | Path:{path} | Params:{body}")
             raise Exception(f"{msg} (Code:{code})" if code else msg)
         r.raise_for_status()
@@ -214,6 +191,35 @@ class DeribitClient:
         except Exception as e:
             log.warning(f"  price {symbol}: {e}"); return 0.0
 
+    def get_mark_price(self, symbol: str) -> float:
+        """Returns mark_price (index-based, reliable on thin books)."""
+        try:
+            t = self._get("/public/ticker",
+                          {"instrument_name": self.get_instrument_name(symbol)})
+            return float(t.get("mark_price") or t.get("index_price") or 0)
+        except Exception as e:
+            log.warning(f"  mark_price {symbol}: {e}"); return 0.0
+
+    def get_funding_rate(self, symbol: str) -> float:
+        """Returns current funding rate (8h) for perpetuals."""
+        try:
+            t = self._get("/public/ticker",
+                          {"instrument_name": self.get_instrument_name(symbol)})
+            return float(t.get("current_funding") or t.get("funding_8h") or 0)
+        except Exception as e:
+            log.warning(f"  funding_rate {symbol}: {e}"); return 0.0
+
+    def get_position_size(self, symbol: str) -> float:
+        """Returns current position size for a symbol (0 if no position)."""
+        try:
+            instrument = self.get_instrument_name(symbol)
+            for p in self.get_positions():
+                if p.get("instrument_name") == instrument:
+                    return float(p.get("size", 0) or 0)
+            return 0.0
+        except Exception as e:
+            log.warning(f"  get_position_size {symbol}: {e}"); return 0.0
+
     def calc_contracts(self, symbol: str, balance_usd: float,
                        entry: float, stop: float, risk_mult: float = 1.0):
         try:
@@ -226,10 +232,7 @@ class DeribitClient:
         if stop_dist <= 0 or entry <= 0:
             return self.round_amount(symbol, min_amt)
         raw = risk_usd / stop_dist
-        # Cap 1: max 5% of balance as notional (reduced from 20% — old cap caused
-        #         0.46 BTC / 626 LTC positions that hit Deribit Code:11050 limits)
         max_pct  = (balance_usd * 0.05) / entry
-        # Cap 2: notional must not exceed 10x the risk amount
         max_risk = (risk_usd * 10) / entry
         raw      = min(raw, max_pct, max_risk)
         result   = self.round_amount(symbol, max(raw, min_amt))
@@ -290,29 +293,39 @@ class DeribitClient:
         return float(avg) if avg and float(avg) > 0 else fallback
 
     def place_limit_order(self, symbol: str, side: str, amount,
-                          price: float, stop_price: float = None) -> dict:
+                          price: float, stop_price: float = None,
+                          use_reduce_only: bool = True) -> dict:
+        """Places limit or stop_limit order with optional reduce_only flag."""
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
+
         if stop_price is not None:
             body = {
                 "instrument_name": instrument, "amount": amount,
                 "type": "stop_limit", "price": safe_price,
                 "trigger_price": self.round_price(symbol, stop_price),
-                "trigger": "last_price", "reduce_only": "true",
+                "trigger": "last_price",
                 "label": f"bot_sl_{int(time.time())}",
             }
+            if use_reduce_only:
+                body["reduce_only"] = "true"
         else:
             body = {
                 "instrument_name": instrument, "amount": amount,
                 "type": "limit", "price": safe_price,
-                "reduce_only": "true", "label": f"bot_tp_{int(time.time())}",
+                "label": f"bot_tp_{int(time.time())}",
             }
+            if use_reduce_only:
+                body["reduce_only"] = "true"
+
         result = self._post(method, body)
         order  = result.get("order", result)
         kind   = "SL" if stop_price else "TP"
         log.info(f"  ✅ {kind} {side.upper()} {amount} {instrument} "
-                 f"@ {safe_price} id={order.get('order_id','')} state={order.get('order_state','')}")
+                 f"@ {safe_price} id={order.get('order_id','')} "
+                 f"state={order.get('order_state','')} "
+                 f"{'[no-reduce-only]' if not use_reduce_only else ''}")
         return result
 
     def get_order(self, order_id: str) -> dict:
@@ -325,75 +338,35 @@ class DeribitClient:
             return {}
 
     def is_order_filled(self, order: dict) -> bool:
-        """
-        TP order fill detection.
-        Stop-limit TP orders that trigger may show state='cancelled' but have fill data.
-        """
         state       = order.get("order_state", "").lower()
         filled_amt  = float(order.get("filled_amount", 0) or 0)
         avg_price   = float(order.get("average_price", 0) or 0)
-
-        if state == "filled":
-            return True
-
-        # Stop-limit that triggered: shows cancelled but has real fill data
+        if state == "filled": return True
         if state in ("cancelled", "closed") and (filled_amt > 0 or avg_price > 0):
-            log.info(f"  Triggered order detected: state={state} "
-                     f"filled={filled_amt} avg={avg_price}")
+            log.info(f"  Triggered order detected: state={state} filled={filled_amt} avg={avg_price}")
             return True
-
         return False
 
-    # ═══════════════════════════════════════════════════════════════
-    # FIX 2: is_sl_triggered — no false positives on plain "cancelled"
-    #
-    # Deribit stop-limit SL lifecycle:
-    #   untriggered → triggered (stop price crossed) → child limit executes
-    #
-    # "cancelled" alone means the ORDER was manually cancelled — e.g. when
-    # we cancel the original SL to replace it with a breakeven SL after TP1.
-    # The old code (state in ("filled","triggered")) was correct for those two,
-    # but the dangerous hard-fallback in trade_executor also treated
-    # plain "cancelled" as a trigger. Fixed here to require BOTH filled_amt
-    # AND avg_price to be non-zero before treating cancelled as triggered.
-    # ═══════════════════════════════════════════════════════════════
     def is_sl_triggered(self, order: dict) -> bool:
-        """
-        Returns True only when the stop loss definitively fired on exchange.
-
-        States:
-          "triggered" = stop price was crossed, child order spawned → SL hit
-          "filled"    = stop executed as market immediately → SL hit
-          "cancelled" with fill data = stop-limit that actually executed → SL hit
-          "cancelled" alone = manually cancelled (e.g. breakeven replacement) → NOT SL hit
-          "untriggered" = waiting → NOT SL hit
-          "" / "not_found" = API issue → NOT SL hit (avoids phantom closes)
-        """
         state      = order.get("order_state", "").lower()
         filled_amt = float(order.get("filled_amount", 0) or 0)
         avg_price  = float(order.get("average_price", 0) or 0)
 
         if state in ("filled", "triggered"):
             return True
-
-        # Cancelled but BOTH fill amount AND fill price present = actually executed
         if state == "cancelled" and filled_amt > 0 and avg_price > 0:
             log.info(f"  SL cancelled-but-filled: amt={filled_amt} avg={avg_price}")
             return True
-
         return False
 
     def get_order_fill_price(self, order: dict, fallback: float) -> float:
         avg = order.get("average_price")
-        if avg and float(avg) > 0:
-            return float(avg)
+        if avg and float(avg) > 0: return float(avg)
         lp = order.get("last_price") or order.get("price")
-        if lp and float(lp) > 0:
-            return float(lp)
+        if lp and float(lp) > 0: return float(lp)
         return fallback
 
     def get_trade_history_for_instrument(self, symbol: str, count: int = 10) -> list:
-        """Fetch actual trade fills for ghost PnL recovery."""
         try:
             instrument = self.get_instrument_name(symbol)
             result     = self._get("/private/get_user_trades_by_instrument", {
@@ -403,8 +376,7 @@ class DeribitClient:
             })
             return result if isinstance(result, list) else result.get("trades", [])
         except Exception as e:
-            log.warning(f"  Trade history {symbol}: {e}")
-            return []
+            log.warning(f"  Trade history {symbol}: {e}"); return []
 
     def cancel_order(self, order_id: str) -> dict:
         try:
