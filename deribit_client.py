@@ -33,10 +33,10 @@ SYMBOL_MAP = {
         "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
         "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.001},
         "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 10,     "tick_size": 0.0001},
-        "INJUSDT":    {"instrument": "INJ_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
-        "ARBUSDT":    {"instrument": "ARB_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
-        "OPUSDT":     {"instrument": "OP_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
-        "SEIUSDT":    {"instrument": "SEI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
+        # "INJUSDT":    {"instrument": "INJ_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
+        # "ARBUSDT":    {"instrument": "ARB_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
+        # "OPUSDT":     {"instrument": "OP_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
+        # "SEIUSDT":    {"instrument": "SEI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
     }
 TRADEABLE_SYMBOLS: list = []
 
