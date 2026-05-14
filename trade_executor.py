@@ -265,13 +265,27 @@ def generate_signal(symbol, pipeline, thresholds):
         log.info(f"    ADX: {adx:.1f} (need ≥{thresholds['min_adx']})")
         if adx < thresholds["min_adx"]: return None
 
+        # BTC Trend Gate 
         if sig == "SELL":
+            # Short-term momentum check
             btc_df = add_indicators(get_data("BTCUSDT", TIMEFRAME_ENTRY))
             if not btc_df.empty:
                 b_row = btc_df.iloc[-1]
                 if b_row["ema20"] > b_row["ema50"] and b_row["close"] > b_row["ema20"]:
-                    log.info(f"    BTC uptrend detected — skipping SELL signal for {symbol}")
+                    log.info(f"    BTC short-term uptrend detected — skipping SELL signal for {symbol}")
                     return None
+            
+            # Macro 200-Day Bull Market Gate
+            try:
+                btc_daily = get_data("BTCUSDT", "1d")
+                if not btc_daily.empty and len(btc_daily) >= 200:
+                    ma200 = btc_daily["close"].rolling(200).mean().iloc[-1]
+                    btc_close = btc_daily["close"].iloc[-1]
+                    if btc_close > ma200:
+                        log.info(f"    BTC macro bull market (Close > 200MA) — skipping SELL signal for {symbol}")
+                        return None
+            except Exception as e:
+                log.debug(f"    Macro BTC check failed: {e}")
 
         score = 0; reasons = []
         if conf >= 70:   score+=1; reasons.append(f"High conf ({conf:.0f}%)")
