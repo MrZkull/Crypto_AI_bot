@@ -23,7 +23,7 @@ FEATURES = [
 TIER_BIG3   = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
 TIER_LIQ1   = ["SOLUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT", "APTUSDT", "MATICUSDT", "ATOMUSDT"]
 TIER_INST   = ["LINKUSDT", "DOTUSDT", "UNIUSDT", "AAVEUSDT", "XRPUSDT", "LTCUSDT", "BCHUSDT"]
-TIER_AI_MOM = ["FETUSDT", "RENDERUSDT", "ADAUSDT", "INJUSDT", "ARBUSDT", "OPUSDT", "SEIUSDT"]
+TIER_AI_MOM = ["FETUSDT", "RENDERUSDT", "ADAUSDT", ]
 
 SYMBOLS = TIER_BIG3 + TIER_LIQ1 + TIER_INST + TIER_AI_MOM
 
@@ -55,8 +55,8 @@ MIN_SCORE         = 2     # Minimum quality score (out of 6) to execute
 # ── Risk management (professional grade) ─────────────────────────────
 RISK_PER_TRADE     = 0.01   # 1% per trade — strict, never change this
 ATR_STOP_MULT      = 1.5    # SL = entry ± 1.5 × ATR
-ATR_TARGET1_MULT   = 2.0    # TP1 = entry ± 2.0 × ATR  (R:R = 1.33:1)
-ATR_TARGET2_MULT   = 3.0    # TP2 = entry ± 3.0 × ATR  (R:R = 2:1)
+ATR_TARGET1_MULT   = 3.0    # TP1 = entry ± 2.0 × ATR  (R:R = 1.33:1)
+ATR_TARGET2_MULT   = 4.5    # TP2 = entry ± 3.0 × ATR  (R:R = 2:1)
 MAX_SAME_DIRECTION = 4      # max 2 BUY or 2 SELL simultaneously
 
 # ── NEW: Time-based exit ──────────────────────────────────────────────
