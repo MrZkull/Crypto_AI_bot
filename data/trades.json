@@ -1,1 +1,66 @@
-{}
+{
+  "BTCUSDT": {
+    "symbol": "BTCUSDT",
+    "signal": "SELL",
+    "entry": 78313.5,
+    "stop": 78662.5,
+    "tp1": 77615.5,
+    "tp2": 77267.0,
+    "qty": 0.1098,
+    "qty_tp1": 0.0549,
+    "qty_tp2": 0.0549,
+    "risk_usd": 1743.14,
+    "balance_at_open": 174313.63,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "entry": "USDC-205503814167",
+      "stop_loss": "USDC-SLTB-20615"
+    },
+    "opened_at": "2026-05-15T16:30:41.682731+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 64.0,
+    "score": 4,
+    "reasons": [
+      "Conf (64%)",
+      "Strong ADX 62",
+      "EMA bearish",
+      "1h confirms"
+    ],
+    "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet"
+  },
+  "BCHUSDT": {
+    "symbol": "BCHUSDT",
+    "signal": "SELL",
+    "entry": 447.253,
+    "stop": 449.142,
+    "tp1": 443.475,
+    "tp2": 441.586,
+    "qty": 20.38,
+    "qty_tp1": 10.18,
+    "qty_tp2": 10.2,
+    "risk_usd": 1743.14,
+    "balance_at_open": 174313.63,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "entry": "USDC-205503931154",
+      "stop_loss": "USDC-SLTB-20616"
+    },
+    "opened_at": "2026-05-15T16:31:18.989835+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 71.6,
+    "score": 4,
+    "reasons": [
+      "High conf (72%)",
+      "Strong ADX 48",
+      "EMA bearish",
+      "1h confirms"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  }
+}
