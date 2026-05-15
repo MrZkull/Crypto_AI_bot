@@ -3029,5 +3029,82 @@
     "pnl": 109.1349,
     "closed_at": "2026-05-15T00:13:38.031074+00:00",
     "close_reason": "TP2 hit"
+  },
+  {
+    "symbol": "ETHUSDT",
+    "signal": "SELL",
+    "entry": 2256.65,
+    "stop": 2265.2,
+    "tp1": 2239.55,
+    "tp2": 2231.0,
+    "qty": 1.928,
+    "qty_tp1": 1.928,
+    "qty_tp2": 1.929,
+    "risk_usd": 1740.86,
+    "balance_at_open": 174086.16,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "entry": "USDC-205430752926",
+      "stop_loss": "USDC-SLTB-20607",
+      "tp1": "USDC-205430756850",
+      "tp2": "USDC-205430757427"
+    },
+    "opened_at": "2026-05-15T10:09:01.760473+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 64.0,
+    "score": 4,
+    "reasons": [
+      "Conf (64%)",
+      "Strong ADX 28",
+      "EMA bearish",
+      "1h confirms"
+    ],
+    "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet",
+    "close_price": 2239.55,
+    "pnl": 32.9688,
+    "closed_at": "2026-05-15T14:40:30.402673+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
+  },
+  {
+    "symbol": "ETHUSDT",
+    "signal": "SELL",
+    "entry": 2256.65,
+    "stop": 2239.55,
+    "tp1": 2239.55,
+    "tp2": 2231.0,
+    "qty": 3.857,
+    "qty_tp1": 1.928,
+    "qty_tp2": 1.929,
+    "risk_usd": 1740.86,
+    "balance_at_open": 174086.16,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "entry": "USDC-205430752926",
+      "stop_loss": "USDC-SLTB-20614",
+      "tp1": "USDC-205430756850",
+      "tp2": "USDC-205430757427"
+    },
+    "opened_at": "2026-05-15T10:09:01.760473+00:00",
+    "tp1_hit": true,
+    "tp2_hit": true,
+    "closed": true,
+    "confidence": 64.0,
+    "score": 4,
+    "reasons": [
+      "Conf (64%)",
+      "Strong ADX 28",
+      "EMA bearish",
+      "1h confirms"
+    ],
+    "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet",
+    "close_price": 2231.0,
+    "pnl": 49.4789,
+    "closed_at": "2026-05-15T14:40:33.007522+00:00",
+    "close_reason": "TP2 hit"
   }
 ]
