@@ -1,4 +1,4 @@
-# trade_executor.py — V2: Includes 12-scenario monitor, Ghost Tracking, Cooldowns, & Funding
+# trade_executor.py — V2: Includes 12-scenario monitor, Ghost Tracking, Cooldowns, Funding, 4H Bias & Volume
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -287,21 +287,82 @@ def generate_signal(symbol, pipeline, thresholds):
             except Exception as e:
                 log.debug(f"    Macro BTC check failed: {e}")
 
+        # ── 4h trend bias (filters trades against dominant trend) ──────────
+        e20_4h, e50_4h, rsi_4h = 0, 0, 50 # Default safe values
+        trend_bars = 0
+        df4h_raw = get_data(symbol, "4h")
+        if not df4h_raw.empty:
+            df4h  = add_indicators(df4h_raw).fillna(0)
+            r4h   = df4h.iloc[-1]
+            e20_4h = float(r4h.get("ema20", 0))
+            e50_4h = float(r4h.get("ema50", 0))
+            rsi_4h = float(r4h.get("rsi", 50))
+
+            if sig == "BUY" and e20_4h < e50_4h:
+                log.info(f"    4h bearish — skip BUY {symbol}")
+                return None
+            if sig == "SELL" and e20_4h > e50_4h:
+                log.info(f"    4h bullish — skip SELL {symbol}")
+                return None
+
+            # How many 4h candles has the trend been active?
+            for i in range(1, min(6, len(df4h))):
+                r_prev = df4h.iloc[-(i+1)]
+                if sig == "BUY" and float(r_prev.get("ema20", 0)) > float(r_prev.get("ema50", 0)):
+                    trend_bars += 1
+                elif sig == "SELL" and float(r_prev.get("ema20", 0)) < float(r_prev.get("ema50", 0)):
+                    trend_bars += 1
+                else:
+                    break
+
+            # Require trend to have been in place for at least 2 candles (8h)
+            if trend_bars < 2:
+                log.info(f"    4h trend too fresh ({trend_bars} bars) — skip {symbol}")
+                return None
+
         score = 0; reasons = []
         if conf >= 70:   score+=1; reasons.append(f"High conf ({conf:.0f}%)")
         elif conf >= 60: score+=1; reasons.append(f"Conf ({conf:.0f}%)")
+        
         adx_val = adx
         if adx_val > 25:   score+=1; reasons.append(f"Strong ADX {adx_val:.0f}")
         elif adx_val > 18: score+=1; reasons.append(f"ADX {adx_val:.0f}")
+        
         rsi = float(row.get("rsi", 50))
         if sig=="BUY"  and rsi < 50: score+=1; reasons.append(f"RSI bullish ({rsi:.0f})")
         elif sig=="SELL" and rsi > 50: score+=1; reasons.append(f"RSI bearish ({rsi:.0f})")
+        
         e20=float(row.get("ema20",0)); e50=float(row.get("ema50",0))
         if sig=="BUY"  and e20>e50: score+=1; reasons.append("EMA bullish")
         elif sig=="SELL" and e20<e50: score+=1; reasons.append("EMA bearish")
+        
         c20=float(r1h.get("ema20",0)); c50=float(r1h.get("ema50",0))
         if sig=="BUY"  and c20>c50: score+=1; reasons.append("1h confirms")
         elif sig=="SELL" and c20<c50: score+=1; reasons.append("1h confirms")
+
+        # ── 4h confirmation score ──────────────────────────────────────────
+        if sig == "BUY"  and e20_4h > e50_4h and rsi_4h > 45:
+            score += 1; reasons.append(f"4h trend aligns (RSI {rsi_4h:.0f})")
+        elif sig == "SELL" and e20_4h < e50_4h and rsi_4h < 55:
+            score += 1; reasons.append(f"4h trend aligns (RSI {rsi_4h:.0f})")
+
+        # Score bonus for established trend
+        if trend_bars >= 4:
+            score += 1; reasons.append(f"4h trend established ({trend_bars*4}h)")
+
+        # ── Volume confirmation ────────────────────────────────────────────
+        vol_now = float(row.get("volume", 0))
+        vol_ma20 = float(df15["volume"].rolling(20).mean().iloc[-1])
+
+        if vol_ma20 <= 0 or vol_now <= 0:
+            log.info(f"    Volume data missing — skipping volume gate")
+        else:
+            if vol_now < vol_ma20 * 0.8:
+                log.info(f"    Low volume ({vol_now:.0f} < {vol_ma20:.0f}) — skip")
+                return None  # signal not confirmed by volume
+
+            if vol_now > vol_ma20 * 1.5:
+                score += 1; reasons.append(f"Volume surge {vol_now/vol_ma20:.1f}×")
 
         log.info(f"    Score: {score} (need ≥{thresholds['min_score']})")
         if score < thresholds["min_score"]:
