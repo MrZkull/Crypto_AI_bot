@@ -1,4 +1,4 @@
-# trade_executor.py — V2: Includes 12-scenario monitor, Ghost Tracking, Cooldowns, Funding, 4H Bias & Volume
+# trade_executor.py — V2: Includes 12-scenario monitor, Ghost Tracking, Cooldowns, Funding, 4H Bias, Volume & Signal Attribution Logging
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -272,7 +272,7 @@ def generate_signal(symbol, pipeline, thresholds):
             if not btc_df.empty:
                 b_row = btc_df.iloc[-1]
                 if b_row["ema20"] > b_row["ema50"] and b_row["close"] > b_row["ema20"]:
-                    log.info(f"    BTC short-term uptrend detected — skipping SELL signal for {symbol}")
+                    log.info(f"    [FILTER:BTC_MICRO] short-term uptrend — skip SELL {symbol}")
                     return None
             
             # Macro 200-Day Bull Market Gate
@@ -282,7 +282,7 @@ def generate_signal(symbol, pipeline, thresholds):
                     ma200 = btc_daily["close"].rolling(200).mean().iloc[-1]
                     btc_close = btc_daily["close"].iloc[-1]
                     if btc_close > ma200:
-                        log.info(f"    BTC macro bull market (Close > 200MA) — skipping SELL signal for {symbol}")
+                        log.info(f"    [FILTER:BTC_MACRO] bull market (Close > 200MA) — skip SELL {symbol}")
                         return None
             except Exception as e:
                 log.debug(f"    Macro BTC check failed: {e}")
@@ -299,10 +299,10 @@ def generate_signal(symbol, pipeline, thresholds):
             rsi_4h = float(r4h.get("rsi", 50))
 
             if sig == "BUY" and e20_4h < e50_4h:
-                log.info(f"    4h bearish — skip BUY {symbol}")
+                log.info(f"    [FILTER:4H_BIAS] 4h bearish — skip BUY {symbol}")
                 return None
             if sig == "SELL" and e20_4h > e50_4h:
-                log.info(f"    4h bullish — skip SELL {symbol}")
+                log.info(f"    [FILTER:4H_BIAS] 4h bullish — skip SELL {symbol}")
                 return None
 
             # How many 4h candles has the trend been active?
@@ -317,7 +317,7 @@ def generate_signal(symbol, pipeline, thresholds):
 
             # Require trend to have been in place for at least 2 candles (8h)
             if trend_bars < 2:
-                log.info(f"    4h trend too fresh ({trend_bars} bars) — skip {symbol}")
+                log.info(f"    [FILTER:4H_FRESH] trend too fresh ({trend_bars} bars) — skip {symbol}")
                 return None
 
         score = 0; reasons = []
@@ -358,7 +358,7 @@ def generate_signal(symbol, pipeline, thresholds):
             log.info(f"    Volume data missing — skipping volume gate")
         else:
             if vol_now < vol_ma20 * 0.8:
-                log.info(f"    Low volume ({vol_now:.0f} < {vol_ma20:.0f}) — skip")
+                log.info(f"    [FILTER:VOL] Low volume ({vol_now:.0f} < {vol_ma20:.0f}) — skip {symbol}")
                 return None  # signal not confirmed by volume
 
             if vol_now > vol_ma20 * 1.5:
@@ -366,6 +366,7 @@ def generate_signal(symbol, pipeline, thresholds):
 
         log.info(f"    Score: {score} (need ≥{thresholds['min_score']})")
         if score < thresholds["min_score"]:
+            log.info(f"    [FILTER:SCORE] Too low ({score} < {thresholds['min_score']}) — skip {symbol}")
             save_signal({"symbol":symbol,"signal":sig,"confidence":conf,"score":score,
                 "reasons":reasons,"rejected":True,
                 "reject_reason":f"score {score}<{thresholds['min_score']}"})
