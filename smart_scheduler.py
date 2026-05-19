@@ -1,13 +1,4 @@
-# smart_scheduler.py — Fixed: removed blocking circuit breaker from scan path
-# test
-# ROOT CAUSE OF NO TRADES FOR 1.5 DAYS:
-#   check_daily_loss_limit() was called inside should_scan().
-#   If balance.json was missing, stale, or showed 0 USDT:
-#     limit = 0 * 5% = 0
-#     any negative pnl today_pl < 0 → triggered = True → EVERY SCAN BLOCKED
-#
-# FIX: Daily loss check is now advisory only (logs warning, never blocks).
-#      Thresholds also simplified — fewer combined conditions to pass.
+# smart_scheduler.py — Fixed: removed blocking circuit breaker, dynamic weekend splits
 
 import logging, requests, json
 import pandas as pd
@@ -28,11 +19,19 @@ def get_scan_mode() -> dict:
     is_active  = 8 <= hour < 20
 
     if is_weekend:
-        return {
-            "mode": "weekend", "label": "WEEKEND MODE", "emoji": "📅",
-            "min_confidence": 70, "min_score": 3, "min_adx": 22,
-            "interval_min": 15, "risk_mult": 0.85,
-        }
+        if is_active:   # weekend daytime 08:00–20:00 UTC
+            return {
+                "mode": "weekend_active", "label": "WEEKEND MODE", "emoji": "📅",
+                "min_confidence": 65, "min_score": 3, "min_adx": 18,
+                "interval_min": 15, "risk_mult": 0.85,
+            }
+        else:           # weekend overnight — very quiet, stay strict
+            return {
+                "mode": "weekend_quiet", "label": "WEEKEND QUIET", "emoji": "🌙",
+                "min_confidence": 70, "min_score": 4, "min_adx": 22,
+                "interval_min": 30, "risk_mult": 0.50,
+            }
+
     if is_active:
         return {
             "mode": "active", "label": "ACTIVE HOURS", "emoji": "📈",
