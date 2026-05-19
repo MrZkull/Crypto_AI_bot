@@ -1,4 +1,4 @@
-# trade_executor.py — V2: Includes 12-scenario monitor, Ghost Tracking, Cooldowns, Funding, 4H Bias, Volume & Signal Attribution Logging
+# trade_executor.py — V2.1: Includes Ghost Tracking, Funding, 4H Soft Bias, Volume Fix & Orphan Monitor
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -265,6 +265,9 @@ def generate_signal(symbol, pipeline, thresholds):
         log.info(f"    ADX: {adx:.1f} (need ≥{thresholds['min_adx']})")
         if adx < thresholds["min_adx"]: return None
 
+        score = 0
+        reasons = []
+
         # BTC Trend Gate 
         if sig == "SELL":
             # Short-term momentum check
@@ -302,8 +305,14 @@ def generate_signal(symbol, pipeline, thresholds):
                 log.info(f"    [FILTER:4H_BIAS] 4h bearish — skip BUY {symbol}")
                 return None
             if sig == "SELL" and e20_4h > e50_4h:
-                log.info(f"    [FILTER:4H_BIAS] 4h bullish — skip SELL {symbol}")
-                return None
+                # Soft penalty for SELLs in a mildly bullish 4h market (instead of hard block)
+                if rsi_4h > 65:
+                    log.info(f"    [FILTER:4H_BIAS] 4h strongly bullish (RSI {rsi_4h:.0f}) — skip SELL {symbol}")
+                    return None
+                else:
+                    score -= 1
+                    reasons.append(f"4h counter-trend (-1)")
+                    log.info(f"    4h mildly bullish — score -1 for SELL {symbol}")
 
             # How many 4h candles has the trend been active?
             for i in range(1, min(6, len(df4h))):
@@ -320,7 +329,7 @@ def generate_signal(symbol, pipeline, thresholds):
                 log.info(f"    [FILTER:4H_FRESH] trend too fresh ({trend_bars} bars) — skip {symbol}")
                 return None
 
-        score = 0; reasons = []
+        # Base Scoring
         if conf >= 70:   score+=1; reasons.append(f"High conf ({conf:.0f}%)")
         elif conf >= 60: score+=1; reasons.append(f"Conf ({conf:.0f}%)")
         
@@ -350,19 +359,19 @@ def generate_signal(symbol, pipeline, thresholds):
         if trend_bars >= 4:
             score += 1; reasons.append(f"4h trend established ({trend_bars*4}h)")
 
-        # ── Volume confirmation ────────────────────────────────────────────
-        vol_now = float(row.get("volume", 0))
-        vol_ma20 = float(df15["volume"].rolling(20).mean().iloc[-1])
+        # ── Volume confirmation (FIXED: Uses iloc[-2] for closed candle) ────
+        vol_prev = float(df15["volume"].iloc[-2])
+        vol_ma20 = float(df15["volume"].rolling(20).mean().iloc[-2])
 
-        if vol_ma20 <= 0 or vol_now <= 0:
+        if vol_ma20 <= 0 or vol_prev <= 0:
             log.info(f"    Volume data missing — skipping volume gate")
         else:
-            if vol_now < vol_ma20 * 0.8:
-                log.info(f"    [FILTER:VOL] Low volume ({vol_now:.0f} < {vol_ma20:.0f}) — skip {symbol}")
+            if vol_prev < vol_ma20 * 0.5:
+                log.info(f"    [FILTER:VOL] Low volume ({vol_prev:.0f} < {vol_ma20:.0f}) — skip {symbol}")
                 return None  # signal not confirmed by volume
 
-            if vol_now > vol_ma20 * 1.5:
-                score += 1; reasons.append(f"Volume surge {vol_now/vol_ma20:.1f}×")
+            if vol_prev > vol_ma20 * 1.5:
+                score += 1; reasons.append(f"Volume surge {vol_prev/vol_ma20:.1f}×")
 
         log.info(f"    Score: {score} (need ≥{thresholds['min_score']})")
         if score < thresholds["min_score"]:
@@ -1062,6 +1071,22 @@ def run_execution_scan():
     log.info("\n[2] Stale trade check..."); check_stale_trades(deribit)
     log.info("\n[3] Ghost trade recovery..."); clean_ghost_trades(deribit)
     log.info("\n[3b] Funding rate check..."); check_funding_rates(deribit)
+    
+    # ── Orphan Position Monitor ──
+    log.info("\n[3c] Checking for untracked positions...")
+    tracked = set(load_trades().keys())
+    for p in deribit.get_positions():
+        if float(p.get("size", 0)) == 0:
+            continue
+        inst  = p.get("instrument_name", "")
+        base  = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+        sym   = f"{base}USDT"
+        upnl  = float(p.get("floating_profit_loss_usd", 0) or 0)
+        size  = float(p.get("size", 0))
+        if sym not in tracked:
+            log.warning(f"  ⚠️ UNTRACKED POSITION: {sym} size={size} uPnL=${upnl:+.2f} — close manually!")
+            _send(f"⚠️ *UNTRACKED POSITION* — {sym}\nSize: `{size}` | uPnL: `${upnl:+.2f}`\nNot in trades.json — close manually on Deribit!")
+
     save_balance(deribit)
 
     open_count = len([t for t in load_trades().values() if not t.get("closed",False)])
