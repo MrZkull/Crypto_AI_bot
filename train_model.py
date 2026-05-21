@@ -36,26 +36,43 @@ N_FEATURES  = 35
 
 
 def fetch_klines(symbol, interval, limit=5000):
-    """Paginates Binance API to bypass the 1000 limit and fetch massive datasets."""
-    all_data = []
-    end_time = None
-    while len(all_data) < limit:
-        params = {"symbol": symbol, "interval": interval, "limit": 1000}
-        if end_time:
-            params["endTime"] = end_time
+    """Paginates Binance API with dual-endpoint fallback to bypass GitHub Actions IP bans."""
+    urls = [
+        "https://data-api.binance.vision/api/v3/klines",
+        "https://api.binance.com/api/v3/klines"
+    ]
+    
+    for url in urls:
+        all_data = []
+        end_time = None
         try:
-            r = requests.get("https://api.binance.com/api/v3/klines", params=params, timeout=10)
-            if r.status_code != 200: break
-            data = r.json()
-            if not data: break
-            all_data = data + all_data
-            end_time = data[0][0] - 1
-            time.sleep(0.1)
+            while len(all_data) < limit:
+                params = {"symbol": symbol, "interval": interval, "limit": 1000}
+                if end_time:
+                    params["endTime"] = end_time
+                
+                r = requests.get(url, params=params, timeout=10)
+                if r.status_code != 200:
+                    log.warning(f"  Endpoint {url} blocked (Status {r.status_code})")
+                    break # Break the while loop, try the next URL
+                
+                data = r.json()
+                if not data: break
+                
+                all_data = data + all_data
+                end_time = data[0][0] - 1
+                time.sleep(0.3) # Increased sleep to respect rate limits
+                
+            if all_data: 
+                break # Success! Break the URL loop
+                
         except Exception as e:
-            log.warning(f"  {symbol}: API Error {e}")
-            break
-            
-    if not all_data: return pd.DataFrame()
+            log.warning(f"  {symbol} API Error on {url}: {e}")
+
+    if not all_data:
+        log.error(f"  Failed to fetch data for {symbol} on all endpoints.")
+        return pd.DataFrame()
+
     df = pd.DataFrame(all_data).iloc[:,:6]
     df.columns = ["open_time","open","high","low","close","volume"]
     for c in ["open","high","low","close","volume"]:
@@ -98,7 +115,9 @@ def build_dataset():
         log.info(f"  Fetching {LIMIT} bars for {symbol}...")
         df15 = fetch_klines(symbol, "15m", LIMIT)
         df1h = fetch_klines(symbol, "1h",  LIMIT//4)
-        if df15.empty or len(df15) < 100: continue
+        if df15.empty or len(df15) < 100: 
+            log.warning(f"  {symbol} dataset empty or too small. Skipping.")
+            continue
         
         df15 = add_indicators(df15)
         if not df1h.empty:
@@ -112,6 +131,9 @@ def build_dataset():
         df15["target"] = make_targets(df15)
         # Drop the last 24 bars since we can't look into the future for them
         rows.append(df15.iloc[:-24])
+        
+    if not rows:
+        raise ValueError("CRITICAL ERROR: No data was downloaded for any symbols. Both Binance endpoints rejected the connection.")
         
     ds = pd.concat(rows, ignore_index=True)
     b=(ds.target=="BUY").sum(); s=(ds.target=="SELL").sum(); n=(ds.target=="NO_TRADE").sum()
