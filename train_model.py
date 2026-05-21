@@ -1,7 +1,4 @@
-# train_model.py — imports ImportanceSelector from feature_engineering
-# This is the ONLY change needed vs the version in doc 13.
-# ImportanceSelector moved to feature_engineering.py so the pickle
-# can be loaded from trade_executor.py without AttributeError.
+# train_model.py — Advanced Data Pagination & ATR-Based Labeling
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -13,8 +10,15 @@ from sklearn.metrics import classification_report, accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 
-# ✅ Import from feature_engineering — NOT defined here
 from feature_engineering import add_indicators, ALL_FEATURES, ImportanceSelector
+
+# Safely import the execution multipliers to train the model realistically
+try:
+    from config import ATR_STOP_MULT, ATR_TARGET1_MULT, ATR_TARGET2_MULT
+except ImportError:
+    ATR_STOP_MULT = 2.5
+    ATR_TARGET1_MULT = 5.0
+    ATR_TARGET2_MULT = 7.5
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
@@ -25,46 +29,77 @@ SYMBOLS = [
     "UNIUSDT","AAVEUSDT","XRPUSDT","LTCUSDT","BCHUSDT","FETUSDT",
     "RENDERUSDT","ADAUSDT","INJUSDT","ARBUSDT","OPUSDT","SEIUSDT",
 ]
-LIMIT       = 1500
-TARGET_BARS = 6
-TARGET_PCT  = 0.003
+LIMIT       = 5000   # Massive dataset pull (approx 50 days of 15m data)
 TEST_SPLIT  = 0.20
 MODEL_FILE  = "pro_crypto_ai_model.pkl"
-N_FEATURES  = 32
+N_FEATURES  = 35
 
 
-def fetch_klines(symbol, interval, limit=1500):
-    for url in ["https://data-api.binance.vision/api/v3/klines",
-                "https://api.binance.com/api/v3/klines"]:
+def fetch_klines(symbol, interval, limit=5000):
+    """Paginates Binance API to bypass the 1000 limit and fetch massive datasets."""
+    all_data = []
+    end_time = None
+    while len(all_data) < limit:
+        params = {"symbol": symbol, "interval": interval, "limit": 1000}
+        if end_time:
+            params["endTime"] = end_time
         try:
-            r = requests.get(url, params={"symbol":symbol,"interval":interval,"limit":limit}, timeout=20)
-            if r.status_code == 200:
-                df = pd.DataFrame(r.json()).iloc[:,:6]
-                df.columns = ["open_time","open","high","low","close","volume"]
-                for c in ["open","high","low","close","volume"]:
-                    df[c] = pd.to_numeric(df[c], errors="coerce")
-                return df
-        except Exception as e: log.warning(f"  {symbol}: {e}")
-    return pd.DataFrame()
+            r = requests.get("https://api.binance.com/api/v3/klines", params=params, timeout=10)
+            if r.status_code != 200: break
+            data = r.json()
+            if not data: break
+            all_data = data + all_data
+            end_time = data[0][0] - 1
+            time.sleep(0.1)
+        except Exception as e:
+            log.warning(f"  {symbol}: API Error {e}")
+            break
+            
+    if not all_data: return pd.DataFrame()
+    df = pd.DataFrame(all_data).iloc[:,:6]
+    df.columns = ["open_time","open","high","low","close","volume"]
+    for c in ["open","high","low","close","volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.tail(limit).reset_index(drop=True)
 
 
 def make_targets(df):
-    pct    = (df["close"].shift(-TARGET_BARS) - df["close"]) / df["close"]
+    """
+    Labels historical data as BUY/SELL/NO_TRADE based on whether the 
+    subsequent price action hits the config.py Take Profit before the Stop Loss.
+    """
     labels = pd.Series("NO_TRADE", index=df.index)
-    labels[pct >  TARGET_PCT] = "BUY"
-    labels[pct < -TARGET_PCT] = "SELL"
+    lookahead = 24 # Look ahead 6 hours (24 bars of 15m) to see if TP hits
+
+    # Find the max high and min low over the next 24 bars
+    future_high = df["high"].shift(-1).rolling(lookahead).max().shift(-lookahead + 1)
+    future_low  = df["low"].shift(-1).rolling(lookahead).min().shift(-lookahead + 1)
+
+    # Calculate exactly where the SL and TP1 would be for every single historical candle
+    buy_tp = df["close"] + (df["atr"] * ATR_TARGET1_MULT)
+    buy_sl = df["close"] - (df["atr"] * ATR_STOP_MULT)
+
+    sell_tp = df["close"] - (df["atr"] * ATR_TARGET1_MULT)
+    sell_sl = df["close"] + (df["atr"] * ATR_STOP_MULT)
+
+    # Label BUY: If future high hits TP1 AND future low never drops below SL
+    labels[(future_high >= buy_tp) & (future_low > buy_sl)] = "BUY"
+    
+    # Label SELL: If future low hits TP1 AND future high never breaches SL
+    labels[(future_low <= sell_tp) & (future_high < sell_sl)] = "SELL"
+
     return labels
 
 
 def build_dataset():
-    log.info(f"Building dataset from {len(SYMBOLS)} symbols")
+    log.info(f"Building massive dataset from {len(SYMBOLS)} symbols")
     rows = []
     for symbol in SYMBOLS:
-        log.info(f"  {symbol}...")
+        log.info(f"  Fetching {LIMIT} bars for {symbol}...")
         df15 = fetch_klines(symbol, "15m", LIMIT)
         df1h = fetch_klines(symbol, "1h",  LIMIT//4)
         if df15.empty or len(df15) < 100: continue
-        time.sleep(0.2)
+        
         df15 = add_indicators(df15)
         if not df1h.empty:
             df1h = add_indicators(df1h)
@@ -73,8 +108,11 @@ def build_dataset():
             df15["trend_1h"] = df1h["trend"].reindex(df15.index, method="ffill").fillna(0)
         else:
             df15["rsi_1h"] = 50.0; df15["adx_1h"] = 0.0; df15["trend_1h"] = 0.0
+            
         df15["target"] = make_targets(df15)
-        rows.append(df15.iloc[:-TARGET_BARS])
+        # Drop the last 24 bars since we can't look into the future for them
+        rows.append(df15.iloc[:-24])
+        
     ds = pd.concat(rows, ignore_index=True)
     b=(ds.target=="BUY").sum(); s=(ds.target=="SELL").sum(); n=(ds.target=="NO_TRADE").sum()
     log.info(f"Dataset: {len(ds)} rows | BUY:{b}({b/len(ds)*100:.0f}%) "
@@ -96,13 +134,12 @@ def train(ds):
         X, y, test_size=TEST_SPLIT, random_state=42, shuffle=True, stratify=y
     )
 
-    # Feature importance scan
     log.info("Importance scan...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train, y_train)
     top_idx = np.argsort(scanner.feature_importances_)[::-1]
 
-    essential = ["volume_ratio","volume_spike","obv_slope","bb_width","atr_pct","volatility"]
+    essential = ["volume_ratio","volume_spike","obv_slope","bb_width","atr_pct","volatility","vwap_dev"]
     selected  = [f for f in essential if f in ALL_FEATURES]
     for i in top_idx:
         f = ALL_FEATURES[i]
@@ -141,9 +178,7 @@ def train(ds):
     acc    = accuracy_score(y_test, y_pred)
     report = classification_report(y_test, y_pred, target_names=classes, output_dict=True)
     log.info(f"\n{'='*55}\nRAW ACCURACY: {acc*100:.1f}%\n{'='*55}")
-    log.info(classification_report(y_test, y_pred, target_names=classes))
 
-    # Confidence calibration table
     probas    = ensemble.predict_proba(Xte)
     buy_idx   = classes.index("BUY")  if "BUY"  in classes else 0
     sell_idx  = classes.index("SELL") if "SELL" in classes else 2
@@ -151,9 +186,6 @@ def train(ds):
     real_sell = (y_test == sell_idx).sum()
 
     log.info("\n── Confidence Threshold Calibration ──────────────────────")
-    log.info(f"{'Thresh':>7} {'Signals':>8} {'BUY prec':>10} {'SELL prec':>10} {'Recall':>8} {'PnL sim':>10}")
-    log.info("-" * 58)
-
     best_thresh = 0.50; best_score = 0.0
     for thresh in [0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
         yp = []
@@ -179,14 +211,10 @@ def train(ds):
                  f"{avg_recall:>7.1%}   ${pnl:>8,.0f}")
 
     log.info(f"\n  → Best threshold: {best_thresh:.2f}")
-    log.info(f"  → Set min_confidence={int(best_thresh*100)} in smart_scheduler.py")
 
-    log.info("\n5-fold CV...")
     cv   = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     cv_sc = cross_val_score(ensemble, Xtr, y_train, cv=cv, n_jobs=-1)
-    log.info(f"CV: {cv_sc.mean()*100:.1f}% ± {cv_sc.std()*100:.1f}%")
 
-    # ✅ selector uses ImportanceSelector from feature_engineering
     pipeline = {
         "ensemble":              ensemble,
         "selector":              ImportanceSelector(selected),
@@ -211,13 +239,6 @@ def train(ds):
         "n_test":                int(len(X_test)),
         "features":              ALL_FEATURES,
         "selected":              selected,
-        "target_pct":            TARGET_PCT,
-        "n_symbols":             len(SYMBOLS),
-        "recommended_threshold": best_thresh,
-        "buy_precision":         round(report.get("BUY",{}).get("precision",0)*100,1),
-        "buy_recall":            round(report.get("BUY",{}).get("recall",0)*100,1),
-        "sell_precision":        round(report.get("SELL",{}).get("precision",0)*100,1),
-        "sell_recall":           round(report.get("SELL",{}).get("recall",0)*100,1),
     }
     with open("model_performance.json","w") as f: json.dump(perf, f, indent=2)
     return acc
