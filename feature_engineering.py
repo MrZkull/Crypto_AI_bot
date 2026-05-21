@@ -8,8 +8,6 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 
 # ── ImportanceSelector ────────────────────────────────────────────────
-# Defined here (not in train_model.py) so the pickle can be loaded
-# from any script that imports feature_engineering.
 class ImportanceSelector(BaseEstimator, TransformerMixin):
     """Picklable feature selector — stores selected feature names."""
     def __init__(self, feature_names):
@@ -21,7 +19,6 @@ class ImportanceSelector(BaseEstimator, TransformerMixin):
     def transform(self, X):
         if isinstance(X, pd.DataFrame):
             return X[self.feature_names].values
-        # Already a numpy array (during live prediction)
         return X
 
 
@@ -108,14 +105,18 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["bb_pct"]   = (c - bb_low) / (bb_width + 1e-10)
     df["bb_width"] = bb_width / sma20 * 100
 
-    # Volume
+    # Volume & VWAP (New Institutional Features)
     vol_ma20         = v.rolling(20).mean()
     df["volume_ratio"] = v / vol_ma20.replace(0, np.nan)
     df["volume_spike"] = (df["volume_ratio"] > 2.0).astype(int)
+    
     obv              = (np.sign(c.diff()) * v).fillna(0).cumsum()
     df["obv_slope"]  = obv.diff(5) / (vol_ma20 * 5 + 1e-10)
+    
+    df["vwap"]       = (c * v).cumsum() / (v.cumsum() + 1e-10)
+    df["vwap_dev"]   = (c - df["vwap"]) / df["vwap"] * 100
 
-    # Price action
+    # Price action & Pivots
     df["price_change"]  = c.pct_change(1) * 100
     df["price_change3"] = c.pct_change(3) * 100
     df["price_change6"] = c.pct_change(6) * 100
@@ -123,6 +124,9 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["body_pct"]      = (c - o).abs() / (h - l + 1e-10)
     df["momentum"]      = c - c.shift(10)
     df["volatility"]    = c.rolling(14).std() / c * 100
+    
+    pivot = (h.shift(1) + l.shift(1) + c.shift(1)) / 3
+    df["pivot_dev"] = (c - pivot) / pivot * 100
 
     # Candlestick patterns
     body       = (c - o).abs()
@@ -148,7 +152,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# Full feature list (must match pipeline["all_features"])
+# Full feature list (MUST match pipeline["all_features"])
 ALL_FEATURES = [
     "ema9","ema20","ema50","ema200","ema20_slope","ema50_slope",
     "price_vs_ema20","price_vs_ema50","price_vs_ema200","ema20_vs_ema50",
@@ -156,9 +160,9 @@ ALL_FEATURES = [
     "macd","macd_signal","macd_hist","macd_slope",
     "adx","adx_pos","adx_neg","di_diff","atr","atr_pct",
     "bb_high","bb_low","bb_pct","bb_width",
-    "volume_ratio","volume_spike","obv_slope",
+    "volume_ratio","volume_spike","obv_slope","vwap_dev",
     "price_change","price_change3","price_change6",
-    "high_low_pct","body_pct","momentum","volatility",
+    "high_low_pct","body_pct","momentum","volatility","pivot_dev",
     "bullish_candle","doji","hammer",
     "rsi_1h","adx_1h","trend_1h",
 ]
