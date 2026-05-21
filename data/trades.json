@@ -1,38 +1,4 @@
 {
-  "BTCUSDT": {
-    "symbol": "BTCUSDT",
-    "signal": "SELL",
-    "entry": 77580.0,
-    "stop": 77580.0,
-    "tp1": 77212.0,
-    "tp2": 77028.5,
-    "qty": 0.1123,
-    "qty_tp1": 0.0561,
-    "qty_tp2": 0.0562,
-    "risk_usd": 1744.28,
-    "balance_at_open": 174428.33,
-    "risk_mult": 1.0,
-    "order_ids": {
-      "entry": "USDC-207143672204",
-      "stop_loss": "USDC-SLTB-21115",
-      "tp1": "USDC-207143676492",
-      "tp2": "USDC-207143676748"
-    },
-    "opened_at": "2026-05-21T10:00:14.177350+00:00",
-    "tp1_hit": true,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 70.2,
-    "score": 4,
-    "reasons": [
-      "High conf (70%)",
-      "Strong ADX 32",
-      "4h trend aligns (RSI 50)",
-      "4h trend established (20h)"
-    ],
-    "tier": "\ud83d\udc51 Big Three",
-    "exchange": "deribit_testnet"
-  },
   "NEARUSDT": {
     "symbol": "NEARUSDT",
     "signal": "BUY",
@@ -67,6 +33,113 @@
       "4h trend established (20h)"
     ],
     "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet"
+  },
+  "BTCUSDT": {
+    "symbol": "BTCUSDT",
+    "signal": "SELL",
+    "entry": 77237.5,
+    "stop": 77611.5,
+    "tp1": 76490.0,
+    "tp2": 76116.0,
+    "qty": 0.1128,
+    "qty_tp1": 0.0564,
+    "qty_tp2": 0.0564,
+    "risk_usd": 1744.48,
+    "balance_at_open": 174448.22,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "entry": "USDC-207185275205",
+      "stop_loss": "USDC-SLTB-21127",
+      "tp1": "USDC-207185280597",
+      "tp2": "USDC-207185281409"
+    },
+    "opened_at": "2026-05-21T12:53:23.532508+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 64.6,
+    "score": 5,
+    "reasons": [
+      "Conf (65%)",
+      "Strong ADX 47",
+      "EMA bearish",
+      "4h trend aligns (RSI 46)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet"
+  },
+  "ETHUSDT": {
+    "symbol": "ETHUSDT",
+    "signal": "SELL",
+    "entry": 2116.35,
+    "stop": 2128.85,
+    "tp1": 2091.3,
+    "tp2": 2078.8,
+    "qty": 4.118,
+    "qty_tp1": 2.059,
+    "qty_tp2": 2.059,
+    "risk_usd": 1744.48,
+    "balance_at_open": 174448.22,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "entry": "USDC-207185308730",
+      "stop_loss": "USDC-SLTB-21128",
+      "tp1": "USDC-207185313890",
+      "tp2": "USDC-207185314193"
+    },
+    "opened_at": "2026-05-21T12:53:31.171394+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 64.3,
+    "score": 7,
+    "reasons": [
+      "Conf (64%)",
+      "Strong ADX 38",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 40)",
+      "4h trend established (20h)",
+      "Volume surge 1.8\u00d7"
+    ],
+    "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet"
+  },
+  "BNBUSDT": {
+    "symbol": "BNBUSDT",
+    "signal": "SELL",
+    "entry": 648.945,
+    "stop": 652.48,
+    "tp1": 641.87,
+    "tp2": 638.33,
+    "qty": 13.42,
+    "qty_tp1": 6.71,
+    "qty_tp2": 6.71,
+    "risk_usd": 1744.48,
+    "balance_at_open": 174448.22,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "entry": "USDC-207185339684",
+      "stop_loss": "USDC-SLTB-21129",
+      "tp1": "USDC-207185344867",
+      "tp2": "USDC-207185345385"
+    },
+    "opened_at": "2026-05-21T12:53:38.362413+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 63.1,
+    "score": 5,
+    "reasons": [
+      "Conf (63%)",
+      "Strong ADX 49",
+      "EMA bearish",
+      "4h trend aligns (RSI 51)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc51 Big Three",
     "exchange": "deribit_testnet"
   }
 }
