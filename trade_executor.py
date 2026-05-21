@@ -1,4 +1,4 @@
-# trade_executor.py — V2.1: Includes Ghost Tracking, Funding, 4H Soft Bias, Volume Fix & Orphan Monitor
+# trade_executor.py — V2.2: Includes Ghost Tracking, Funding, 4H Big-3 Hard Block, Dynamic Score & Vol Fix
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -305,8 +305,11 @@ def generate_signal(symbol, pipeline, thresholds):
                 log.info(f"    [FILTER:4H_BIAS] 4h bearish — skip BUY {symbol}")
                 return None
             if sig == "SELL" and e20_4h > e50_4h:
-                # Soft penalty for SELLs in a mildly bullish 4h market (instead of hard block)
-                if rsi_4h > 65:
+                BIG_THREE = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
+                if symbol in BIG_THREE:
+                    log.info(f"    [FILTER:4H_BIAS] 4h bullish — hard block SELL {symbol}")
+                    return None
+                elif rsi_4h > 65:
                     log.info(f"    [FILTER:4H_BIAS] 4h strongly bullish (RSI {rsi_4h:.0f}) — skip SELL {symbol}")
                     return None
                 else:
@@ -373,12 +376,14 @@ def generate_signal(symbol, pipeline, thresholds):
             if vol_prev > vol_ma20 * 1.5:
                 score += 1; reasons.append(f"Volume surge {vol_prev/vol_ma20:.1f}×")
 
-        log.info(f"    Score: {score} (need ≥{thresholds['min_score']})")
-        if score < thresholds["min_score"]:
-            log.info(f"    [FILTER:SCORE] Too low ({score} < {thresholds['min_score']}) — skip {symbol}")
+        # Dynamic Execution Scoring (SELLs require higher conviction)
+        effective_min = thresholds["min_score"] + (1 if sig == "SELL" else 0)
+        log.info(f"    Score: {score} (need ≥{effective_min})")
+        if score < effective_min:
+            log.info(f"    [FILTER:SCORE] Too low ({score} < {effective_min}) — skip {symbol}")
             save_signal({"symbol":symbol,"signal":sig,"confidence":conf,"score":score,
                 "reasons":reasons,"rejected":True,
-                "reject_reason":f"score {score}<{thresholds['min_score']}"})
+                "reject_reason":f"score {score}<{effective_min}"})
             return None
 
         if not reasons: reasons.append(f"ML {conf:.0f}%")
