@@ -56469,3 +56469,149 @@ SCAN — 2026-05-22 13:57 UTC
 ════════════════════════════════════════════════════════
 DONE — 2 signal(s) | $174608.72
 ════════════════════════════════════════════════════════
+2026-05-22 16:32:58,767 
+════════════════════════════════════════════════════════
+SCAN — 2026-05-22 16:32 UTC
+════════════════════════════════════════════════════════
+2026-05-22 16:32:59,678   ACTIVE HOURS | conf≥60% | score≥3 | ADX≥15 | ✓ Normal vol — BTC ATR 0.27%
+2026-05-22 16:32:59,915 ✓ Deribit testnet authenticated
+2026-05-22 16:33:00,012 ✓ Tradeable: 18 — ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'AVAXUSDT', 'NEARUSDT', 'SUIUSDT', 'APTUSDT', 'ATOMUSDT', 'LINKUSDT', 'DOTUSDT', 'UNIUSDT', 'AAVEUSDT', 'XRPUSDT', 'LTCUSDT', 'BCHUSDT', 'FETUSDT', 'ADAUSDT']
+2026-05-22 16:33:00,423 ✅ Deribit OK — $174733.93 | 18 symbols
+2026-05-22 16:33:00,855   ACTIVE HOURS | conf≥60% | score≥3 | ADX≥15 | risk:1.00
+2026-05-22 16:33:00,856 
+[0] Balance...
+2026-05-22 16:33:01,951   Balance: $174733.93 | upnl:+0.00 | positions:0
+2026-05-22 16:33:01,951 
+[1] Monitor trades...
+2026-05-22 16:33:01,952   Monitoring 2 trade(s)
+2026-05-22 16:33:02,433   🎯 TP1 BTCUSDT @ 76881.50  pnl≈+27.3540  [order]
+2026-05-22 16:33:03,070   Deribit error: order_not_found | Code:10004 | Data: | Path:/private/cancel | Params:{'order_id': 'USDC-SLTB-21236'}
+2026-05-22 16:33:03,070   cancel USDC-SLTB-21236: order_not_found (Code:10004)
+2026-05-22 16:33:03,168   ✅ SL BUY 0.0564 BTC_USDC-PERPETUAL @ 77367.0 id=USDC-SLTB-21281 state=untriggered 
+2026-05-22 16:33:03,851   Deribit error: trigger_price_too_low | Code:10035 | Data: | Path:/private/buy | Params:{'instrument_name': 'BTC_USDC-PERPETUAL', 'amount': 0.0564, 'type': 'stop_limit', 'price': 76882.0, 'trigger_price': 76881.5, 'trigger': 'last_price', 'label': 'bot_sl_1779467583', 'reduce_only': 'true'}
+2026-05-22 16:33:03,852   Trail SL BTCUSDT: trigger_price_too_low (Code:10035)
+2026-05-22 16:33:03,946   ✅ TP2 BTCUSDT @ 76639.00  pnl≈+41.0310  [order]
+2026-05-22 16:33:04,553   Deribit error: order_not_found | Code:10004 | Data: | Path:/private/cancel | Params:{'order_id': 'USDC-SLTB-21281'}
+2026-05-22 16:33:04,553   cancel USDC-SLTB-21281: order_not_found (Code:10004)
+2026-05-22 16:33:05,023   ⚠️ BNBUSDT: MARK PRICE 659.80 past SL 657.75 (last_price lag) — MARK-PRICE BREACH close
+2026-05-22 16:33:05,121   ✅ MARKET BUY 13.32 BNB_USDC-PERPETUAL id=USDC-207609080748 state=filled
+2026-05-22 16:33:05,215   Deribit error: order_not_found | Code:10004 | Data: | Path:/private/cancel | Params:{'order_id': 'USDC-207529662119'}
+2026-05-22 16:33:05,215   cancel USDC-207529662119: order_not_found (Code:10004)
+2026-05-22 16:33:05,311   Deribit error: order_not_found | Code:10004 | Data: | Path:/private/cancel | Params:{'order_id': 'USDC-207529662548'}
+2026-05-22 16:33:05,311   cancel USDC-207529662548: order_not_found (Code:10004)
+2026-05-22 16:33:05,311   Mark-price emergency close executed for BNBUSDT
+2026-05-22 16:33:05,311   ❌ SL BNBUSDT @ 659.80  pnl≈-66.6190  [state=not_found]
+2026-05-22 16:33:05,831   🔒 BNBUSDT: cooldown 2h — SL hit pnl=-66.6190
+2026-05-22 16:33:05,932   Deribit error: order_not_found | Code:10004 | Data: | Path:/private/cancel | Params:{'order_id': 'USDC-207529662119'}
+2026-05-22 16:33:05,932   cancel USDC-207529662119: order_not_found (Code:10004)
+2026-05-22 16:33:06,032   Deribit error: order_not_found | Code:10004 | Data: | Path:/private/cancel | Params:{'order_id': 'USDC-207529662548'}
+2026-05-22 16:33:06,032   cancel USDC-207529662548: order_not_found (Code:10004)
+2026-05-22 16:33:06,033 
+[2] Stale trade check...
+2026-05-22 16:33:06,033 
+[3] Ghost trade recovery...
+2026-05-22 16:33:06,033 
+[3b] Funding rate check...
+2026-05-22 16:33:06,034 
+[3c] Checking for untracked positions...
+2026-05-22 16:33:06,318   ⚠️ UNTRACKED POSITION: BNBUSDT size=8788.536 uPnL=$+0.00 — close manually!
+2026-05-22 16:33:07,920   Balance: $174719.61 | upnl:-9.92 | positions:1
+2026-05-22 16:33:07,920 
+[4] Scanning 20 coins | Open:0/4
+2026-05-22 16:33:07,920 
+  ── BTCUSDT (👑 Big Three) ──
+2026-05-22 16:33:10,042     ML: SELL 67.5% (need ≥60%)
+2026-05-22 16:33:10,042     ADX: 28.7 (need ≥15)
+2026-05-22 16:33:13,048     [FILTER:VOL] Low volume (71 < 144) — skip BTCUSDT
+2026-05-22 16:33:13,248 
+  ── ETHUSDT (👑 Big Three) ──
+2026-05-22 16:33:15,170     ML: SELL 67.2% (need ≥60%)
+2026-05-22 16:33:15,170     ADX: 27.8 (need ≥15)
+2026-05-22 16:33:18,402     Score: 6 (need ≥4)
+2026-05-22 16:33:18,498   Contracts: 4.117 ETHUSDT | notional≈$8736 | risk=$1747.34
+2026-05-22 16:33:18,498   SELL ETHUSDT total=4.117 risk=$1747.34
+2026-05-22 16:33:18,498   SL=2135.44 TP1=2095.07 TP2=2081.61
+2026-05-22 16:33:18,596   ✅ MARKET SELL 4.117 ETH_USDC-PERPETUAL id=USDC-207609132687 state=filled
+2026-05-22 16:33:18,596   ✅ Entry @ 2120.35
+2026-05-22 16:33:19,384   ✅ Position confirmed: ETHUSDT size=-8729.31627
+2026-05-22 16:33:19,481   ✅ SL BUY 4.117 ETH_USDC-PERPETUAL @ 2133.95 id=USDC-SLTB-21282 state=untriggered 
+2026-05-22 16:33:19,481   ✅ SL @ 2133.95 × 4.117 id:USDC-SLTB-21282
+2026-05-22 16:33:19,579   ✅ TP BUY 2.058 ETH_USDC-PERPETUAL @ 2093.45 id=USDC-207609136563 state=open 
+2026-05-22 16:33:19,579   ✅ TP1 @ 2093.45 × 2.058 id:USDC-207609136563
+2026-05-22 16:33:19,674   ✅ TP BUY 2.059 ETH_USDC-PERPETUAL @ 2080.0 id=USDC-207609137073 state=open 
+2026-05-22 16:33:19,675   ✅ TP2 @ 2080.00 × 2.059 id:USDC-207609137073
+2026-05-22 16:33:20,187   ✅✅ TRADE OPENED: ETHUSDT SELL
+2026-05-22 16:33:21,687 
+  ── BNBUSDT (👑 Big Three) ──
+2026-05-22 16:33:23,492     ML: SELL 47.6% (need ≥60%)
+2026-05-22 16:33:23,693 
+  ── SOLUSDT (⚡ High-Liquidity L1s) ──
+2026-05-22 16:33:25,719     ML: SELL 51.0% (need ≥60%)
+2026-05-22 16:33:25,920 
+  ── AVAXUSDT (⚡ High-Liquidity L1s) ──
+2026-05-22 16:33:27,585     ML: SELL 39.1% (need ≥60%)
+2026-05-22 16:33:27,785 
+  ── NEARUSDT (⚡ High-Liquidity L1s) ──
+2026-05-22 16:33:29,454     ML: BUY 66.0% (need ≥60%)
+2026-05-22 16:33:29,454     ADX: 21.3 (need ≥15)
+2026-05-22 16:33:30,312     Score: 7 (need ≥3)
+2026-05-22 16:33:30,407   Contracts: 3960 NEARUSDT | notional≈$8728 | risk=$1747.34
+2026-05-22 16:33:30,407   BUY NEARUSDT total=3960 risk=$1747.34
+2026-05-22 16:33:30,407   SL=2.1165 TP1=2.3791 TP2=2.4666
+2026-05-22 16:33:30,503   ✅ MARKET BUY 3960 NEAR_USDC-PERPETUAL id=USDC-207609181453 state=filled
+2026-05-22 16:33:30,503   ✅ Entry @ 2.2060
+2026-05-22 16:33:31,302   ✅ Position confirmed: NEARUSDT size=8719.92
+2026-05-22 16:33:31,400   ✅ SL SELL 3960 NEAR_USDC-PERPETUAL @ 2.1182 id=USDC-SLTS-21283 state=untriggered 
+2026-05-22 16:33:31,401   ✅ SL @ 2.1182 × 3960 id:USDC-SLTS-21283
+2026-05-22 16:33:31,499   ✅ TP SELL 1980 NEAR_USDC-PERPETUAL @ 2.3811 id=USDC-207609185486 state=open 
+2026-05-22 16:33:31,499   ✅ TP1 @ 2.3811 × 1980 id:USDC-207609185486
+2026-05-22 16:33:31,595   ✅ TP SELL 1980 NEAR_USDC-PERPETUAL @ 2.4686 id=USDC-207609185955 state=open 
+2026-05-22 16:33:31,595   ✅ TP2 @ 2.4686 × 1980 id:USDC-207609185955
+2026-05-22 16:33:32,166   ✅✅ TRADE OPENED: NEARUSDT BUY
+2026-05-22 16:33:33,666 
+  ── SUIUSDT (⚡ High-Liquidity L1s) ──
+2026-05-22 16:33:35,787     ML: BUY 37.3% (need ≥60%)
+2026-05-22 16:33:35,987 
+  ── APTUSDT (⚡ High-Liquidity L1s) ──
+2026-05-22 16:33:37,664     ML: NO_TRADE 47.3% (need ≥60%)
+2026-05-22 16:33:37,864 
+  ── MATICUSDT (⚡ High-Liquidity L1s) ──
+2026-05-22 16:33:39,535     ML: SELL 46.7% (need ≥60%)
+2026-05-22 16:33:39,735 
+  ── ATOMUSDT (⚡ High-Liquidity L1s) ──
+2026-05-22 16:33:41,419     ML: NO_TRADE 46.6% (need ≥60%)
+2026-05-22 16:33:41,619 
+  ── LINKUSDT (🏛 Institutional Alts) ──
+2026-05-22 16:33:43,575     ML: NO_TRADE 39.1% (need ≥60%)
+2026-05-22 16:33:43,776 
+  ── DOTUSDT (🏛 Institutional Alts) ──
+2026-05-22 16:33:45,705     ML: NO_TRADE 47.7% (need ≥60%)
+2026-05-22 16:33:45,905 
+  ── UNIUSDT (🏛 Institutional Alts) ──
+2026-05-22 16:33:47,611     ML: NO_TRADE 43.3% (need ≥60%)
+2026-05-22 16:33:47,812 
+  ── AAVEUSDT (🏛 Institutional Alts) ──
+2026-05-22 16:33:49,528     ML: BUY 38.2% (need ≥60%)
+2026-05-22 16:33:49,729 
+  ── XRPUSDT (🏛 Institutional Alts) ──
+2026-05-22 16:33:51,628     ML: SELL 47.1% (need ≥60%)
+2026-05-22 16:33:51,828 
+  ── LTCUSDT (🏛 Institutional Alts) ──
+2026-05-22 16:33:53,489     ML: SELL 56.6% (need ≥60%)
+2026-05-22 16:33:53,689 
+  ── BCHUSDT (🏛 Institutional Alts) ──
+2026-05-22 16:33:55,203     ML: SELL 55.3% (need ≥60%)
+2026-05-22 16:33:55,403 
+  ── FETUSDT (🤖 AI & Momentum) ──
+2026-05-22 16:33:57,037     ML: BUY 46.1% (need ≥60%)
+2026-05-22 16:33:57,238 
+  ── RENDERUSDT (🤖 AI & Momentum) ──
+2026-05-22 16:33:58,919     ML: BUY 56.7% (need ≥60%)
+2026-05-22 16:33:59,119 
+  ── ADAUSDT (🤖 AI & Momentum) ──
+2026-05-22 16:34:00,801     ML: NO_TRADE 39.5% (need ≥60%)
+2026-05-22 16:34:02,144   Balance: $174681.17 | upnl:-39.62 | positions:3
+2026-05-22 16:34:02,144 
+════════════════════════════════════════════════════════
+DONE — 2 signal(s) | $174733.93
+════════════════════════════════════════════════════════
