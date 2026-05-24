@@ -141,10 +141,13 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["trend"] = np.where(df["ema20"] > df["ema50"], 1,
                   np.where(df["ema20"] < df["ema50"], -1, 0))
 
-    # 1h placeholders (filled by trade_executor)
+    # 1h & 4h placeholders (filled by train_model / trade_executor)
     if "rsi_1h"   not in df.columns: df["rsi_1h"]   = 50.0
     if "adx_1h"   not in df.columns: df["adx_1h"]   = 0.0
     if "trend_1h" not in df.columns: df["trend_1h"] = 0.0
+    
+    if "rsi_4h"   not in df.columns: df["rsi_4h"]   = 50.0
+    if "trend_4h" not in df.columns: df["trend_4h"] = 0.0
 
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.ffill(inplace=True)
@@ -165,4 +168,5 @@ ALL_FEATURES = [
     "high_low_pct","body_pct","momentum","volatility","pivot_dev",
     "bullish_candle","doji","hammer",
     "rsi_1h","adx_1h","trend_1h",
+    "rsi_4h","trend_4h",  # NEW 4H Features
 ]
