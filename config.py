@@ -1,5 +1,5 @@
 # config.py — setting
-# Key changes:
+# Key changes -
 #   RISK_PER_TRADE = 1% (was inconsistent 1-2%)
 #   ATR multipliers kept at 1.5/2.0/3.0 (good risk:reward = 1:2)
 #   MAX_TRADE_AGE_HOURS = 48 (new: auto-exit stale trades)
