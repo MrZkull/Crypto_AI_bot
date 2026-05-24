@@ -1,10 +1,10 @@
-# train_model.py — Advanced Data Pagination & ATR-Based Labeling
+# train_model.py — Advanced Data Pagination, ATR Labeling & Fast HistGradientBoosting
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier, VotingClassifier
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.preprocessing import LabelEncoder
@@ -61,7 +61,7 @@ def fetch_klines(symbol, interval, limit=5000):
                 
                 all_data = data + all_data
                 end_time = data[0][0] - 1
-                time.sleep(0.3) # Increased sleep to respect rate limits
+                time.sleep(0.3) # Respect rate limits
                 
             if all_data: 
                 break # Success! Break the URL loop
@@ -176,7 +176,8 @@ def train(ds):
     sw     = np.where(y_train == nt_idx, 1.0, 2.5)
 
     log.info("Training XGBoost...")
-    xgb = XGBClassifier(n_estimators=500, max_depth=6, learning_rate=0.03,
+    # Reduced to 300 estimators for speed and memory efficiency
+    xgb = XGBClassifier(n_estimators=300, max_depth=6, learning_rate=0.03,
                         subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
                         gamma=0.05, eval_metric="mlogloss", random_state=42, n_jobs=-1)
     xgb.fit(Xtr, y_train, sample_weight=sw)
@@ -186,9 +187,12 @@ def train(ds):
                                 max_features="sqrt", random_state=42, n_jobs=-1)
     rf.fit(Xtr, y_train)
 
-    log.info("Training GradientBoosting...")
-    gb = GradientBoostingClassifier(n_estimators=300, max_depth=5, learning_rate=0.04,
-                                    subsample=0.85, min_samples_leaf=3, random_state=42)
+    log.info("Training HistGradientBoosting (fast)...")
+    # Implemented HistGradientBoosting for 10-50x speed increase
+    gb = HistGradientBoostingClassifier(
+        max_iter=200, max_depth=5, learning_rate=0.04,
+        min_samples_leaf=3, random_state=42
+    )
     gb.fit(Xtr, y_train)
 
     log.info("Building ensemble [XGB×3, RF×2, GB×1]...")
