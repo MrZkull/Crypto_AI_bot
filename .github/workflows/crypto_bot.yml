@@ -45,7 +45,7 @@ jobs:
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}"             >> .env
           echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"                     >> .env
           echo "GITHUB_REPO=MrZkull/Crypto_AI_bot"                            >> .env
-          echo "GITHUB_BRANCH=main"                                            >> .env
+          echo "GITHUB_BRANCH=main"                                           >> .env
           echo "DERIBIT_CLIENT_ID=${{ secrets.DERIBIT_CLIENT_ID }}"           >> .env
           echo "DERIBIT_CLIENT_SECRET=${{ secrets.DERIBIT_CLIENT_SECRET }}"   >> .env
 
@@ -115,9 +115,23 @@ jobs:
 
           # Remove secrets file — never commit this
           rm -f .env
+          
+          # Delete the downloaded model so Git physically cannot see it
+          rm -f pro_crypto_ai_model.pkl
 
-          git add -A
-          git commit -m "Sync Bot State [skip ci]" || echo "No changes to commit"
+          # Explicitly untrack .pkl files just in case they slipped into the index
+          git rm --cached --ignore-unmatch "*.pkl" "*.joblib" 2>/dev/null || true
+
+          # Target ONLY the state files. Never use "git add -A" or "git add ."
+          git add trades.json || true
+          git add trade_history.json || true
+          git add signals.json || true
+          git add scan_mode.json || true
+          git add balance.json || true
+          git add data/ || true
+
+          # Commit only if there are actually changes to these specific files
+          git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
 
           # Pull with rebase and autostash, retry once on conflict
           git pull --rebase origin main --autostash || \
