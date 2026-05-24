@@ -203,16 +203,10 @@ def fetch_klines_window(
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     """
     FIXED: Align 1h indicator values to 15m bars by TIMESTAMP using merge_asof.
-
-    The previous implementation used .reindex(df15.index) which aligned by
-    integer row-position — i.e. 1h bar #300 was mapped to 15m bar #300,
-    completely ignoring the actual timestamps.  This silently corrupted
-    rsi_1h / adx_1h / trend_1h for every trade.
-
-    merge_asof with direction="backward" correctly assigns each 15m bar the
-    latest 1h value whose open_time <= that 15m bar's open_time.
+    Prevents Pandas overlapping suffix bugs (_x / _y) by dropping placeholders.
     """
-    if df1h.empty or len(df1h) < 5:
+    # Guard against missing columns if add_indicators bailed out early on small datasets
+    if df1h.empty or len(df1h) < 20 or "rsi" not in df1h.columns:
         df15["rsi_1h"]   = 50.0
         df15["adx_1h"]   = 0.0
         df15["trend_1h"] = 0.0
@@ -223,7 +217,13 @@ def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
         .sort_values("open_time")
         .rename(columns={"rsi": "rsi_1h", "adx": "adx_1h", "trend": "trend_1h"})
     )
-    df15_sorted = df15.sort_values("open_time")
+    
+    # CRITICAL FIX: Drop the placeholders from df15 BEFORE merging so Pandas doesn't 
+    # create overlapping rsi_1h_x and rsi_1h_y columns.
+    df15_sorted = (
+        df15.sort_values("open_time")
+        .drop(columns=["rsi_1h", "adx_1h", "trend_1h"], errors="ignore")
+    )
 
     merged = pd.merge_asof(
         df15_sorted,
