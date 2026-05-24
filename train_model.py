@@ -1,11 +1,11 @@
-# train_model.py — Advanced Data Pagination, ATR Labeling & Fast HistGradientBoosting
+# train_model.py — No-Leakage Time Series, Fast HistGradientBoosting, Honest Metrics
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier, VotingClassifier
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
@@ -29,15 +29,13 @@ SYMBOLS = [
     "DOTUSDT","UNIUSDT","XRPUSDT","LTCUSDT","BCHUSDT","ALGOUSDT",
     "AAVEUSDT","ADAUSDT","DOGEUSDT"
 ]
-
-LIMIT       = 5000   # Massive dataset pull (approx 50 days of 15m data)
+LIMIT       = 5000   
 TEST_SPLIT  = 0.20
 MODEL_FILE  = "pro_crypto_ai_model.pkl"
 N_FEATURES  = 35
 
 
 def fetch_klines(symbol, interval, limit=5000):
-    """Paginates Binance API with dual-endpoint fallback to bypass GitHub Actions IP bans."""
     urls = [
         "https://data-api.binance.vision/api/v3/klines",
         "https://api.binance.com/api/v3/klines"
@@ -55,17 +53,17 @@ def fetch_klines(symbol, interval, limit=5000):
                 r = requests.get(url, params=params, timeout=10)
                 if r.status_code != 200:
                     log.warning(f"  Endpoint {url} blocked (Status {r.status_code})")
-                    break # Break the while loop, try the next URL
+                    break 
                 
                 data = r.json()
                 if not data: break
                 
                 all_data = data + all_data
                 end_time = data[0][0] - 1
-                time.sleep(0.3) # Respect rate limits
+                time.sleep(0.3) 
                 
             if all_data: 
-                break # Success! Break the URL loop
+                break 
                 
         except Exception as e:
             log.warning(f"  {symbol} API Error on {url}: {e}")
@@ -82,28 +80,19 @@ def fetch_klines(symbol, interval, limit=5000):
 
 
 def make_targets(df):
-    """
-    Labels historical data as BUY/SELL/NO_TRADE based on whether the 
-    subsequent price action hits the config.py Take Profit before the Stop Loss.
-    """
     labels = pd.Series("NO_TRADE", index=df.index)
-    lookahead = 24 # Look ahead 6 hours (24 bars of 15m) to see if TP hits
+    lookahead = 24 
 
-    # Find the max high and min low over the next 24 bars
     future_high = df["high"].shift(-1).rolling(lookahead).max().shift(-lookahead + 1)
     future_low  = df["low"].shift(-1).rolling(lookahead).min().shift(-lookahead + 1)
 
-    # Calculate exactly where the SL and TP1 would be for every single historical candle
     buy_tp = df["close"] + (df["atr"] * ATR_TARGET1_MULT)
     buy_sl = df["close"] - (df["atr"] * ATR_STOP_MULT)
 
     sell_tp = df["close"] - (df["atr"] * ATR_TARGET1_MULT)
     sell_sl = df["close"] + (df["atr"] * ATR_STOP_MULT)
 
-    # Label BUY: If future high hits TP1 AND future low never drops below SL
     labels[(future_high >= buy_tp) & (future_low > buy_sl)] = "BUY"
-    
-    # Label SELL: If future low hits TP1 AND future high never breaches SL
     labels[(future_low <= sell_tp) & (future_high < sell_sl)] = "SELL"
 
     return labels
@@ -130,7 +119,6 @@ def build_dataset():
             df15["rsi_1h"] = 50.0; df15["adx_1h"] = 0.0; df15["trend_1h"] = 0.0
             
         df15["target"] = make_targets(df15)
-        # Drop the last 24 bars since we can't look into the future for them
         rows.append(df15.iloc[:-24])
         
     if not rows:
@@ -153,9 +141,10 @@ def train(ds):
     classes = list(le.classes_)
     log.info(f"Classes: {list(zip(range(len(classes)), classes))}")
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TEST_SPLIT, random_state=42, shuffle=True, stratify=y
-    )
+    # ── FIXED: Chronological Split (No Data Leakage) ──
+    split_idx = int(len(X) * (1 - TEST_SPLIT))
+    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+    y_train, y_test = y[:split_idx], y[split_idx:]
 
     log.info("Importance scan...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
@@ -177,7 +166,6 @@ def train(ds):
     sw     = np.where(y_train == nt_idx, 1.0, 2.5)
 
     log.info("Training XGBoost...")
-    # Reduced to 300 estimators for speed and memory efficiency
     xgb = XGBClassifier(n_estimators=300, max_depth=6, learning_rate=0.03,
                         subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
                         gamma=0.05, eval_metric="mlogloss", random_state=42, n_jobs=-1)
@@ -189,7 +177,6 @@ def train(ds):
     rf.fit(Xtr, y_train)
 
     log.info("Training HistGradientBoosting (fast)...")
-    # Implemented HistGradientBoosting for 10-50x speed increase
     gb = HistGradientBoostingClassifier(
         max_iter=200, max_depth=5, learning_rate=0.04,
         min_samples_leaf=3, random_state=42
@@ -204,7 +191,19 @@ def train(ds):
     y_pred = ensemble.predict(Xte)
     acc    = accuracy_score(y_test, y_pred)
     report = classification_report(y_test, y_pred, target_names=classes, output_dict=True)
-    log.info(f"\n{'='*55}\nRAW ACCURACY: {acc*100:.1f}%\n{'='*55}")
+    
+    # ── FIXED: Honest Metrics Logging ──
+    log.info(f"\n{'='*55}\nRAW ACCURACY (Misleading): {acc*100:.1f}%\n{'='*55}")
+    
+    buy_precision  = report.get("BUY", {}).get("precision", 0)
+    sell_precision = report.get("SELL", {}).get("precision", 0)
+    buy_recall     = report.get("BUY", {}).get("recall", 0)
+    sell_recall    = report.get("SELL", {}).get("recall", 0)
+
+    log.info(f"\n── What Actually Matters (Real Edge) ───────────────────")
+    log.info(f"  BUY  precision: {buy_precision:.1%}  | recall: {buy_recall:.1%}")
+    log.info(f"  SELL precision: {sell_precision:.1%}  | recall: {sell_recall:.1%}")
+    log.info(f"  (Note: Overall 70%+ accuracy is just the NO_TRADE rate)")
 
     probas    = ensemble.predict_proba(Xte)
     buy_idx   = classes.index("BUY")  if "BUY"  in classes else 0
@@ -239,7 +238,8 @@ def train(ds):
 
     log.info(f"\n  → Best threshold: {best_thresh:.2f}")
 
-    cv   = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # ── FIXED: Time Series Cross Validation ──
+    cv   = TimeSeriesSplit(n_splits=5)
     cv_sc = cross_val_score(ensemble, Xtr, y_train, cv=cv, n_jobs=-1)
 
     pipeline = {
