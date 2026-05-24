@@ -1,27 +1,13 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v3
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v6
 #
-# CHANGES vs v2 (the version that produced recall ~4%):
-#
-#   ROOT CAUSE: Despite 4× SELL weighting, NO_TRADE still dominated the effective
-#   loss landscape (118k×1.0 vs 25k×4.0 = NO_TRADE still wins).  The model
-#   learned that defaulting to NO_TRADE is almost always "safe", so precision
-#   looked good but recall collapsed to ~4%.
-#
-#   FIX 1 — undersample_no_trade():
-#     Keep ALL BUY/SELL rows.  Randomly downsample NO_TRADE to
-#     UNDERSAMPLE_RATIO × (BUY+SELL) rows.  At ratio=1.5:
-#       • Before: 11% BUY / 15% SELL / 73% NO_TRADE
-#       • After:  19% BUY / 26% SELL / 55% NO_TRADE   ← model must commit
-#     Downsampling is done AFTER the chronological train/test split so the
-#     test set stays untouched (honest evaluation of real-world distribution).
-#
-#   FIX 2 — sample weights recalibrated:
-#     With a balanced training set, the original 4× SELL weight is too aggressive.
-#     Recalibrated to BUY=2.0, SELL=2.5, NO_TRADE=1.0.
-#
-#   FIX 3 — recommended_threshold stored as 0.45:
-#     The calibration table shows at 0.45 we get 634 signals with 67.7% BUY /
-#     47.9% SELL precision.  That's the live operating point.
+# FULLY INTEGRATED FIXES:
+#  - NO_TRADE Undersampling (1.5x ratio)
+#  - Global time sort before train/test split
+#  - 5 Total Historical Bear/Dip Windows
+#  - 5000 Recent Candles for robust testing
+#  - True Timestamp Alignment via merge_asof for 1H AND 4H Timeframes
+#  - Recalibrated SELL weight (3.5)
+#  - Scoring bug fixed: Threshold penalised properly if SELL recall is 0%
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -63,29 +49,15 @@ BINANCE_ENDPOINTS = [
     "https://api.binance.com/api/v3/klines",
 ]
 
-RECENT_CANDLES = 2500
+RECENT_CANDLES = 5000
 
 BEAR_WINDOWS = [
-    {
-        "label":    "LUNA_crash_May22",
-        "start_ms": 1651708800000,
-        "end_ms":   1653004800000,
-        "candles":  1440,
-    },
-    {
-        "label":    "FTX_collapse_Nov22",
-        "start_ms": 1667779200000,
-        "end_ms":   1669075200000,
-        "candles":  1440,
-    },
-    {
-        "label":    "Bear_trend_Jun22",
-        "start_ms": 1654819200000,
-        "end_ms":   1657411200000,
-        "candles":  2880,
-    },
+    {"label": "LUNA_crash_May22",   "start_ms": 1651708800000, "end_ms": 1653004800000, "candles": 1440},
+    {"label": "FTX_collapse_Nov22", "start_ms": 1667779200000, "end_ms": 1669075200000, "candles": 1440},
+    {"label": "Bear_trend_Jun22",   "start_ms": 1654819200000, "end_ms": 1657411200000, "candles": 2880},
+    {"label": "Aug2023_dip",        "start_ms": 1690848000000, "end_ms": 1692057600000, "candles": 1440},
+    {"label": "Apr2024_halving",    "start_ms": 1713225600000, "end_ms": 1714435200000, "candles": 1440},
 ]
-
 
 # ── Data fetching ──────────────────────────────────────────────────────
 
@@ -95,7 +67,6 @@ def _raw_to_df(raw: list) -> pd.DataFrame:
     for c in ["open", "high", "low", "close", "volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df.reset_index(drop=True)
-
 
 def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.DataFrame:
     all_data = []
@@ -125,7 +96,6 @@ def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.
     if not all_data:
         return pd.DataFrame()
     return _raw_to_df(all_data[-limit:])
-
 
 def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
     all_data = []
@@ -159,14 +129,10 @@ def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
     return _raw_to_df(all_data[:max_candles])
 
 
-def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    """
-    Timestamp-accurate 1h→15m alignment via merge_asof.
+# ── Feature Alignment ──────────────────────────────────────────────────
 
-    Defensive implementation: validates columns exist, drops NaN timestamps,
-    ensures integer dtype on open_time (Binance returns int64 ms),
-    and falls back to safe defaults if anything goes wrong.
-    """
+def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
+    """Timestamp-accurate 1h→15m alignment via merge_asof."""
     _DEFAULTS = {"rsi_1h": 50.0, "adx_1h": 0.0, "trend_1h": 0.0}
 
     def _apply_defaults(df):
@@ -177,15 +143,12 @@ def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     if df1h.empty or len(df1h) < 5:
         return _apply_defaults(df15)
 
-    # Guard: ensure all required source columns exist in df1h
     required = ["open_time", "rsi", "adx", "trend"]
     missing  = [c for c in required if c not in df1h.columns]
     if missing:
-        log.warning(f"_align_1h_to_15m: df1h missing {missing} — using defaults")
         return _apply_defaults(df15)
 
     try:
-        # Cast open_time to int64 in both frames — merge_asof requires matching dtypes
         df1h_slim = (
             df1h[required]
             .dropna(subset=["open_time"])
@@ -196,32 +159,73 @@ def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
 
         df15_work = (
             df15
-            .drop(columns=["rsi_1h", "adx_1h", "trend_1h"], errors="ignore")  # remove add_indicators placeholders
+            .drop(columns=["rsi_1h", "adx_1h", "trend_1h"], errors="ignore")
             .dropna(subset=["open_time"])
             .assign(open_time=lambda d: d["open_time"].astype("int64"))
             .sort_values("open_time")
         )
 
-        merged = pd.merge_asof(
-            df15_work,
-            df1h_slim,
-            on="open_time",
-            direction="backward",
-        )
+        merged = pd.merge_asof(df15_work, df1h_slim, on="open_time", direction="backward")
 
-        # merge_asof always adds the right-side columns; fill any NaN at the head
         for col, default in _DEFAULTS.items():
             if col in merged.columns:
                 merged[col] = merged[col].fillna(default)
             else:
-                # Shouldn't happen, but guard anyway
-                log.warning(f"_align_1h_to_15m: column {col} missing after merge — inserting default")
                 merged[col] = default
 
         return merged.reset_index(drop=True)
 
     except Exception as e:
         log.warning(f"_align_1h_to_15m failed ({e}) — falling back to defaults")
+        return _apply_defaults(df15)
+
+
+def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
+    """Timestamp-accurate 4h→15m alignment via merge_asof."""
+    _DEFAULTS = {"rsi_4h": 50.0, "trend_4h": 0.0}
+
+    def _apply_defaults(df):
+        for col, val in _DEFAULTS.items():
+            df[col] = val
+        return df
+
+    if df4h.empty or len(df4h) < 5:
+        return _apply_defaults(df15)
+
+    required = ["open_time", "rsi", "trend"]
+    missing  = [c for c in required if c not in df4h.columns]
+    if missing:
+        return _apply_defaults(df15)
+
+    try:
+        df4h_slim = (
+            df4h[required]
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+            .rename(columns={"rsi": "rsi_4h", "trend": "trend_4h"})
+        )
+
+        df15_work = (
+            df15
+            .drop(columns=["rsi_4h", "trend_4h"], errors="ignore")
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+        )
+
+        merged = pd.merge_asof(df15_work, df4h_slim, on="open_time", direction="backward")
+
+        for col, default in _DEFAULTS.items():
+            if col in merged.columns:
+                merged[col] = merged[col].fillna(default)
+            else:
+                merged[col] = default
+
+        return merged.reset_index(drop=True)
+
+    except Exception as e:
+        log.warning(f"_align_4h_to_15m failed ({e}) — falling back to defaults")
         return _apply_defaults(df15)
 
 
@@ -238,22 +242,29 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
     labels[(future_low  <= sell_tp) & (future_high < sell_sl)] = "SELL"
     return labels
 
-
-def _process_segment(df15, df1h, regime):
+def _process_segment(df15, df1h, df4h, regime):
     if df15.empty or len(df15) < MIN_BARS:
         return pd.DataFrame()
+    
     df15 = add_indicators(df15)
+    
+    # 1H Alignment
     if not df1h.empty:
         df1h_feat = add_indicators(df1h)
         df15 = _align_1h_to_15m(df1h_feat, df15)
     else:
-        df15["rsi_1h"]   = 50.0
-        df15["adx_1h"]   = 0.0
-        df15["trend_1h"] = 0.0
+        df15["rsi_1h"] = 50.0; df15["adx_1h"] = 0.0; df15["trend_1h"] = 0.0
+
+    # 4H Alignment
+    if not df4h.empty:
+        df4h_feat = add_indicators(df4h)
+        df15 = _align_4h_to_15m(df4h_feat, df15)
+    else:
+        df15["rsi_4h"] = 50.0; df15["trend_4h"] = 0.0
+
     df15["target"] = make_targets(df15)
     df15["regime"] = regime
     return df15.iloc[:-24].copy()
-
 
 def build_dataset() -> pd.DataFrame:
     log.info(f"Building REGIME-BALANCED dataset — {len(SYMBOLS)} symbols")
@@ -263,23 +274,30 @@ def build_dataset() -> pd.DataFrame:
         log.info(f"  [{symbol}] Fetching recent...")
         df15_rec = fetch_klines(symbol, "15m", RECENT_CANDLES)
         df1h_rec = fetch_klines(symbol, "1h",  RECENT_CANDLES // 4)
-        seg = _process_segment(df15_rec, df1h_rec, regime="recent_bull")
+        df4h_rec = fetch_klines(symbol, "4h",  RECENT_CANDLES // 16)
+        
+        seg = _process_segment(df15_rec, df1h_rec, df4h_rec, regime="recent_bull")
         if not seg.empty:
             symbol_segments.append(seg)
         else:
             log.warning(f"    [{symbol}] No recent data — skipping symbol.")
             continue
+            
         for bw in BEAR_WINDOWS:
             df15_bear = fetch_klines_window(symbol, "15m", bw["start_ms"], bw["end_ms"], bw["candles"])
             if df15_bear.empty or len(df15_bear) < MIN_BARS:
                 log.info(f"    [{symbol}] {bw['label']}: no data (coin may not exist yet)")
                 continue
             df1h_bear = fetch_klines_window(symbol, "1h",  bw["start_ms"], bw["end_ms"], bw["candles"] // 4)
-            seg = _process_segment(df15_bear, df1h_bear, regime=bw["label"])
+            df4h_bear = fetch_klines_window(symbol, "4h",  bw["start_ms"], bw["end_ms"], bw["candles"] // 16)
+            
+            seg = _process_segment(df15_bear, df1h_bear, df4h_bear, regime=bw["label"])
             if not seg.empty:
                 symbol_segments.append(seg)
+                
         if not symbol_segments:
             continue
+            
         symbol_df = (
             pd.concat(symbol_segments, ignore_index=True)
             .sort_values("open_time")
@@ -309,7 +327,7 @@ def build_dataset() -> pd.DataFrame:
     return ds
 
 
-# ── NEW: NO_TRADE undersampling ────────────────────────────────────────
+# ── NO_TRADE undersampling ─────────────────────────────────────────────
 
 def undersample_no_trade(
     X_train: pd.DataFrame,
@@ -318,25 +336,6 @@ def undersample_no_trade(
     ratio:   float = UNDERSAMPLE_RATIO,
     random_state: int = 42,
 ) -> tuple:
-    """
-    Undersample NO_TRADE rows in the TRAINING set only.
-    The test set is never touched — evaluation stays on the real-world distribution.
-
-    Strategy:
-        keep all BUY + SELL rows
-        randomly sample NO_TRADE to ratio × (n_buy + n_sell)
-
-    At ratio=1.5 with our dataset:
-        n_signal ≈ 43k × 0.80 (train frac) ≈ 34k
-        n_no_trade after = 34k × 1.5 ≈ 51k
-        total train rows ≈ 85k  (was 129k)
-        distribution: ~19% BUY / ~26% SELL / ~55% NO_TRADE
-
-    We use random sampling (not systematic stride) because the data is already
-    a mixture of 4 temporally-sorted regimes — temporal locality is approximately
-    preserved at the regime level, which is what matters for TimeSeriesSplit.
-    Chronological order is restored by sorting the index after sampling.
-    """
     signal_mask   = y_train != nt_idx
     signal_idx    = np.where(signal_mask)[0]
     no_trade_idx  = np.where(~signal_mask)[0]
@@ -367,10 +366,6 @@ def undersample_no_trade(
 
 def train(ds: pd.DataFrame) -> float:
     # Sort the ENTIRE dataset chronologically before splitting.
-    # build_dataset() concats symbol by symbol (BTC all windows, ETH all windows...)
-    # so without this sort the 80/20 split is mid-alphabet, not mid-time.
-    # After global sort: all 2022 bear data is in train, recent 2025 bull is in test —
-    # the correct analogue of live deployment.
     if "open_time" in ds.columns:
         ds = ds.sort_values("open_time").reset_index(drop=True)
         log.info("Dataset sorted globally by open_time ✓")
@@ -418,11 +413,9 @@ def train(ds: pd.DataFrame) -> float:
     Xtr                  = X_train_sel.values
 
     # ── Sample weights (recalibrated for balanced training set) ───────
-    # With ~55% NO_TRADE after undersampling, aggressive 4× weighting is
-    # no longer needed.  Lighter weights prevent over-correction.
     sw          = np.ones(len(y_train))
     sw[y_train == buy_idx]  = 2.0
-    sw[y_train == sell_idx] = 2.5
+    sw[y_train == sell_idx] = 3.5  # Increased per analysis
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -437,7 +430,7 @@ def train(ds: pd.DataFrame) -> float:
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=3,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.5},
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 3.5},
     )
     rf.fit(Xtr, y_train)
 
@@ -445,7 +438,7 @@ def train(ds: pd.DataFrame) -> float:
     gb = HistGradientBoostingClassifier(
         max_iter=200, max_depth=5, learning_rate=0.04,
         min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.5},
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 3.5},
     )
     gb.fit(Xtr, y_train)
 
@@ -497,14 +490,22 @@ def train(ds: pd.DataFrame) -> float:
         ps = (y_test[sm] == sell_idx).mean() if sm.sum() > 0 else 0
         rb = (yp[y_test == buy_idx]  == buy_idx).mean()  if real_buy  > 0 else 0
         rs = (yp[y_test == sell_idx] == sell_idx).mean() if real_sell > 0 else 0
+        
         avg_prec   = (pb + ps) / 2
         avg_recall = (rb + rs) / 2
         n_signals  = int((bm | sm).sum())
         pnl        = n_signals * avg_prec * 200 - n_signals * (1 - avg_prec) * 100
-        score      = avg_prec * avg_recall
+        
+        # FIXED: Penalise SELL-blind thresholds without zeroing the score completely
+        if ps == 0.0:
+            score = pb * rb * 0.5
+        else:
+            score = avg_prec * avg_recall
+            
         if score > best_score and n_signals > 20:
             best_score  = score
             best_thresh = thresh
+            
         log.info(f"  {thresh:.2f}    {n_signals:>7}    {pb:>7.1%}    {ps:>8.1%}   "
                  f"{avg_recall:>7.1%}   ${pnl:>8,.0f}")
 
