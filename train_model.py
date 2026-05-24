@@ -160,28 +160,67 @@ def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
 
 
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    """Timestamp-accurate 1h→15m alignment via merge_asof (no integer-index bug)."""
-    if df1h.empty or len(df1h) < 5:
-        df15["rsi_1h"]   = 50.0
-        df15["adx_1h"]   = 0.0
-        df15["trend_1h"] = 0.0
-        return df15
+    """
+    Timestamp-accurate 1h→15m alignment via merge_asof.
 
-    df1h_slim = (
-        df1h[["open_time", "rsi", "adx", "trend"]]
-        .sort_values("open_time")
-        .rename(columns={"rsi": "rsi_1h", "adx": "adx_1h", "trend": "trend_1h"})
-    )
-    merged = pd.merge_asof(
-        df15.sort_values("open_time"),
-        df1h_slim,
-        on="open_time",
-        direction="backward",
-    )
-    merged[["rsi_1h", "adx_1h", "trend_1h"]] = merged[
-        ["rsi_1h", "adx_1h", "trend_1h"]
-    ].fillna({"rsi_1h": 50.0, "adx_1h": 0.0, "trend_1h": 0.0})
-    return merged.reset_index(drop=True)
+    Defensive implementation: validates columns exist, drops NaN timestamps,
+    ensures integer dtype on open_time (Binance returns int64 ms),
+    and falls back to safe defaults if anything goes wrong.
+    """
+    _DEFAULTS = {"rsi_1h": 50.0, "adx_1h": 0.0, "trend_1h": 0.0}
+
+    def _apply_defaults(df):
+        for col, val in _DEFAULTS.items():
+            df[col] = val
+        return df
+
+    if df1h.empty or len(df1h) < 5:
+        return _apply_defaults(df15)
+
+    # Guard: ensure all required source columns exist in df1h
+    required = ["open_time", "rsi", "adx", "trend"]
+    missing  = [c for c in required if c not in df1h.columns]
+    if missing:
+        log.warning(f"_align_1h_to_15m: df1h missing {missing} — using defaults")
+        return _apply_defaults(df15)
+
+    try:
+        # Cast open_time to int64 in both frames — merge_asof requires matching dtypes
+        df1h_slim = (
+            df1h[required]
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+            .rename(columns={"rsi": "rsi_1h", "adx": "adx_1h", "trend": "trend_1h"})
+        )
+
+        df15_work = (
+            df15.dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+        )
+
+        merged = pd.merge_asof(
+            df15_work,
+            df1h_slim,
+            on="open_time",
+            direction="backward",
+        )
+
+        # merge_asof always adds the right-side columns; fill any NaN at the head
+        for col, default in _DEFAULTS.items():
+            if col in merged.columns:
+                merged[col] = merged[col].fillna(default)
+            else:
+                # Shouldn't happen, but guard anyway
+                log.warning(f"_align_1h_to_15m: column {col} missing after merge — inserting default")
+                merged[col] = default
+
+        return merged.reset_index(drop=True)
+
+    except Exception as e:
+        log.warning(f"_align_1h_to_15m failed ({e}) — falling back to defaults")
+        return _apply_defaults(df15)
 
 
 def make_targets(df: pd.DataFrame) -> pd.Series:
