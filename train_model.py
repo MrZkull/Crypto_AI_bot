@@ -195,7 +195,9 @@ def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
         )
 
         df15_work = (
-            df15.dropna(subset=["open_time"])
+            df15
+            .drop(columns=["rsi_1h", "adx_1h", "trend_1h"], errors="ignore")  # remove add_indicators placeholders
+            .dropna(subset=["open_time"])
             .assign(open_time=lambda d: d["open_time"].astype("int64"))
             .sort_values("open_time")
         )
