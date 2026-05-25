@@ -1,9 +1,9 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v7
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v8
 #
 # FULLY INTEGRATED FIXES:
-#  - NO_TRADE Undersampling adjusted to 3.0 ratio to prevent double-correction
+#  - NO_TRADE Undersampling adjusted to 2.0 ratio to enforce actual row dropping
+#  - Weights flipped (BUY=4.0, SELL=2.0) to counteract 61% bear-regime dataset bias
 #  - 4H Features fully mapped and utilized via ALL_FEATURES
-#  - Make Targets LABEL_TARGET_MULT variable mapped for future mitigation
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -39,8 +39,8 @@ MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 
-# FIXED: Ratio adjusted to 3.0 to prevent fighting with SELL weight
-UNDERSAMPLE_RATIO  = 3.0   
+# FIXED: Ratio adjusted to 2.0 to enforce true downsampling
+UNDERSAMPLE_RATIO  = 2.0   
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -232,8 +232,6 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
     future_high = df["high"].shift(-1).rolling(lookahead).max().shift(-lookahead + 1)
     future_low  = df["low"].shift(-1).rolling(lookahead).min().shift(-lookahead + 1)
     
-    # MITIGATION OPTION: If SELL precision remains <= 35% after this run, 
-    # change the 1.0 below to 0.7 to generate more balanced SELL labels across all regimes.
     LABEL_TARGET_MULT = ATR_TARGET1_MULT * 1.0
     
     buy_tp  = df["close"] + (df["atr"] * LABEL_TARGET_MULT)
@@ -415,10 +413,10 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights ────────────────────────────────────────────────
+    # ── Sample weights (FIXED: Rebalanced for 61% bear-market data bias) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 2.0
-    sw[y_train == sell_idx] = 3.5  
+    sw[y_train == buy_idx]  = 4.0  # Raised
+    sw[y_train == sell_idx] = 2.0  # Lowered
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -433,7 +431,7 @@ def train(ds: pd.DataFrame) -> float:
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=3,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 3.5},
+        class_weight={nt_idx: 1.0, buy_idx: 4.0, sell_idx: 2.0},  # FIXED
     )
     rf.fit(Xtr, y_train)
 
@@ -441,7 +439,7 @@ def train(ds: pd.DataFrame) -> float:
     gb = HistGradientBoostingClassifier(
         max_iter=200, max_depth=5, learning_rate=0.04,
         min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 3.5},
+        class_weight={nt_idx: 1.0, buy_idx: 4.0, sell_idx: 2.0},  # FIXED
     )
     gb.fit(Xtr, y_train)
 
