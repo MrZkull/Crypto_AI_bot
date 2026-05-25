@@ -6,7 +6,6 @@ import pandas as pd
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 
-
 # ── ImportanceSelector ────────────────────────────────────────────────
 class ImportanceSelector(BaseEstimator, TransformerMixin):
     """Picklable feature selector — stores selected feature names."""
@@ -21,9 +20,7 @@ class ImportanceSelector(BaseEstimator, TransformerMixin):
             return X[self.feature_names].values
         return X
 
-
 # ── Indicators ────────────────────────────────────────────────────────
-
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty or len(df) < 20:
         return df
@@ -105,8 +102,8 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["bb_pct"]   = (c - bb_low) / (bb_width + 1e-10)
     df["bb_width"] = bb_width / sma20 * 100
 
-    # Volume & VWAP (New Institutional Features)
-    vol_ma20         = v.rolling(20).mean()
+    # Volume & VWAP
+    vol_ma20           = v.rolling(20).mean()
     df["volume_ratio"] = v / vol_ma20.replace(0, np.nan)
     df["volume_spike"] = (df["volume_ratio"] > 2.0).astype(int)
     
@@ -141,11 +138,12 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["trend"] = np.where(df["ema20"] > df["ema50"], 1,
                   np.where(df["ema20"] < df["ema50"], -1, 0))
 
-    # 1h & 4h placeholders (filled by train_model / trade_executor)
+    # 1h placeholders
     if "rsi_1h"   not in df.columns: df["rsi_1h"]   = 50.0
     if "adx_1h"   not in df.columns: df["adx_1h"]   = 0.0
     if "trend_1h" not in df.columns: df["trend_1h"] = 0.0
     
+    # 4h placeholders
     if "rsi_4h"   not in df.columns: df["rsi_4h"]   = 50.0
     if "trend_4h" not in df.columns: df["trend_4h"] = 0.0
 
@@ -168,5 +166,5 @@ ALL_FEATURES = [
     "high_low_pct","body_pct","momentum","volatility","pivot_dev",
     "bullish_candle","doji","hammer",
     "rsi_1h","adx_1h","trend_1h",
-    "rsi_4h","trend_4h",  # NEW 4H Features
+    "rsi_4h","trend_4h",
 ]
