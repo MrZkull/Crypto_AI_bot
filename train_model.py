@@ -1,13 +1,9 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v6
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v7
 #
 # FULLY INTEGRATED FIXES:
-#  - NO_TRADE Undersampling (1.5x ratio)
-#  - Global time sort before train/test split
-#  - 5 Total Historical Bear/Dip Windows
-#  - 5000 Recent Candles for robust testing
-#  - True Timestamp Alignment via merge_asof for 1H AND 4H Timeframes
-#  - Recalibrated SELL weight (3.5)
-#  - Scoring bug fixed: Threshold penalised properly if SELL recall is 0%
+#  - NO_TRADE Undersampling adjusted to 3.0 ratio to prevent double-correction
+#  - 4H Features fully mapped and utilized via ALL_FEATURES
+#  - Make Targets LABEL_TARGET_MULT variable mapped for future mitigation
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -42,7 +38,9 @@ TEST_SPLIT         = 0.20
 MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
-UNDERSAMPLE_RATIO  = 1.5   # NO_TRADE rows = 1.5 × (BUY + SELL rows) in training
+
+# FIXED: Ratio adjusted to 3.0 to prevent fighting with SELL weight
+UNDERSAMPLE_RATIO  = 3.0   
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -132,7 +130,6 @@ def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
 # ── Feature Alignment ──────────────────────────────────────────────────
 
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    """Timestamp-accurate 1h→15m alignment via merge_asof."""
     _DEFAULTS = {"rsi_1h": 50.0, "adx_1h": 0.0, "trend_1h": 0.0}
 
     def _apply_defaults(df):
@@ -181,7 +178,6 @@ def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
 
 
 def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    """Timestamp-accurate 4h→15m alignment via merge_asof."""
     _DEFAULTS = {"rsi_4h": 50.0, "trend_4h": 0.0}
 
     def _apply_defaults(df):
@@ -232,12 +228,19 @@ def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
 def make_targets(df: pd.DataFrame) -> pd.Series:
     labels    = pd.Series("NO_TRADE", index=df.index)
     lookahead = 24
+    
     future_high = df["high"].shift(-1).rolling(lookahead).max().shift(-lookahead + 1)
     future_low  = df["low"].shift(-1).rolling(lookahead).min().shift(-lookahead + 1)
-    buy_tp  = df["close"] + (df["atr"] * ATR_TARGET1_MULT)
+    
+    # MITIGATION OPTION: If SELL precision remains <= 35% after this run, 
+    # change the 1.0 below to 0.7 to generate more balanced SELL labels across all regimes.
+    LABEL_TARGET_MULT = ATR_TARGET1_MULT * 1.0
+    
+    buy_tp  = df["close"] + (df["atr"] * LABEL_TARGET_MULT)
     buy_sl  = df["close"] - (df["atr"] * ATR_STOP_MULT)
-    sell_tp = df["close"] - (df["atr"] * ATR_TARGET1_MULT)
+    sell_tp = df["close"] - (df["atr"] * LABEL_TARGET_MULT)
     sell_sl = df["close"] + (df["atr"] * ATR_STOP_MULT)
+    
     labels[(future_high >= buy_tp)  & (future_low  > buy_sl)]  = "BUY"
     labels[(future_low  <= sell_tp) & (future_high < sell_sl)] = "SELL"
     return labels
@@ -412,10 +415,10 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights (recalibrated for balanced training set) ───────
+    # ── Sample weights ────────────────────────────────────────────────
     sw          = np.ones(len(y_train))
     sw[y_train == buy_idx]  = 2.0
-    sw[y_train == sell_idx] = 3.5  # Increased per analysis
+    sw[y_train == sell_idx] = 3.5  
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -496,7 +499,7 @@ def train(ds: pd.DataFrame) -> float:
         n_signals  = int((bm | sm).sum())
         pnl        = n_signals * avg_prec * 200 - n_signals * (1 - avg_prec) * 100
         
-        # FIXED: Penalise SELL-blind thresholds without zeroing the score completely
+        # Penalise SELL-blind thresholds without zeroing the score completely
         if ps == 0.0:
             score = pb * rb * 0.5
         else:
