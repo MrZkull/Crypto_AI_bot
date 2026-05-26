@@ -1,9 +1,9 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v9
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v10
 #
 # FULLY INTEGRATED FIXES:
 #  - NO_TRADE Undersampling ratio locked at 2.5
 #  - Bull_peak_Oct21 window added to counteract the 61% bear-market bias
-#  - Weights leveled symmetrically (BUY=2.5, SELL=2.5) now that data is balanced
+#  - Weights adjusted (BUY=3.5, SELL=1.8) to compensate for historical SELL label dominance
 #  - 4H Features fully mapped and utilized via ALL_FEATURES
 
 import os, json, time, logging, joblib, requests
@@ -415,10 +415,10 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights (Rebalanced now that BULL window exists) ───────
+    # ── Sample weights (Adjusted to compensate for 15% more SELL labels in training) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 2.5
-    sw[y_train == sell_idx] = 2.5
+    sw[y_train == buy_idx]  = 3.5
+    sw[y_train == sell_idx] = 1.8
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -433,7 +433,7 @@ def train(ds: pd.DataFrame) -> float:
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=3,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 2.5},
+        class_weight={nt_idx: 1.0, buy_idx: 3.5, sell_idx: 1.8},
     )
     rf.fit(Xtr, y_train)
 
@@ -441,7 +441,7 @@ def train(ds: pd.DataFrame) -> float:
     gb = HistGradientBoostingClassifier(
         max_iter=200, max_depth=5, learning_rate=0.04,
         min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 2.5},
+        class_weight={nt_idx: 1.0, buy_idx: 3.5, sell_idx: 1.8},
     )
     gb.fit(Xtr, y_train)
 
@@ -555,9 +555,8 @@ def train(ds: pd.DataFrame) -> float:
     log.info("✅ Saved: model_performance.json")
     return acc
 
-
 if __name__ == "__main__":
     t0  = time.time()
     ds  = build_dataset()
     acc = train(ds)
-    log.info(f"\nDone in {(time.time()-t0)/60:.1f} min | Accuracy: {acc*100:.1f}%")
+    log.info(f"\nDone in {(time.time()-t0)/60:.1f} min | Accuracy: {acc*100:.1f}%")          
