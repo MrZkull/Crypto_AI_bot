@@ -1,4 +1,4 @@
-# trade_executor.py — V2.2: Includes Ghost Tracking, Funding, 4H Big-3 Hard Block, Dynamic Score & Vol Fix
+# trade_executor.py — V2.3: Inverted Labels Fixed, True 4H ML Input, Macro BTC Gate Only
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -242,20 +242,33 @@ def generate_signal(symbol, pipeline, thresholds):
         df15 = add_indicators(get_data(symbol, TIMEFRAME_ENTRY)).fillna(0)
         df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
         df1h = add_indicators(df1h_raw).fillna(0) if not df1h_raw.empty else pd.DataFrame()
+        
+        # Fetch 4H data early so ML can use it
+        df4h_raw = get_data(symbol, "4h")
+        df4h = add_indicators(df4h_raw).fillna(0) if not df4h_raw.empty else pd.DataFrame()
+
         if df15.empty or len(df15) < 30: return None
 
         row = df15.iloc[-1].copy()
         r1h = df1h.iloc[-1] if not df1h.empty else pd.Series(0, index=df15.columns)
+        r4h = df4h.iloc[-1] if not df4h.empty else pd.Series(0, index=df15.columns)
+
         row["rsi_1h"]   = float(r1h.get("rsi",  50))
         row["adx_1h"]   = float(r1h.get("adx",   0))
         row["trend_1h"] = float(r1h.get("trend", 0))
 
-        af  = pipeline["all_features"]
-        X   = pd.DataFrame([row[af].values], columns=af).replace([np.inf,-np.inf],0).fillna(0)
-        Xs  = pipeline["selector"].transform(X)
+        # Real 4H Input for ML Pipeline
+        row["rsi_4h"]   = float(r4h.get("rsi",   50))
+        row["trend_4h"] = float(r4h.get("trend",  0))
+
+        af   = pipeline["all_features"]
+        X    = pd.DataFrame([row[af].values], columns=af).replace([np.inf,-np.inf],0).fillna(0)
+        Xs   = pipeline["selector"].transform(X)
         pred = pipeline["ensemble"].predict(Xs)[0]
         prob = pipeline["ensemble"].predict_proba(Xs)[0]
-        sig  = {0:"BUY",1:"SELL",2:"NO_TRADE"}[pred]
+        
+        # CRITICAL FIX: Use the actual label map from training
+        sig  = pipeline["label_map"][int(pred)]
         conf = round(float(max(prob))*100, 1)
 
         log.info(f"    ML: {sig} {conf:.1f}% (need ≥{thresholds['min_confidence']}%)")
@@ -270,15 +283,7 @@ def generate_signal(symbol, pipeline, thresholds):
 
         # BTC Trend Gate 
         if sig == "SELL":
-            # Short-term momentum check
-            btc_df = add_indicators(get_data("BTCUSDT", TIMEFRAME_ENTRY))
-            if not btc_df.empty:
-                b_row = btc_df.iloc[-1]
-                if b_row["ema20"] > b_row["ema50"] and b_row["close"] > b_row["ema20"]:
-                    log.info(f"    [FILTER:BTC_MICRO] short-term uptrend — skip SELL {symbol}")
-                    return None
-            
-            # Macro 200-Day Bull Market Gate
+            # Macro 200-Day Bull Market Gate (Micro Gate removed per config)
             try:
                 btc_daily = get_data("BTCUSDT", "1d")
                 if not btc_daily.empty and len(btc_daily) >= 200:
@@ -291,16 +296,12 @@ def generate_signal(symbol, pipeline, thresholds):
                 log.debug(f"    Macro BTC check failed: {e}")
 
         # ── 4h trend bias (filters trades against dominant trend) ──────────
-        e20_4h, e50_4h, rsi_4h = 0, 0, 50 # Default safe values
+        e20_4h = float(r4h.get("ema20", 0)) if not df4h.empty else 0
+        e50_4h = float(r4h.get("ema50", 0)) if not df4h.empty else 0
+        rsi_4h = float(r4h.get("rsi", 50))  if not df4h.empty else 50
         trend_bars = 0
-        df4h_raw = get_data(symbol, "4h")
-        if not df4h_raw.empty:
-            df4h  = add_indicators(df4h_raw).fillna(0)
-            r4h   = df4h.iloc[-1]
-            e20_4h = float(r4h.get("ema20", 0))
-            e50_4h = float(r4h.get("ema50", 0))
-            rsi_4h = float(r4h.get("rsi", 50))
 
+        if not df4h.empty:
             if sig == "BUY" and e20_4h < e50_4h:
                 log.info(f"    [FILTER:4H_BIAS] 4h bearish — skip BUY {symbol}")
                 return None
@@ -362,7 +363,7 @@ def generate_signal(symbol, pipeline, thresholds):
         if trend_bars >= 4:
             score += 1; reasons.append(f"4h trend established ({trend_bars*4}h)")
 
-        # ── Volume confirmation (FIXED: Uses iloc[-2] for closed candle) ────
+        # ── Volume confirmation ────
         vol_prev = float(df15["volume"].iloc[-2])
         vol_ma20 = float(df15["volume"].rolling(20).mean().iloc[-2])
 
@@ -376,7 +377,7 @@ def generate_signal(symbol, pipeline, thresholds):
             if vol_prev > vol_ma20 * 1.5:
                 score += 1; reasons.append(f"Volume surge {vol_prev/vol_ma20:.1f}×")
 
-        # Dynamic Execution Scoring (SELLs require higher conviction)
+        # Dynamic Execution Scoring
         effective_min = thresholds["min_score"] + (1 if sig == "SELL" else 0)
         log.info(f"    Score: {score} (need ≥{effective_min})")
         if score < effective_min:
