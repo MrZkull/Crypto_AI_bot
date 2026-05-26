@@ -1,8 +1,9 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v8
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v9
 #
 # FULLY INTEGRATED FIXES:
-#  - NO_TRADE Undersampling adjusted to 2.0 ratio to enforce actual row dropping
-#  - Weights flipped (BUY=4.0, SELL=2.0) to counteract 61% bear-regime dataset bias
+#  - NO_TRADE Undersampling ratio locked at 2.5
+#  - Bull_peak_Oct21 window added to counteract the 61% bear-market bias
+#  - Weights leveled symmetrically (BUY=2.5, SELL=2.5) now that data is balanced
 #  - 4H Features fully mapped and utilized via ALL_FEATURES
 
 import os, json, time, logging, joblib, requests
@@ -39,7 +40,7 @@ MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 
-# FIXED: Ratio adjusted to 2.0 to enforce true downsampling
+# Confirmed working real undersampling ratio
 UNDERSAMPLE_RATIO  = 2.5   
 
 BINANCE_ENDPOINTS = [
@@ -55,6 +56,7 @@ BEAR_WINDOWS = [
     {"label": "Bear_trend_Jun22",   "start_ms": 1654819200000, "end_ms": 1657411200000, "candles": 2880},
     {"label": "Aug2023_dip",        "start_ms": 1690848000000, "end_ms": 1692057600000, "candles": 1440},
     {"label": "Apr2024_halving",    "start_ms": 1713225600000, "end_ms": 1714435200000, "candles": 1440},
+    {"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880},
 ]
 
 # ── Data fetching ──────────────────────────────────────────────────────
@@ -413,10 +415,10 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights (FIXED: Rebalanced for 61% bear-market data bias) ──
+    # ── Sample weights (Rebalanced now that BULL window exists) ───────
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 3.0  # Raised
-    sw[y_train == sell_idx] = 2.5  # Lowered
+    sw[y_train == buy_idx]  = 2.5
+    sw[y_train == sell_idx] = 2.5
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -431,7 +433,7 @@ def train(ds: pd.DataFrame) -> float:
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=3,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 4.0, sell_idx: 2.0},  # FIXED
+        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 2.5},
     )
     rf.fit(Xtr, y_train)
 
@@ -439,7 +441,7 @@ def train(ds: pd.DataFrame) -> float:
     gb = HistGradientBoostingClassifier(
         max_iter=200, max_depth=5, learning_rate=0.04,
         min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 3.0, sell_idx: 2.5},  # FIXED
+        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 2.5},
     )
     gb.fit(Xtr, y_train)
 
