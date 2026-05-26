@@ -40,7 +40,7 @@ N_FEATURES         = 35
 MIN_BARS           = 100
 
 # FIXED: Ratio adjusted to 2.0 to enforce true downsampling
-UNDERSAMPLE_RATIO  = 2.0   
+UNDERSAMPLE_RATIO  = 2.5   
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -415,8 +415,8 @@ def train(ds: pd.DataFrame) -> float:
 
     # ── Sample weights (FIXED: Rebalanced for 61% bear-market data bias) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 4.0  # Raised
-    sw[y_train == sell_idx] = 2.0  # Lowered
+    sw[y_train == buy_idx]  = 3.0  # Raised
+    sw[y_train == sell_idx] = 2.5  # Lowered
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -439,7 +439,7 @@ def train(ds: pd.DataFrame) -> float:
     gb = HistGradientBoostingClassifier(
         max_iter=200, max_depth=5, learning_rate=0.04,
         min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 4.0, sell_idx: 2.0},  # FIXED
+        class_weight={nt_idx: 1.0, buy_idx: 3.0, sell_idx: 2.5},  # FIXED
     )
     gb.fit(Xtr, y_train)
 
