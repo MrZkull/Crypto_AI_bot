@@ -4490,5 +4490,44 @@
     "closed_at": "2026-05-26T04:21:01.901636+00:00",
     "close_reason": "TP1 hit [order]",
     "partial": true
+  },
+  {
+    "symbol": "AVAXUSDT",
+    "signal": "SELL",
+    "entry": 9.284,
+    "stop": 9.355,
+    "tp1": 9.141,
+    "tp2": 9.07,
+    "qty": 944.9,
+    "qty_tp1": 472.4,
+    "qty_tp2": 472.5,
+    "risk_usd": 877.74,
+    "balance_at_open": 175547.53,
+    "risk_mult": 0.5,
+    "order_ids": {
+      "entry": "USDC-208782984727",
+      "stop_loss": "USDC-SLTB-21547",
+      "tp1": "USDC-208782988634",
+      "tp2": "USDC-208782988782"
+    },
+    "opened_at": "2026-05-25T22:37:54.918114+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 65.5,
+    "score": 5,
+    "reasons": [
+      "Conf (66%)",
+      "Strong ADX 43",
+      "EMA bearish",
+      "4h trend aligns (RSI 50)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet",
+    "close_price": 9.358,
+    "pnl": -69.9226,
+    "closed_at": "2026-05-26T14:21:59.343332+00:00",
+    "close_reason": "SL hit"
   }
 ]
