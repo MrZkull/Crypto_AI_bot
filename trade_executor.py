@@ -1,4 +1,4 @@
-# trade_executor.py — V2.3: Inverted Labels Fixed, True 4H ML Input, Macro BTC Gate Only
+# trade_executor.py — V2.4: Ghost Cleansing & True SELL Unblock
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -267,7 +267,6 @@ def generate_signal(symbol, pipeline, thresholds):
         pred = pipeline["ensemble"].predict(Xs)[0]
         prob = pipeline["ensemble"].predict_proba(Xs)[0]
         
-        # CRITICAL FIX: Use the actual label map from training
         sig  = pipeline["label_map"][int(pred)]
         conf = round(float(max(prob))*100, 1)
 
@@ -280,20 +279,6 @@ def generate_signal(symbol, pipeline, thresholds):
 
         score = 0
         reasons = []
-
-        # BTC Trend Gate 
-        if sig == "SELL":
-            # Macro 200-Day Bull Market Gate (Micro Gate removed per config)
-            try:
-                btc_daily = get_data("BTCUSDT", "1d")
-                if not btc_daily.empty and len(btc_daily) >= 200:
-                    ma200 = btc_daily["close"].rolling(200).mean().iloc[-1]
-                    btc_close = btc_daily["close"].iloc[-1]
-                    if btc_close > ma200:
-                        log.info(f"    [FILTER:BTC_MACRO] bull market (Close > 200MA) — skip SELL {symbol}")
-                        return None
-            except Exception as e:
-                log.debug(f"    Macro BTC check failed: {e}")
 
         # ── 4h trend bias (filters trades against dominant trend) ──────────
         e20_4h = float(r4h.get("ema20", 0)) if not df4h.empty else 0
@@ -968,6 +953,14 @@ def clean_ghost_trades(deribit: DeribitClient):
         if float(trade.get("stop",0))==0 or float(trade.get("tp1",0))==0:
             log.warning(f"  🗑️ {symbol}: broken state — remove")
             to_remove.append(symbol); continue
+            
+        # ZOMBIE CLEANER: Purge corrupted score:0 / confidence:0 records
+        if float(trade.get("score", 1)) == 0 and float(trade.get("confidence", 1)) == 0:
+            log.warning(f"  🗑️ {symbol}: score=0 confidence=0 — broken record, removing")
+            _close_record(trade, float(trade.get("entry", 0)), 0.0, "Ghost — broken record")
+            to_remove.append(symbol)
+            continue
+            
         if symbol not in live_pos:
             log.warning(f"  🕵️ {symbol}: no position — recovering PnL...")
             real_pnl=None; real_close=None; reason="Closed on exchange"
