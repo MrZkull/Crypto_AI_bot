@@ -153,6 +153,9 @@ def should_scan() -> tuple:
     Only blocks on genuine market conditions (dead market).
     Never blocks due to balance/PnL file issues.
     """
+    log.info(f"  Scan triggered at {datetime.now(timezone.utc).strftime('%H:%M UTC')} "
+             f"| UTC hour={datetime.now(timezone.utc).hour}")
+
     mode = get_scan_mode()
     vol  = check_btc_volatility()
 
@@ -183,3 +186,4 @@ def get_mode_thresholds(mode: dict) -> dict:
 def get_effective_risk(mode: dict, vol: dict) -> float:
     combined = mode.get("risk_mult", 1.0) * vol.get("risk_mult", 1.0)
     return max(combined, 0.25)
+    
