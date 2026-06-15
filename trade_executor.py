@@ -274,6 +274,9 @@ def generate_signal(symbol, pipeline, thresholds):
         if sig == "NO_TRADE" or conf < thresholds["min_confidence"]: return None
 
         adx = float(row.get("adx", 0))
+        # After line 274, where conf passes but sig is valid:
+# Change the ADX log to also track rejections:
+        log.info(f"    [{symbol}] ML={sig} {conf:.1f}% ADX={adx:.1f} — evaluating filters")
         log.info(f"    ADX: {adx:.1f} (need ≥{thresholds['min_adx']})")
         if adx < thresholds["min_adx"]: return None
 
