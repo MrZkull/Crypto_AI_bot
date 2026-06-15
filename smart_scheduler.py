@@ -22,13 +22,13 @@ def get_scan_mode() -> dict:
         if is_active:   # weekend daytime 08:00–20:00 UTC
             return {
                 "mode": "weekend_active", "label": "WEEKEND MODE", "emoji": "📅",
-                "min_confidence": 65, "min_score": 3, "min_adx": 18,
+                "min_confidence": 55, "min_score": 3, "min_adx": 18,
                 "interval_min": 15, "risk_mult": 0.85,
             }
         else:           # weekend overnight — very quiet, stay strict
             return {
                 "mode": "weekend_quiet", "label": "WEEKEND QUIET", "emoji": "🌙",
-                "min_confidence": 70, "min_score": 4, "min_adx": 22,
+                "min_confidence": 60, "min_score": 4, "min_adx": 22,
                 "interval_min": 30, "risk_mult": 0.50,
             }
 
