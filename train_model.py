@@ -41,7 +41,7 @@ N_FEATURES         = 35
 MIN_BARS           = 100
 
 # Confirmed working real undersampling ratio
-UNDERSAMPLE_RATIO  = 2.5   
+UNDERSAMPLE_RATIO  = 3.0   
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -417,7 +417,7 @@ def train(ds: pd.DataFrame) -> float:
 
     # ── Sample weights (Adjusted to compensate for 15% more SELL labels in training) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 3.5
+    sw[y_train == buy_idx]  = 2.5
     sw[y_train == sell_idx] = 1.8
 
     # ── Model training ────────────────────────────────────────────────
@@ -433,7 +433,7 @@ def train(ds: pd.DataFrame) -> float:
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=3,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 3.5, sell_idx: 1.8},
+        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 1.8},
     )
     rf.fit(Xtr, y_train)
 
