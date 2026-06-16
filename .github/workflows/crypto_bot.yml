@@ -11,10 +11,6 @@ on:
         default: 'scan'
         type: choice
         options: [scan, diagnostic]
-  workflow_run:                                    # ← ADD THIS BLOCK
-    workflows: ["CryptoBot AI — Trading Scanner"]
-    types: [completed]
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
