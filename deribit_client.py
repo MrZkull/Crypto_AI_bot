@@ -33,13 +33,10 @@ SYMBOL_MAP = {
         "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
         "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.001},
         "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 10,     "tick_size": 0.0001},
-        # "INJUSDT":    {"instrument": "INJ_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
-        # "ARBUSDT":    {"instrument": "ARB_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
-        # "OPUSDT":     {"instrument": "OP_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
-        # "SEIUSDT":    {"instrument": "SEI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
     }
-TRADEABLE_SYMBOLS: list = []
 
+TRADEABLE_SYMBOLS: list = []
+DEFAULT_LEVERAGE = 2   # Scenario 1: 2x leverage on all positions
 
 class DeribitClient:
 
@@ -226,8 +223,15 @@ class DeribitClient:
             from config import RISK_PER_TRADE as rpt
         except ImportError:
             rpt = 0.01
+            
         risk_usd  = balance_usd * rpt * risk_mult
         stop_dist = abs(entry - stop)
+        
+        # Leverage reduces the margin needed per contract — position size
+        # stays the same in notional terms; capital requirement is halved.
+        # We do NOT increase position size with leverage; we keep risk constant.
+        # This preserves the 1% risk rule while freeing up margin for other trades.
+        
         min_amt   = self.get_min_trade_amount(symbol)
         if stop_dist <= 0 or entry <= 0:
             return self.round_amount(symbol, min_amt)
@@ -295,7 +299,6 @@ class DeribitClient:
     def place_limit_order(self, symbol: str, side: str, amount,
                           price: float, stop_price: float = None,
                           use_reduce_only: bool = True) -> dict:
-        """Places limit or stop_limit order with optional reduce_only flag."""
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
@@ -391,3 +394,31 @@ class DeribitClient:
             return True
         except Exception as e:
             log.error(f"✗ Deribit: {e}"); raise
+            
+    def set_leverage(self, symbol: str, leverage: int = DEFAULT_LEVERAGE) -> bool:
+        """
+        Sets leverage for a symbol before opening a position.
+        Deribit endpoint: private/set_leverage
+        Must be called before place_market_order for the leverage to apply.
+    
+        Args:
+            symbol:   e.g. "BTCUSDT"
+            leverage: integer 1–50 (default: DEFAULT_LEVERAGE = 2)
+    
+        Returns:
+            True on success, False on failure (non-blocking — trade still proceeds)
+        """
+        try:
+            self._ensure_auth()
+            instrument = self.get_instrument_name(symbol)
+            result = self._get("/private/set_leverage", {
+                "instrument_name": instrument,
+                "leverage":        leverage,
+            })
+            actual = result.get("leverage", leverage) if isinstance(result, dict) else leverage
+            log.info(f"  ⚡ Leverage set to {actual}x — {instrument}")
+            return True
+        except Exception as e:
+            # Non-fatal: if leverage setting fails, order proceeds at default margin
+            log.warning(f"  set_leverage {symbol}: {e} — proceeding at default margin")
+            return False
