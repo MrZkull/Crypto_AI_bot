@@ -317,7 +317,7 @@ def generate_signal(symbol, pipeline, thresholds):
                     break
 
             # Require trend to have been in place for at least 2 candles (8h)
-            if trend_bars < 2:
+            if trend_bars < 1:
                 log.info(f"    [FILTER:4H_FRESH] trend too fresh ({trend_bars} bars) — skip {symbol}")
                 return None
 
@@ -330,7 +330,7 @@ def generate_signal(symbol, pipeline, thresholds):
         elif adx_val > 18: score+=1; reasons.append(f"ADX {adx_val:.0f}")
         
         rsi = float(row.get("rsi", 50))
-        if sig=="BUY"  and rsi < 50: score+=1; reasons.append(f"RSI bullish ({rsi:.0f})")
+        if sig=="BUY"  and rsi < 60: score+=1; reasons.append(f"RSI bullish ({rsi:.0f})")
         elif sig=="SELL" and rsi > 50: score+=1; reasons.append(f"RSI bearish ({rsi:.0f})")
         
         e20=float(row.get("ema20",0)); e50=float(row.get("ema50",0))
@@ -366,7 +366,7 @@ def generate_signal(symbol, pipeline, thresholds):
                 score += 1; reasons.append(f"Volume surge {vol_prev/vol_ma20:.1f}×")
 
         # Dynamic Execution Scoring
-        effective_min = thresholds["min_score"] + (1 if sig == "SELL" else 0)
+        effective_min = thresholds["min_score"]
         log.info(f"    Score: {score} (need ≥{effective_min})")
         if score < effective_min:
             log.info(f"    [FILTER:SCORE] Too low ({score} < {effective_min}) — skip {symbol}")
