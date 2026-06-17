@@ -1,4 +1,4 @@
-# trade_executor.py — V2.4: Ghost Cleansing & True SELL Unblock
+# trade_executor.py — V2.5: BTC Momentum Scoring Integration
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -15,7 +15,8 @@ from config import (
 from deribit_client import DeribitClient, TRADEABLE_SYMBOLS
 from feature_engineering import add_indicators
 from smart_scheduler import (
-    should_scan, get_mode_thresholds, get_effective_risk, check_correlation
+    should_scan, get_mode_thresholds, get_effective_risk, check_correlation,
+    check_btc_momentum   # Scenario 3
 )
 
 TRADES_FILE        = "trades.json"
@@ -237,7 +238,11 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
 
 # ════════════ SIGNAL GENERATION ══════════════════════════════════════
 
-def generate_signal(symbol, pipeline, thresholds):
+def generate_signal(symbol, pipeline, thresholds, btc_momentum=None):
+    """
+    btc_momentum: dict from check_btc_momentum() — contains bias/score_mod.
+    None = neutral (no BTC momentum context available).
+    """
     try:
         df15 = add_indicators(get_data(symbol, TIMEFRAME_ENTRY)).fillna(0)
         df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
@@ -274,9 +279,6 @@ def generate_signal(symbol, pipeline, thresholds):
         if sig == "NO_TRADE" or conf < thresholds["min_confidence"]: return None
 
         adx = float(row.get("adx", 0))
-        # After line 274, where conf passes but sig is valid:
-# Change the ADX log to also track rejections:
-        log.info(f"    [{symbol}] ML={sig} {conf:.1f}% ADX={adx:.1f} — evaluating filters")
         log.info(f"    ADX: {adx:.1f} (need ≥{thresholds['min_adx']})")
         if adx < thresholds["min_adx"]: return None
 
@@ -317,26 +319,26 @@ def generate_signal(symbol, pipeline, thresholds):
                     break
 
             # Require trend to have been in place for at least 2 candles (8h)
-            if trend_bars < 1:
+            if trend_bars < 2:
                 log.info(f"    [FILTER:4H_FRESH] trend too fresh ({trend_bars} bars) — skip {symbol}")
                 return None
 
         # Base Scoring
         if conf >= 70:   score+=1; reasons.append(f"High conf ({conf:.0f}%)")
         elif conf >= 60: score+=1; reasons.append(f"Conf ({conf:.0f}%)")
-        
+
         adx_val = adx
         if adx_val > 25:   score+=1; reasons.append(f"Strong ADX {adx_val:.0f}")
         elif adx_val > 18: score+=1; reasons.append(f"ADX {adx_val:.0f}")
-        
+
         rsi = float(row.get("rsi", 50))
-        if sig=="BUY"  and rsi < 60: score+=1; reasons.append(f"RSI bullish ({rsi:.0f})")
-        elif sig=="SELL" and rsi > 50: score+=1; reasons.append(f"RSI bearish ({rsi:.0f})")
-        
+        if sig=="BUY"  and rsi < 65: score+=1; reasons.append(f"RSI not overbought ({rsi:.0f})")
+        elif sig=="SELL" and rsi > 35: score+=1; reasons.append(f"RSI not oversold ({rsi:.0f})")
+
         e20=float(row.get("ema20",0)); e50=float(row.get("ema50",0))
         if sig=="BUY"  and e20>e50: score+=1; reasons.append("EMA bullish")
         elif sig=="SELL" and e20<e50: score+=1; reasons.append("EMA bearish")
-        
+
         c20=float(r1h.get("ema20",0)); c50=float(r1h.get("ema50",0))
         if sig=="BUY"  and c20>c50: score+=1; reasons.append("1h confirms")
         elif sig=="SELL" and c20<c50: score+=1; reasons.append("1h confirms")
@@ -351,7 +353,21 @@ def generate_signal(symbol, pipeline, thresholds):
         if trend_bars >= 4:
             score += 1; reasons.append(f"4h trend established ({trend_bars*4}h)")
 
-        # ── Volume confirmation ────
+        # ── Scenario 3: BTC momentum bias ─────────────────────────────────
+        if btc_momentum and btc_momentum.get("bias"):
+            bias     = btc_momentum["bias"]
+            mod      = btc_momentum.get("score_mod", 0)
+            strength = btc_momentum.get("strength", "")
+            if sig == bias:
+                score += mod
+                reasons.append(f"BTC {bias} momentum ({strength})")
+                log.info(f"    BTC momentum ALIGNED (+{mod}) — {btc_momentum['message']}")
+            elif mod > 0:
+                score -= mod
+                reasons.append(f"BTC counter-momentum (-{mod})")
+                log.info(f"    BTC momentum OPPOSED (-{mod}) — {btc_momentum['message']}")
+
+        # ── Volume confirmation ────────────────────────────────────────────
         vol_prev = float(df15["volume"].iloc[-2])
         vol_ma20 = float(df15["volume"].rolling(20).mean().iloc[-2])
 
@@ -360,13 +376,13 @@ def generate_signal(symbol, pipeline, thresholds):
         else:
             if vol_prev < vol_ma20 * 0.5:
                 log.info(f"    [FILTER:VOL] Low volume ({vol_prev:.0f} < {vol_ma20:.0f}) — skip {symbol}")
-                return None  # signal not confirmed by volume
+                return None
 
             if vol_prev > vol_ma20 * 1.5:
                 score += 1; reasons.append(f"Volume surge {vol_prev/vol_ma20:.1f}×")
 
-        # Dynamic Execution Scoring
-        effective_min = thresholds["min_score"]
+        # ── Score gate (SELL penalty removed) ─────────────────────────────
+        effective_min = thresholds["min_score"]   # same threshold for BUY and SELL
         log.info(f"    Score: {score} (need ≥{effective_min})")
         if score < effective_min:
             log.info(f"    [FILTER:SCORE] Too low ({score} < {effective_min}) — skip {symbol}")
@@ -1095,9 +1111,14 @@ def run_execution_scan():
     log.info(f"\n[4] Scanning {len(SYMBOLS)} coins | Open:{open_count}/{MAX_OPEN_TRADES}")
 
     found = 0
+
+    # ── Scenario 3: BTC momentum — one API call for all 21 symbols ────
+    btc_momentum = check_btc_momentum()
+    log.info(f"\n  BTC momentum: {btc_momentum['message']}")
+
     for symbol in SYMBOLS:
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
-        sig = generate_signal(symbol, pipeline, thresholds)
+        sig = generate_signal(symbol, pipeline, thresholds, btc_momentum)
         if sig is None: time.sleep(0.2); continue
         found += 1
         if execute_trade(deribit, sig, risk_mult, balance): time.sleep(1.5)
