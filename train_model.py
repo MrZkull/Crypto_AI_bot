@@ -41,7 +41,7 @@ N_FEATURES         = 35
 MIN_BARS           = 100
 
 # Confirmed working real undersampling ratio
-UNDERSAMPLE_RATIO  = 3.0   
+UNDERSAMPLE_RATIO  = 0.8   
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -417,8 +417,8 @@ def train(ds: pd.DataFrame) -> float:
 
     # ── Sample weights (Adjusted to compensate for 15% more SELL labels in training) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 2.5
-    sw[y_train == sell_idx] = 1.8
+    sw[y_train == buy_idx]  = 1.5
+    sw[y_train == sell_idx] = 3.5
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
