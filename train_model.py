@@ -417,8 +417,8 @@ def train(ds: pd.DataFrame) -> float:
 
     # ── Sample weights (RESTORED: Balanced properly) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 3.5
-    sw[y_train == sell_idx] = 1.8
+    sw[y_train == buy_idx]  = 2.8
+    sw[y_train == sell_idx] = 2.2
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -503,7 +503,8 @@ def train(ds: pd.DataFrame) -> float:
         if ps == 0.0:
             score = pb * rb * 0.5
         else:
-            score = avg_prec * avg_recall
+            # score = avg_prec * avg_recall
+            score = pnl   # Make it optimize strictly for maximum profit
             
         if score > best_score and n_signals > 20:
             best_score  = score
