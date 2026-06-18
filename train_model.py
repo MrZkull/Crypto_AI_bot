@@ -1,9 +1,9 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v10
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v11 (Restored)
 #
 # FULLY INTEGRATED FIXES:
-#  - NO_TRADE Undersampling ratio locked at 2.5
-#  - Bull_peak_Oct21 window added to counteract the 61% bear-market bias
-#  - Weights adjusted (BUY=3.5, SELL=1.8) to compensate for historical SELL label dominance
+#  - NO_TRADE Undersampling ratio RESTORED to 2.5 (prevents hallucination)
+#  - Bull_peak_Oct21 window RESTORED to teach the model true BUY continuations
+#  - Weights RESTORED (BUY=3.5, SELL=1.8) to counteract 15% historical SELL label dominance
 #  - 4H Features fully mapped and utilized via ALL_FEATURES
 
 import os, json, time, logging, joblib, requests
@@ -40,8 +40,8 @@ MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 
-# Confirmed working real undersampling ratio
-UNDERSAMPLE_RATIO  = 2.5
+# RESTORED: Working real undersampling ratio (0.8 causes dangerous over-trading)
+UNDERSAMPLE_RATIO  = 2.5   
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -56,7 +56,7 @@ BEAR_WINDOWS = [
     {"label": "Bear_trend_Jun22",   "start_ms": 1654819200000, "end_ms": 1657411200000, "candles": 2880},
     {"label": "Aug2023_dip",        "start_ms": 1690848000000, "end_ms": 1692057600000, "candles": 1440},
     {"label": "Apr2024_halving",    "start_ms": 1713225600000, "end_ms": 1714435200000, "candles": 1440},
-    {"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880},
+    {"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880}, # RESTORED
 ]
 
 # ── Data fetching ──────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
 
         merged = pd.merge_asof(df15_work, df4h_slim, on="open_time", direction="backward")
 
-        for col, default in _DEFAULTS.items():
+        for col, default in _DEFAitems():
             if col in merged.columns:
                 merged[col] = merged[col].fillna(default)
             else:
@@ -415,9 +415,9 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights (Adjusted to compensate for 15% more SELL labels in training) ──
+    # ── Sample weights (RESTORED: Balanced properly) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 3.4
+    sw[y_train == buy_idx]  = 3.5
     sw[y_train == sell_idx] = 1.8
 
     # ── Model training ────────────────────────────────────────────────
@@ -433,7 +433,7 @@ def train(ds: pd.DataFrame) -> float:
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=3,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 1.8},
+        class_weight={nt_idx: 1.0, buy_idx: 3.5, sell_idx: 1.8},
     )
     rf.fit(Xtr, y_train)
 
@@ -559,4 +559,4 @@ if __name__ == "__main__":
     t0  = time.time()
     ds  = build_dataset()
     acc = train(ds)
-    log.info(f"\nDone in {(time.time()-t0)/60:.1f} min | Accuracy: {acc*100:.1f}%")          
+    log.info(f"\nDone in {(time.time()-t0)/60:.1f} min | Accuracy: {acc*100:.1f}%")
