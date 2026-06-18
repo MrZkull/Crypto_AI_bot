@@ -214,7 +214,7 @@ def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
 
         merged = pd.merge_asof(df15_work, df4h_slim, on="open_time", direction="backward")
 
-        for col, default in _DEFAitems():
+        for col, default in _DEFAULTS.items():
             if col in merged.columns:
                 merged[col] = merged[col].fillna(default)
             else:
