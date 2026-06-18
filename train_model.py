@@ -41,7 +41,7 @@ N_FEATURES         = 35
 MIN_BARS           = 100
 
 # Confirmed working real undersampling ratio
-UNDERSAMPLE_RATIO  = 0.8
+UNDERSAMPLE_RATIO  = 2.5
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -56,7 +56,7 @@ BEAR_WINDOWS = [
     {"label": "Bear_trend_Jun22",   "start_ms": 1654819200000, "end_ms": 1657411200000, "candles": 2880},
     {"label": "Aug2023_dip",        "start_ms": 1690848000000, "end_ms": 1692057600000, "candles": 1440},
     {"label": "Apr2024_halving",    "start_ms": 1713225600000, "end_ms": 1714435200000, "candles": 1440},
-   #{"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880},
+    {"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880},
 ]
 
 # ── Data fetching ──────────────────────────────────────────────────────
@@ -417,8 +417,8 @@ def train(ds: pd.DataFrame) -> float:
 
     # ── Sample weights (Adjusted to compensate for 15% more SELL labels in training) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 1.5
-    sw[y_train == sell_idx] = 3.5
+    sw[y_train == buy_idx]  = 3.4
+    sw[y_train == sell_idx] = 1.8
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
