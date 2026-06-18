@@ -48,7 +48,7 @@ SCAN_INTERVAL_MIN = 15    # Wake up every 15 mins
 
 # ── AI & Strategy Filters ─────────────────────────────────────────────
 # 50.0 Threshold: ~740 trades, ~80% Win Rate (The "Sweet Spot")
-MIN_CONFIDENCE    = 50.0  
+MIN_CONFIDENCE    = 55.0  
 MIN_ADX           = 20    # Minimum trend strength required
 MIN_SCORE         = 2     # Minimum quality score (out of 6) to execute
 
