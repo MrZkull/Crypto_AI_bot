@@ -319,7 +319,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None):
                     break
 
             # Require trend to have been in place for at least 2 candles (8h)
-            if trend_bars < 2:
+            if trend_bars < 1:
                 log.info(f"    [FILTER:4H_FRESH] trend too fresh ({trend_bars} bars) — skip {symbol}")
                 return None
 
