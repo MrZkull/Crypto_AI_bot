@@ -1,10 +1,11 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v13 (Symmetric)
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v14 (Label Mult Fix)
 #
 # FULLY INTEGRATED FIXES:
 #  - NO_TRADE Undersampling ratio locked at 2.5
 #  - Bull_peak_Oct21 window active
 #  - Weights strictly symmetric (BUY=2.0, SELL=2.0) to tame BUY over-guessing
 #  - Break-even threshold guard added (pb < 0.334 or ps < 0.334 -> reject)
+#  - LABEL_MULT integrated into make_targets (ATR_TARGET1_MULT * 0.65) to fix structural BUY recall
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -233,11 +234,11 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
     future_high = df["high"].shift(-1).rolling(lookahead).max().shift(-lookahead + 1)
     future_low  = df["low"].shift(-1).rolling(lookahead).min().shift(-lookahead + 1)
     
-    LABEL_TARGET_MULT = ATR_TARGET1_MULT * 1.0
+    LABEL_MULT = ATR_TARGET1_MULT * 0.65 # 5.0 → 3.25 for labeling only
     
-    buy_tp  = df["close"] + (df["atr"] * LABEL_TARGET_MULT)
+    buy_tp  = df["close"] + (df["atr"] * LABEL_MULT)
     buy_sl  = df["close"] - (df["atr"] * ATR_STOP_MULT)
-    sell_tp = df["close"] - (df["atr"] * LABEL_TARGET_MULT)
+    sell_tp = df["close"] - (df["atr"] * LABEL_MULT)
     sell_sl = df["close"] + (df["atr"] * ATR_STOP_MULT)
     
     labels[(future_high >= buy_tp)  & (future_low  > buy_sl)]  = "BUY"
