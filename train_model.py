@@ -1,10 +1,10 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v12 (Synchronized)
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v13 (Symmetric)
 #
 # FULLY INTEGRATED FIXES:
 #  - NO_TRADE Undersampling ratio locked at 2.5
-#  - Bull_peak_Oct21 window active to teach the model true BUY continuations
-#  - Weights STRICTLY SYNCHRONIZED across all ensemble models (BUY=2.5, SELL=2.0)
-#  - 4H Features fully mapped and utilized via ALL_FEATURES
+#  - Bull_peak_Oct21 window active
+#  - Weights strictly symmetric (BUY=2.0, SELL=2.0) to tame BUY over-guessing
+#  - Break-even threshold guard added (pb < 0.334 or ps < 0.334 -> reject)
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -40,7 +40,6 @@ MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 
-# Confirmed working real undersampling ratio
 UNDERSAMPLE_RATIO  = 2.5   
 
 BINANCE_ENDPOINTS = [
@@ -415,9 +414,9 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights (FIXED: Synchronized correctly) ──
+    # ── Sample weights (Symmetric setup) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 2.5
+    sw[y_train == buy_idx]  = 2.0
     sw[y_train == sell_idx] = 2.0
 
     # ── Model training ────────────────────────────────────────────────
@@ -433,7 +432,7 @@ def train(ds: pd.DataFrame) -> float:
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=3,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 2.0},
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
     )
     rf.fit(Xtr, y_train)
 
@@ -441,7 +440,7 @@ def train(ds: pd.DataFrame) -> float:
     gb = HistGradientBoostingClassifier(
         max_iter=200, max_depth=5, learning_rate=0.04,
         min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 2.0},
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
     )
     gb.fit(Xtr, y_train)
 
@@ -499,9 +498,9 @@ def train(ds: pd.DataFrame) -> float:
         n_signals  = int((bm | sm).sum())
         pnl        = n_signals * avg_prec * 200 - n_signals * (1 - avg_prec) * 100
         
-        # Penalise SELL-blind thresholds without zeroing the score completely
-        if ps == 0.0:
-            score = pb * rb * 0.5
+        # Break-even guard: Require BOTH to be individually above 33.3% break-even mark
+        if pb < 0.334 or ps < 0.334:
+            score = 0.0
         else:
             score = avg_prec * avg_recall
             
