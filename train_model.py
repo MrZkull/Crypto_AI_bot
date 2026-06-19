@@ -1,9 +1,9 @@
-# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v11 (Restored)
+# train_model.py — Regime-Balanced · No-Leakage · Honest Metrics · v12 (Synchronized)
 #
 # FULLY INTEGRATED FIXES:
-#  - NO_TRADE Undersampling ratio RESTORED to 2.5 (prevents hallucination)
-#  - Bull_peak_Oct21 window RESTORED to teach the model true BUY continuations
-#  - Weights RESTORED (BUY=3.5, SELL=1.8) to counteract 15% historical SELL label dominance
+#  - NO_TRADE Undersampling ratio locked at 2.5
+#  - Bull_peak_Oct21 window active to teach the model true BUY continuations
+#  - Weights STRICTLY SYNCHRONIZED across all ensemble models (BUY=2.5, SELL=2.0)
 #  - 4H Features fully mapped and utilized via ALL_FEATURES
 
 import os, json, time, logging, joblib, requests
@@ -40,7 +40,7 @@ MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 
-# RESTORED: Working real undersampling ratio (0.8 causes dangerous over-trading)
+# Confirmed working real undersampling ratio
 UNDERSAMPLE_RATIO  = 2.5   
 
 BINANCE_ENDPOINTS = [
@@ -56,7 +56,7 @@ BEAR_WINDOWS = [
     {"label": "Bear_trend_Jun22",   "start_ms": 1654819200000, "end_ms": 1657411200000, "candles": 2880},
     {"label": "Aug2023_dip",        "start_ms": 1690848000000, "end_ms": 1692057600000, "candles": 1440},
     {"label": "Apr2024_halving",    "start_ms": 1713225600000, "end_ms": 1714435200000, "candles": 1440},
-    {"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880}, # RESTORED
+    {"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880}, 
 ]
 
 # ── Data fetching ──────────────────────────────────────────────────────
@@ -415,10 +415,10 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights (RESTORED: Balanced properly) ──
+    # ── Sample weights (FIXED: Synchronized correctly) ──
     sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 2.8
-    sw[y_train == sell_idx] = 2.2
+    sw[y_train == buy_idx]  = 2.5
+    sw[y_train == sell_idx] = 2.0
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -433,7 +433,7 @@ def train(ds: pd.DataFrame) -> float:
     rf = RandomForestClassifier(
         n_estimators=300, max_depth=12, min_samples_leaf=3,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 3.5, sell_idx: 1.8},
+        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 2.0},
     )
     rf.fit(Xtr, y_train)
 
@@ -441,7 +441,7 @@ def train(ds: pd.DataFrame) -> float:
     gb = HistGradientBoostingClassifier(
         max_iter=200, max_depth=5, learning_rate=0.04,
         min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 3.5, sell_idx: 1.8},
+        class_weight={nt_idx: 1.0, buy_idx: 2.5, sell_idx: 2.0},
     )
     gb.fit(Xtr, y_train)
 
@@ -503,8 +503,7 @@ def train(ds: pd.DataFrame) -> float:
         if ps == 0.0:
             score = pb * rb * 0.5
         else:
-            # score = avg_prec * avg_recall
-            score = pnl   # Make it optimize strictly for maximum profit
+            score = avg_prec * avg_recall
             
         if score > best_score and n_signals > 20:
             best_score  = score
