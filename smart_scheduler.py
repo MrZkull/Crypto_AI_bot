@@ -55,7 +55,7 @@ def get_scan_mode() -> dict:
     if is_active:
         return {
             "mode": "active", "label": "ACTIVE HOURS", "emoji": "📈",
-            "min_confidence": 50,   # lowered: 60→50 to let more signals through
+            "min_confidence": 55,   # lowered: 60→50 to let more signals through
             "min_score": 3, "min_adx": 15,
             "interval_min": 15, "risk_mult": round(1.0 * time_mult, 3),
         }
