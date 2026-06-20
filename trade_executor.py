@@ -1,4 +1,4 @@
-# trade_executor.py — V2.7: Institutional Whale Netflow & BTC Momentum Integration
+# trade_executor.py — V2.8: Drift Gates, Sentiment Biases, Dynamic ATR Sizing
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -16,9 +16,9 @@ from deribit_client import DeribitClient, TRADEABLE_SYMBOLS
 from feature_engineering import add_indicators
 from smart_scheduler import (
     should_scan, get_mode_thresholds, get_effective_risk, check_correlation,
-    check_btc_momentum   # Scenario 3
+    check_btc_momentum, check_fear_and_greed
 )
-from whale_tracker import get_exchange_netflow  # Scenario 4
+from whale_tracker import get_exchange_netflow 
 
 TRADES_FILE        = "trades.json"
 HISTORY_FILE       = "trade_history.json"
@@ -72,7 +72,6 @@ def save_signal(sig):
     s.append({**sig, "generated_at": datetime.now(timezone.utc).isoformat()})
     save_json(SIGNALS_FILE, s[-500:])
 
-# --- V2 PRO HELPERS ---
 def load_cooldown() -> dict: return load_json(COOLDOWN_FILE, {})
 def save_cooldown(d: dict): save_json(COOLDOWN_FILE, d)
 def load_reliability() -> dict: return load_json(RELIABILITY_FILE, {})
@@ -103,7 +102,6 @@ def _record_ghost(symbol: str):
     if symbol not in rel: rel[symbol] = {"ghosts": 0, "wins": 0, "losses": 0}
     rel[symbol]["ghosts"] = rel[symbol].get("ghosts", 0) + 1
     save_reliability(rel)
-    log.info(f"  📊 {symbol}: ghost count now {rel[symbol]['ghosts']}")
 
 def _record_outcome(symbol: str, won: bool):
     rel = load_reliability()
@@ -178,33 +176,21 @@ def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, 
             try:
                 pos_size = deribit.get_position_size(symbol)
                 if abs(pos_size) > 0:
-                    log.warning(f"  {label} {symbol}: 11030 but position exists — retrying without reduce_only")
                     res2 = deribit.place_limit_order(symbol, side, qty, price, use_reduce_only=False)
                     o2   = res2.get("order", res2)
                     oid2 = str(o2.get("order_id", ""))
                     if oid2:
-                        log.info(f"  🛠 {label} {symbol} @ {price:.{dec}f}  id:{oid2} [no-reduce-only fallback]")
                         return oid2
-                else:
-                    log.info(f"  {label} re-place {symbol}: no position — ghost cleaner handles")
-            except Exception as e2: log.warning(f"  {label} fallback {symbol}: {e2}")
-        else:
-            log.warning(f"  {label} re-place {symbol}: {e1}")
+            except Exception: pass
     return ""
-# ------------------------
-
-
-# ════════════ BALANCE ════════════════════════════════════════════════
 
 def save_balance(deribit: DeribitClient) -> float:
     try:
         bals  = deribit.get_all_balances()
         total = deribit.get_total_equity_usd()
         pos   = deribit.get_positions()
-        upnl  = sum(float(p.get("floating_profit_loss_usd") or
-                          p.get("floating_profit_loss") or 0) for p in pos)
-        assets = [{"asset":c,"free":str(round(i["available"],6)),
-                   "total":str(round(i["equity_usd"],2))} for c,i in bals.items()]
+        upnl  = sum(float(p.get("floating_profit_loss_usd") or p.get("floating_profit_loss") or 0) for p in pos)
+        assets = [{"asset":c,"free":str(round(i["available"],6)), "total":str(round(i["equity_usd"],2))} for c,i in bals.items()]
         save_json(BALANCE_FILE, {
             "usdt":round(total,2),"equity":round(total+upnl,2),
             "unrealised":round(upnl,4),"assets":assets,
@@ -217,16 +203,10 @@ def save_balance(deribit: DeribitClient) -> float:
     except Exception as e:
         log.error(f"  save_balance: {e}"); return 0.0
 
-
-# ════════════ MARKET DATA ════════════════════════════════════════════
-
 def get_data(symbol: str, interval: str) -> pd.DataFrame:
-    for url in ["https://data-api.binance.vision/api/v3/klines",
-                "https://api.binance.com/api/v3/klines"]:
+    for url in ["https://data-api.binance.vision/api/v3/klines", "https://api.binance.com/api/v3/klines"]:
         try:
-            r = requests.get(url,
-                params={"symbol":symbol,"interval":interval,"limit":LIVE_LIMIT},
-                timeout=10)
+            r = requests.get(url, params={"symbol":symbol,"interval":interval,"limit":LIVE_LIMIT}, timeout=10)
             if r.status_code == 200:
                 df = pd.DataFrame(r.json()).iloc[:,:6]
                 df.columns = ["open_time","open","high","low","close","volume"]
@@ -239,17 +219,11 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
 
 # ════════════ SIGNAL GENERATION ══════════════════════════════════════
 
-def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None):
-    """
-    btc_momentum: dict from check_btc_momentum() — contains bias/score_mod.
-    whale_flow: dict from get_exchange_netflow() — contains bias/score_mod.
-    """
+def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None):
     try:
         df15 = add_indicators(get_data(symbol, TIMEFRAME_ENTRY)).fillna(0)
         df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
         df1h = add_indicators(df1h_raw).fillna(0) if not df1h_raw.empty else pd.DataFrame()
-        
-        # Fetch 4H data early so ML can use it
         df4h_raw = get_data(symbol, "4h")
         df4h = add_indicators(df4h_raw).fillna(0) if not df4h_raw.empty else pd.DataFrame()
 
@@ -262,8 +236,6 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         row["rsi_1h"]   = float(r1h.get("rsi",  50))
         row["adx_1h"]   = float(r1h.get("adx",   0))
         row["trend_1h"] = float(r1h.get("trend", 0))
-
-        # Real 4H Input for ML Pipeline
         row["rsi_4h"]   = float(r4h.get("rsi",   50))
         row["trend_4h"] = float(r4h.get("trend",  0))
 
@@ -287,7 +259,6 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         score = 0
         reasons = []
 
-        # ── 4h trend bias (filters trades against dominant trend) ──────────
         e20_4h = float(r4h.get("ema20", 0)) if not df4h.empty else 0
         e50_4h = float(r4h.get("ema50", 0)) if not df4h.empty else 0
         rsi_4h = float(r4h.get("rsi", 50))  if not df4h.empty else 50
@@ -308,9 +279,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                 else:
                     score -= 1
                     reasons.append(f"4h counter-trend (-1)")
-                    log.info(f"    4h mildly bullish — score -1 for SELL {symbol}")
 
-            # How many 4h candles has the trend been active?
             for i in range(1, min(6, len(df4h))):
                 r_prev = df4h.iloc[-(i+1)]
                 if sig == "BUY" and float(r_prev.get("ema20", 0)) > float(r_prev.get("ema50", 0)):
@@ -320,7 +289,6 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                 else:
                     break
 
-            # Require trend to have been in place for at least 1 candle (4h)
             if trend_bars < 1:
                 log.info(f"    [FILTER:4H_FRESH] trend too fresh ({trend_bars} bars) — skip {symbol}")
                 return None
@@ -345,59 +313,58 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         if sig=="BUY"  and c20>c50: score+=1; reasons.append("1h confirms")
         elif sig=="SELL" and c20<c50: score+=1; reasons.append("1h confirms")
 
-        # ── 4h confirmation score ──────────────────────────────────────────
         if sig == "BUY"  and e20_4h > e50_4h and rsi_4h > 45:
             score += 1; reasons.append(f"4h trend aligns (RSI {rsi_4h:.0f})")
         elif sig == "SELL" and e20_4h < e50_4h and rsi_4h < 55:
             score += 1; reasons.append(f"4h trend aligns (RSI {rsi_4h:.0f})")
 
-        # Score bonus for established trend
         if trend_bars >= 4:
             score += 1; reasons.append(f"4h trend established ({trend_bars*4}h)")
 
         # ── Scenario 3: BTC momentum bias ─────────────────────────────────
         if btc_momentum and btc_momentum.get("bias"):
-            bias     = btc_momentum["bias"]
-            mod      = btc_momentum.get("score_mod", 0)
-            strength = btc_momentum.get("strength", "")
-            if sig == bias:
-                score += mod
-                reasons.append(f"BTC {bias} momentum ({strength})")
-                log.info(f"    BTC momentum ALIGNED (+{mod}) — {btc_momentum['message']}")
-            elif mod > 0:
-                score -= mod
-                reasons.append(f"BTC counter-momentum (-{mod})")
-                log.info(f"    BTC momentum OPPOSED (-{mod}) — {btc_momentum['message']}")
+            if sig == btc_momentum["bias"]:
+                score += btc_momentum["score_mod"]
+                reasons.append(f"BTC {btc_momentum['bias']} momentum ({btc_momentum['strength']})")
+            elif btc_momentum["score_mod"] > 0:
+                score -= btc_momentum["score_mod"]
+                reasons.append(f"BTC counter-momentum (-{btc_momentum['score_mod']})")
 
         # ── Scenario 4: Whale Netflow Bias ────────────────────────────────
         if whale_flow and whale_flow.get("bias"):
-            w_bias = whale_flow["bias"]
-            w_mod  = whale_flow.get("score_mod", 1)
-            if sig == w_bias:
-                score += w_mod
-                reasons.append(f"Whale flow aligned (+{w_mod})")
-                log.info(f"    Whale flow ALIGNED (+{w_mod}) — {whale_flow['message']}")
+            if sig == whale_flow["bias"]:
+                score += whale_flow.get("score_mod", 1)
+                reasons.append(f"Whale flow aligned (+{whale_flow.get('score_mod', 1)})")
             else:
-                score -= w_mod
-                reasons.append(f"Whale counter-flow (-{w_mod})")
-                log.info(f"    Whale flow OPPOSED (-{w_mod}) — {whale_flow['message']}")
+                score -= whale_flow.get("score_mod", 1)
+                reasons.append(f"Whale counter-flow (-{whale_flow.get('score_mod', 1)})")
+
+        # ── Scenario 5: Fear & Greed Bias ────────────────────────────────
+        if fng_data and fng_data.get("bias"):
+            f_bias = fng_data["bias"]
+            f_mod  = fng_data.get("score_mod", 1)
+            if sig == f_bias:
+                score += f_mod
+                reasons.append(f"Contrarian F&G aligned (+{f_mod})")
+                log.info(f"    F&G ALIGNED (+{f_mod}) — {fng_data['message']}")
+            elif f_mod > 0:
+                score -= f_mod
+                reasons.append(f"F&G extreme countered (-{f_mod})")
+                log.info(f"    F&G OPPOSED (-{f_mod}) — {fng_data['message']}")
 
         # ── Volume confirmation ────────────────────────────────────────────
         vol_prev = float(df15["volume"].iloc[-2])
         vol_ma20 = float(df15["volume"].rolling(20).mean().iloc[-2])
-
         if vol_ma20 <= 0 or vol_prev <= 0:
             log.info(f"    Volume data missing — skipping volume gate")
         else:
             if vol_prev < vol_ma20 * 0.5:
                 log.info(f"    [FILTER:VOL] Low volume ({vol_prev:.0f} < {vol_ma20:.0f}) — skip {symbol}")
                 return None
-
             if vol_prev > vol_ma20 * 1.5:
                 score += 1; reasons.append(f"Volume surge {vol_prev/vol_ma20:.1f}×")
 
-        # ── Score gate ─────────────────────────────
-        effective_min = thresholds["min_score"]   # same threshold for BUY and SELL
+        effective_min = thresholds["min_score"]
         log.info(f"    Score: {score} (need ≥{effective_min})")
         if score < effective_min:
             log.info(f"    [FILTER:SCORE] Too low ({score} < {effective_min}) — skip {symbol}")
@@ -409,29 +376,22 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         if not reasons: reasons.append(f"ML {conf:.0f}%")
 
         entry = float(row["close"]); atr = float(row["atr"])
-        dec   = 4 if entry < 10 else 2
-        if sig == "BUY":
-            stop=round(entry-atr*ATR_STOP_MULT,dec)
-            tp1 =round(entry+atr*ATR_TARGET1_MULT,dec)
-            tp2 =round(entry+atr*ATR_TARGET2_MULT,dec)
-        else:
-            stop=round(entry+atr*ATR_STOP_MULT,dec)
-            tp1 =round(entry-atr*ATR_TARGET1_MULT,dec)
-            tp2 =round(entry-atr*ATR_TARGET2_MULT,dec)
-
+        
+        # Note: Dynamic TP calculations shifted to execute_trade where drift is calculated.
+        # Storing base limits here so Executor can dynamically adjust them against Volatility limits
+        
         return {"symbol":symbol,"signal":sig,"confidence":conf,"score":score,
-                "entry":entry,"atr":atr,"stop":stop,"tp1":tp1,"tp2":tp2,"reasons":reasons}
+                "entry":entry,"atr":atr,"stop":0,"tp1":0,"tp2":0,"reasons":reasons}
     except Exception as e:
         log.error(f"    Signal {symbol}: {e}"); return None
 
 
 # ════════════ EXECUTE TRADE ══════════════════════════════════════════
 
-def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float) -> bool:
+def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float, vol_state: str = "NORMAL") -> bool:
     symbol=sig["symbol"]; signal=sig["signal"]
     entry=sig["entry"]; atr=sig["atr"]
-    stop=sig["stop"]; tp1=sig["tp1"]; tp2=sig["tp2"]
-
+    
     trades     = load_trades()
     open_count = len([t for t in trades.values() if not t.get("closed",False)])
     if open_count >= MAX_OPEN_TRADES:
@@ -442,7 +402,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         log.info(f"  {symbol}: not on Deribit — skip"); return False
     if not check_correlation(trades, signal): return False
 
-    # V2 GATE CHECKS
     daily_count = _get_daily_trade_count()
     if daily_count >= MAX_DAILY_TRADES:
         log.info(f"  📊 Daily trade limit reached ({daily_count}/{MAX_DAILY_TRADES}) — skip {symbol}")
@@ -450,11 +409,49 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     if _is_on_cooldown(symbol): return False
     if _is_unreliable(symbol): return False
     if not _check_funding_rate(deribit, symbol, signal): return False
+    
+    if risk_mult <= 0:
+        log.info(f"  🛑 Risk multiplier is {risk_mult} (Drawdown Halt or Saturday block) — skip {symbol}")
+        return False
+
+    # ── Signal Expiry / Drift Gate ──
+    live_price = deribit.get_live_price(symbol)
+    if live_price > 0:
+        drift = abs(live_price - entry) / entry * 100
+        if drift > 0.5:
+            log.warning(f"  [EXPIRED] {symbol} price drifted {drift:.2f}% from signal — skip")
+            return False
+        entry = live_price  # Calibrate sizing to actual live price
+        sig["entry"] = entry
+
+    # ── Dynamic ATR Target Sizing ──
+    dyn_tp1 = ATR_TARGET1_MULT
+    dyn_tp2 = ATR_TARGET2_MULT
+    
+    if vol_state == "VERY_HIGH":
+        dyn_tp1 *= 1.5
+        dyn_tp2 *= 1.5
+    elif vol_state in ("DEAD", "UNKNOWN"):
+        dyn_tp1 *= 0.8  # Contract targets in low volatility
+        dyn_tp2 *= 0.8
 
     dec=4 if entry<10 else 2
     side   ="BUY"  if signal=="BUY" else "SELL"
     sl_side="SELL" if signal=="BUY" else "BUY"
     tp_side="SELL" if signal=="BUY" else "BUY"
+
+    if signal == "BUY":
+        stop = round(entry - atr * ATR_STOP_MULT, dec)
+        tp1  = round(entry + atr * dyn_tp1, dec)
+        tp2  = round(entry + atr * dyn_tp2, dec)
+    else:
+        stop = round(entry + atr * ATR_STOP_MULT, dec)
+        tp1  = round(entry - atr * dyn_tp1, dec)
+        tp2  = round(entry - atr * dyn_tp2, dec)
+
+    sig["stop"] = stop
+    sig["tp1"]  = tp1
+    sig["tp2"]  = tp2
 
     total_q          = deribit.calc_contracts(symbol, balance, entry, stop, risk_mult)
     qty_tp1, qty_tp2 = deribit.split_amount(symbol, total_q)
@@ -465,7 +462,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
     order_ids = {}; actual_entry = entry
     try:
-        # Scenario 1: Set 2x leverage before entry order
         from deribit_client import DEFAULT_LEVERAGE
         deribit.set_leverage(symbol, DEFAULT_LEVERAGE)
 
@@ -489,19 +485,18 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
         log.info(f"  ✅ Entry @ {actual_entry:.{dec}f}")
         
-        # V2 POLLING
         position_confirmed = _wait_for_position(deribit, symbol, side, order_ids.get("entry", ""))
         if not position_confirmed:
             log.warning(f"  ⚠️ {symbol}: position unconfirmed — SL/TP may fail (will retry next scan)")
 
         if signal=="BUY":
             stop=deribit.round_price(symbol,actual_entry-atr*ATR_STOP_MULT)
-            tp1 =deribit.round_price(symbol,actual_entry+atr*ATR_TARGET1_MULT)
-            tp2 =deribit.round_price(symbol,actual_entry+atr*ATR_TARGET2_MULT)
+            tp1 =deribit.round_price(symbol,actual_entry+atr*dyn_tp1)
+            tp2 =deribit.round_price(symbol,actual_entry+atr*dyn_tp2)
         else:
             stop=deribit.round_price(symbol,actual_entry+atr*ATR_STOP_MULT)
-            tp1 =deribit.round_price(symbol,actual_entry-atr*ATR_TARGET1_MULT)
-            tp2 =deribit.round_price(symbol,actual_entry-atr*ATR_TARGET2_MULT)
+            tp1 =deribit.round_price(symbol,actual_entry-atr*dyn_tp1)
+            tp2 =deribit.round_price(symbol,actual_entry-atr*dyn_tp2)
 
         tick = deribit.get_tick_size(symbol)
         sl_limit = deribit.round_price(symbol, stop - (tick * 3) if signal=="BUY" else stop + (tick * 3))
@@ -1138,12 +1133,17 @@ def run_execution_scan():
     whale_flow = get_exchange_netflow("BTC")
     log.info(f"  Whale flow:   {whale_flow['message']}")
 
+    fng_data = check_fear_and_greed()
+    log.info(f"  Fear & Greed: {fng_data['message']}")
+    
+    vol_state = vol.get("status", "NORMAL")
+
     for symbol in SYMBOLS:
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
-        sig = generate_signal(symbol, pipeline, thresholds, btc_momentum, whale_flow)
+        sig = generate_signal(symbol, pipeline, thresholds, btc_momentum, whale_flow, fng_data)
         if sig is None: time.sleep(0.2); continue
         found += 1
-        if execute_trade(deribit, sig, risk_mult, balance): time.sleep(1.5)
+        if execute_trade(deribit, sig, risk_mult, balance, vol_state): time.sleep(1.5)
 
     save_balance(deribit)
     log.info(f"\n{'═'*56}\nDONE — {found} signal(s) | ${balance:.2f}\n{'═'*56}")
