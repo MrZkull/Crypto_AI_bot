@@ -153,11 +153,24 @@ def check_correlation(trades: dict, new_signal: str) -> bool:
     return same < MAX_SAME_DIRECTION
 
 def should_scan() -> tuple:
+    log.info(f"  Scan triggered at {datetime.now(timezone.utc).strftime('%H:%M UTC')} "
+             f"| UTC hour={datetime.now(timezone.utc).hour}")
     mode = get_scan_mode()
     vol  = check_btc_volatility()
+    log.info(f"  {mode['label']} | conf≥{mode['min_confidence']}% "
+             f"| score≥{mode['min_score']} | ADX≥{mode['min_adx']} "
+             f"| risk_mult={mode['risk_mult']} | {vol['message']}")
+             
+    # ── FIXED LOGIC: Correctly identify the skip reason ──
     if vol.get("skip") or mode.get("risk_mult", 1.0) == 0.0:
-        return False, mode, vol, vol.get("message", mode.get("label"))
+        skip_reason = vol["message"] if vol.get("skip") else mode["label"]
+        return False, mode, vol, skip_reason
+        
+    advisory = check_daily_pnl_advisory()
+    if advisory: log.warning(advisory)
+    
     return True, mode, vol, f"{mode['label']}"
+
 
 def get_mode_thresholds(mode: dict) -> dict:
     return {"min_confidence": mode["min_confidence"], "min_score": mode["min_score"], "min_adx": mode["min_adx"], "risk_mult": mode.get("risk_mult", 1.0)}
