@@ -56,34 +56,36 @@ def get_scan_mode() -> dict:
     is_weekend = now.weekday() >= 5
     time_mult  = _get_time_risk_mult()
 
-    # ── Saturday Hard Block ──
-    if now.weekday() == 5:
-        return {
-            "mode": "saturday_block", "label": "SATURDAY (NO TRADING)", "emoji": "🛑",
-            "min_confidence": 99, "min_score": 99, "min_adx": 99,
-            "interval_min": 60, "risk_mult": 0.0,
-        }
+    # ── Saturday Hard Block (COMMENTED OUT FOR 24/7 TESTING) ──
+    # if now.weekday() == 5:
+    #     return {
+    #         "mode": "saturday_block", "label": "SATURDAY (NO TRADING)", "emoji": "🛑",
+    #         "min_confidence": 99, "min_score": 99, "min_adx": 99,
+    #         "interval_min": 60, "risk_mult": 0.0,
+    #     }
 
     is_active = 8 <= hour < 20
-    if is_weekend: # Sunday
+    if is_weekend: # Now applies to both Saturday and Sunday
         return {
             "mode": "weekend_active" if is_active else "weekend_quiet", 
-            "label": "SUNDAY MODE" if is_active else "SUNDAY QUIET", "emoji": "📅",
-            "min_confidence": 60, "min_score": 3 if is_active else 4, "min_adx": 18,
+            "label": "WEEKEND ACTIVE" if is_active else "WEEKEND QUIET", "emoji": "📅",
+            "min_confidence": 55 if is_active else 60, 
+            "min_score": 3 if is_active else 4, 
+            "min_adx": 18 if is_active else 22,
             "interval_min": 15 if is_active else 30, 
-            "risk_mult": (0.85 if is_active else 0.50) * time_mult,
+            "risk_mult": round((0.85 if is_active else 0.50) * time_mult, 3),
         }
 
     if is_active:
         return {
             "mode": "active", "label": "ACTIVE HOURS", "emoji": "📈",
             "min_confidence": 55, "min_score": 3, "min_adx": 15,
-            "interval_min": 15, "risk_mult": 1.0 * time_mult,
+            "interval_min": 15, "risk_mult": round(1.0 * time_mult, 3),
         }
     return {
         "mode": "quiet", "label": "QUIET HOURS", "emoji": "🌙",
         "min_confidence": 60, "min_score": 3, "min_adx": 18,
-        "interval_min": 30, "risk_mult": 0.5 * time_mult,
+        "interval_min": 30, "risk_mult": round(0.5 * time_mult, 3),
     }
 
 def check_fear_and_greed() -> dict:
