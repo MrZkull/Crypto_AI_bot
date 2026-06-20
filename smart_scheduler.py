@@ -103,7 +103,7 @@ def check_fear_and_greed() -> dict:
 
 def check_btc_momentum() -> dict:
     try:
-        r = requests.get("https://api.binance.com/api/v3/klines", params={"symbol": "BTCUSDT", "interval": "15m", "limit": 2}, timeout=10)
+        r = requests.get("https://data-api.binance.vision/api/v3/klines", params={"symbol": "BTCUSDT", "interval": "15m", "limit": 2}, timeout=10)
         data = r.json()
         if len(data) >= 2:
             prev_close, curr_close = float(data[0][4]), float(data[1][4])
