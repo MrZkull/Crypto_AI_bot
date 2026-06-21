@@ -1,1 +1,75 @@
-{}
+{
+  "AVAXUSDT": {
+    "symbol": "AVAXUSDT",
+    "signal": "SELL",
+    "entry": 6.25187292,
+    "stop": 6.328,
+    "tp1": 6.146,
+    "tp2": 6.024,
+    "qty": 1403.0,
+    "qty_tp1": 701.5,
+    "qty_tp2": 701.5,
+    "risk_usd": 1491.23,
+    "balance_at_open": 175439.39,
+    "risk_mult": 0.85,
+    "order_ids": {
+      "entry": "USDC-218424145834",
+      "stop_loss": "USDC-SLTB-27427",
+      "tp1": "USDC-218424150658",
+      "tp2": "USDC-218424150988"
+    },
+    "opened_at": "2026-06-21T17:58:10.259158+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 63.2,
+    "score": 4,
+    "reasons": [
+      "Conf (63%)",
+      "ADX 24",
+      "RSI not oversold (42)",
+      "4h trend aligns (RSI 47)",
+      "4h trend established (20h)",
+      "F&G extreme countered (-1)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet"
+  },
+  "SUIUSDT": {
+    "symbol": "SUIUSDT",
+    "signal": "SELL",
+    "entry": 0.727,
+    "stop": 0.733,
+    "tp1": 0.718,
+    "tp2": 0.708,
+    "qty": 12374,
+    "qty_tp1": 6187,
+    "qty_tp2": 6187,
+    "risk_usd": 1491.23,
+    "balance_at_open": 175439.39,
+    "risk_mult": 0.85,
+    "order_ids": {
+      "entry": "USDC-218424202406",
+      "stop_loss": "USDC-SLTB-27428",
+      "tp1": "USDC-218424208202",
+      "tp2": "USDC-218424209827"
+    },
+    "opened_at": "2026-06-21T17:58:22.554014+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 62.9,
+    "score": 5,
+    "reasons": [
+      "Conf (63%)",
+      "ADX 22",
+      "RSI not oversold (49)",
+      "1h confirms",
+      "4h trend aligns (RSI 41)",
+      "4h trend established (20h)",
+      "F&G extreme countered (-1)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet"
+  }
+}
