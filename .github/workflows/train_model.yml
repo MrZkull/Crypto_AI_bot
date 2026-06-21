@@ -1,6 +1,8 @@
 name: Train ML Model
 
 on:
+  schedule:
+    - cron: '0 2 1 * *'   # Runs at 02:00 UTC on the 1st of every month
   workflow_dispatch:
     inputs:
       symbols:
@@ -93,3 +95,4 @@ jobs:
             pro_crypto_ai_model.pkl
             model_performance.json
           retention-days: 30
+          
