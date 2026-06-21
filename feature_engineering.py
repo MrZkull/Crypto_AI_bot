@@ -147,6 +147,18 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if "rsi_4h"   not in df.columns: df["rsi_4h"]   = 50.0
     if "trend_4h" not in df.columns: df["trend_4h"] = 0.0
 
+    # ── NEW: Volatility Regime ──────────────────────────────────────────
+    atr_smooth = df["atr_pct"].rolling(5).mean()
+    adx_smooth = df["adx"].rolling(3).mean()
+    
+    df["vol_regime"] = np.where(
+        (atr_smooth > 2.0) & (adx_smooth > 25), 2,   # explosive
+        np.where(
+            (atr_smooth < 0.5) | (adx_smooth < 15), 0,  # chop
+            1                                           # normal
+        )
+    ).astype(float)
+
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.ffill(inplace=True)
     df.fillna(0, inplace=True)
@@ -167,4 +179,5 @@ ALL_FEATURES = [
     "bullish_candle","doji","hammer",
     "rsi_1h","adx_1h","trend_1h",
     "rsi_4h","trend_4h",
+    "vol_regime",  # <--- Added Feature
 ]
