@@ -1,42 +1,71 @@
-# deribit_client.py — V2: Includes mark_price, funding rates, and position size checks
+# deribit_client.py — V9: Complete Merge (Max Caps + Slippage Protection + All V7 Methods)
 
 import math, time, logging, requests
 log = logging.getLogger(__name__)
 
 TESTNET_BASE = "https://test.deribit.com/api/v2"
 
+# ── Execution Protection Constants ──
+DEFAULT_LEVERAGE      = 2      # 2x leverage — preserves 1% risk, frees margin
+MAX_SLIPPAGE_PCT      = 0.002  # 0.2% max acceptable slippage on entry
+WIDE_SPREAD_WARN_PCT  = 0.003  # warn if spread > 0.3%
+
+# ── SYMBOL MAP (Updated with Max Amounts) ──
 SYMBOL_MAP = {
-        # Big 3
-        "BTCUSDT":    {"instrument": "BTC_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.0001, "tick_size": 0.5},
-        "ETHUSDT":    {"instrument": "ETH_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.001,  "tick_size": 0.05},
-        "BNBUSDT":    {"instrument": "BNB_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.01,   "tick_size": 0.05},
+    # Big 3
+    "BTCUSDT":    {"instrument": "BTC_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 0.0001, "max_amount": 100,       "tick_size": 0.5},
+    "ETHUSDT":    {"instrument": "ETH_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 0.001,  "max_amount": 5000,      "tick_size": 0.05},
+    "BNBUSDT":    {"instrument": "BNB_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 0.01,   "max_amount": 1000,      "tick_size": 0.05},
 
-        # High-Liquidity L1s
-        "SOLUSDT":    {"instrument": "SOL_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.01},
-        "AVAXUSDT":   {"instrument": "AVAX_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.01},
-        "NEARUSDT":   {"instrument": "NEAR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
-        "SUIUSDT":    {"instrument": "SUI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
-        "APTUSDT":    {"instrument": "APT_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.001},
-        "MATICUSDT":  {"instrument": "MATIC_USDC-PERPETUAL","currency": "USDC", "min_amount": 10,     "tick_size": 0.0001},
-        "ATOMUSDT":   {"instrument": "ATOM_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
+    # High-Liquidity L1s
+    "SOLUSDT":    {"instrument": "SOL_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 0.1,    "max_amount": 50000,     "tick_size": 0.01},
+    "AVAXUSDT":   {"instrument": "AVAX_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.01},
+    "NEARUSDT":   {"instrument": "NEAR_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
+    "SUIUSDT":    {"instrument": "SUI_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
+    "APTUSDT":    {"instrument": "APT_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
+    "MATICUSDT":  {"instrument": "MATIC_USDC-PERPETUAL", "currency": "USDC",
+                   "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
+    "ATOMUSDT":   {"instrument": "ATOM_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 1,      "max_amount": 2100,      "tick_size": 0.001},
+    "TRXUSDT":    {"instrument": "TRX_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.00001},
 
-        # Institutional Alts
-        "LINKUSDT":   {"instrument": "LINK_USDC-PERPETUAL", "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
-        "DOTUSDT":    {"instrument": "DOT_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
-        "UNIUSDT":    {"instrument": "UNI_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.001},
-        "AAVEUSDT":   {"instrument": "AAVE_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.01},
-        "XRPUSDT":    {"instrument": "XRP_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 10,     "tick_size": 0.0001},
-        "LTCUSDT":    {"instrument": "LTC_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.01},
-        "BCHUSDT":    {"instrument": "BCH_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.02,   "tick_size": 0.01},
+    # Institutional Alts
+    "LINKUSDT":   {"instrument": "LINK_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 1,      "max_amount": 10000,     "tick_size": 0.001},
+    "DOTUSDT":    {"instrument": "DOT_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 1,      "max_amount": 10000,     "tick_size": 0.001},
+    "UNIUSDT":    {"instrument": "UNI_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 1,      "max_amount": 10000,     "tick_size": 0.001},
+    "AAVEUSDT":   {"instrument": "AAVE_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 0.1,    "max_amount": 1000,      "tick_size": 0.01},
+    "XRPUSDT":    {"instrument": "XRP_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
+    "LTCUSDT":    {"instrument": "LTC_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 0.1,    "max_amount": 1000,      "tick_size": 0.01},
+    "BCHUSDT":    {"instrument": "BCH_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 0.02,   "max_amount": 500,       "tick_size": 0.01},
+    "ALGOUSDT":   {"instrument": "ALGO_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
 
-        # AI & Momentum
-        "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1,      "tick_size": 0.0001},
-        "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.1,    "tick_size": 0.001},
-        "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 10,     "tick_size": 0.0001},
-    }
+    # AI & Momentum
+    "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
+    "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
+    "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
+                   "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
+}
 
 TRADEABLE_SYMBOLS: list = []
-DEFAULT_LEVERAGE = 2   # Scenario 1: 2x leverage on all positions
 
 class DeribitClient:
 
@@ -51,6 +80,8 @@ class DeribitClient:
         self._supported_symbols = set()
         self._authenticate()
         self._verify_instruments()
+
+    # ── Auth ──────────────────────────────────────────────────────────
 
     def _authenticate(self):
         for attempt in range(3):
@@ -105,10 +136,12 @@ class DeribitClient:
             msg   = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             code  = err.get("code", "")          if isinstance(err, dict) else ""
             extra = err.get("data", "")          if isinstance(err, dict) else ""
-            log.error(f"  Deribit error: {msg} | Code:{code} | Data:{extra} | Path:{path} | Params:{body}")
+            log.error(f"  Deribit error: {msg} | Code:{code} | Data:{extra}")
             raise Exception(f"{msg} (Code:{code})" if code else msg)
         r.raise_for_status()
         return data.get("result", data)
+
+    # ── Instrument management ─────────────────────────────────────────
 
     def _verify_instruments(self):
         global TRADEABLE_SYMBOLS
@@ -148,6 +181,8 @@ class DeribitClient:
                 "/public/get_instrument", {"instrument_name": name})
         return self._instrument_cache.get(name, {})
 
+    # ── Price + amount precision ──────────────────────────────────────
+
     def get_tick_size(self, symbol: str) -> float:
         info = self.get_instrument_info(symbol)
         return float(info.get("tick_size") or SYMBOL_MAP[symbol].get("tick_size", 0.001))
@@ -156,6 +191,14 @@ class DeribitClient:
         info    = self.get_instrument_info(symbol)
         api_min = info.get("min_trade_amount")
         return float(api_min) if api_min else float(SYMBOL_MAP[symbol].get("min_amount", 1.0))
+
+    def get_max_trade_amount(self, symbol: str) -> float:
+        """Returns exchange ceiling for this instrument."""
+        info    = self.get_instrument_info(symbol)
+        api_max = info.get("max_trade_amount") or info.get("max_amount")
+        return float(api_max) if api_max else float(
+            SYMBOL_MAP.get(symbol, {}).get("max_amount", float("inf"))
+        )
 
     def round_price(self, symbol: str, price: float) -> float:
         if price <= 0: return 0.0
@@ -181,6 +224,8 @@ class DeribitClient:
         decimals = len(str(step).rstrip("0").split(".")[-1]) if "." in str(step) else 0
         return (round(tp1, decimals), round(tp2, decimals)) if decimals else (int(tp1), int(tp2))
 
+    # ── Market data ───────────────────────────────────────────────────
+
     def get_live_price(self, symbol: str) -> float:
         try:
             t = self._get("/public/ticker", {"instrument_name": self.get_instrument_name(symbol)})
@@ -189,25 +234,150 @@ class DeribitClient:
             log.warning(f"  price {symbol}: {e}"); return 0.0
 
     def get_mark_price(self, symbol: str) -> float:
-        """Returns mark_price (index-based, reliable on thin books)."""
         try:
-            t = self._get("/public/ticker",
-                          {"instrument_name": self.get_instrument_name(symbol)})
+            t = self._get("/public/ticker", {"instrument_name": self.get_instrument_name(symbol)})
             return float(t.get("mark_price") or t.get("index_price") or 0)
         except Exception as e:
             log.warning(f"  mark_price {symbol}: {e}"); return 0.0
 
     def get_funding_rate(self, symbol: str) -> float:
-        """Returns current funding rate (8h) for perpetuals."""
         try:
-            t = self._get("/public/ticker",
-                          {"instrument_name": self.get_instrument_name(symbol)})
+            t = self._get("/public/ticker", {"instrument_name": self.get_instrument_name(symbol)})
             return float(t.get("current_funding") or t.get("funding_8h") or 0)
         except Exception as e:
             log.warning(f"  funding_rate {symbol}: {e}"); return 0.0
 
+    def get_order_book_spread(self, symbol: str) -> dict:
+        """Fetch best bid/ask and compute spread percentage."""
+        try:
+            book = self._get("/public/get_order_book", {
+                "instrument_name": self.get_instrument_name(symbol),
+                "depth": 5,
+            })
+            bids = book.get("bids", [])
+            asks = book.get("asks", [])
+            if not bids or not asks:
+                return {"best_bid": 0, "best_ask": 0, "spread_pct": 999, "is_wide": True}
+
+            best_bid   = float(bids[0][0])
+            best_ask   = float(asks[0][0])
+            mid        = (best_bid + best_ask) / 2
+            spread_pct = (best_ask - best_bid) / mid if mid > 0 else 0
+
+            is_wide = spread_pct > WIDE_SPREAD_WARN_PCT
+            if is_wide:
+                log.warning(f"  ⚠️ Wide spread on {symbol}: {spread_pct*100:.3f}% (bid={best_bid}, ask={best_ask})")
+            return {
+                "best_bid":   best_bid,
+                "best_ask":   best_ask,
+                "spread_pct": spread_pct,
+                "is_wide":    is_wide,
+            }
+        except Exception as e:
+            log.warning(f"  order book {symbol}: {e}")
+            return {"best_bid": 0, "best_ask": 0, "spread_pct": 999, "is_wide": True}
+
+    # ── Position sizing ───────────────────────────────────────────────
+
+    def calc_contracts(self, symbol: str, balance_usd: float,
+                       entry: float, stop: float, risk_mult: float = 1.0):
+        try:
+            from config import RISK_PER_TRADE as rpt
+        except ImportError:
+            rpt = 0.01
+
+        risk_usd  = balance_usd * rpt * risk_mult
+        stop_dist = abs(entry - stop)
+        min_amt   = self.get_min_trade_amount(symbol)
+
+        if stop_dist <= 0 or entry <= 0:
+            return self.round_amount(symbol, min_amt)
+
+        raw      = risk_usd / stop_dist
+        max_pct  = (balance_usd * 0.05) / entry
+        max_risk = (risk_usd * 10) / entry
+        raw      = min(raw, max_pct, max_risk)
+
+        # ── Exchange ceiling cap ─────────────────────────────────────────
+        max_amt  = self.get_max_trade_amount(symbol)
+        if raw > max_amt:
+            log.info(f"  ⚡ Position capped at exchange ceiling: {max_amt} {symbol} (raw={raw:.0f}, max={max_amt})")
+            raw = max_amt
+
+        result   = self.round_amount(symbol, max(raw, min_amt))
+        notional = result * entry
+        log.info(f"  Contracts: {result} {symbol} | notional≈${notional:.0f} | risk=${risk_usd:.2f}")
+        return result
+
+    # ── Order execution ───────────────────────────────────────────────
+
+    def place_market_order(self, symbol: str, side: str, amount) -> dict:
+        """Entry order with slippage protection (IoC limit)."""
+        instrument = self.get_instrument_name(symbol)
+        method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
+        label      = f"bot_entry_{int(time.time())}"
+
+        try:
+            spread = self.get_order_book_spread(symbol)
+            best_bid = spread["best_bid"]
+            best_ask = spread["best_ask"]
+
+            if best_bid > 0 and best_ask > 0:
+                if side.upper() == "BUY":
+                    worst_price = self.round_price(symbol, best_ask * (1 + MAX_SLIPPAGE_PCT))
+                else:
+                    worst_price = self.round_price(symbol, best_bid * (1 - MAX_SLIPPAGE_PCT))
+
+                log.info(f"  IoC limit {side} {amount} {instrument} @ max {worst_price} (spread {spread['spread_pct']*100:.3f}%)")
+
+                result = self._post(method, {
+                    "instrument_name": instrument,
+                    "amount":          amount,
+                    "type":            "limit",
+                    "price":           worst_price,
+                    "time_in_force":   "immediate_or_cancel",
+                    "label":           label,
+                })
+                order = result.get("order", result)
+                state = order.get("order_state", "")
+
+                if state == "cancelled":
+                    log.warning(f"  ⚠️ IoC CANCELLED — market moved >{MAX_SLIPPAGE_PCT*100:.1f}%. Skipping entry.")
+                    return {} 
+
+                log.info(f"  ✅ IoC {side.upper()} {amount} {instrument} id={order.get('order_id','')} state={state}")
+                return result
+
+        except Exception as e:
+            log.warning(f"  IoC order failed ({e}) — falling back to market order")
+
+        # Fallback pure market order
+        result = self._post(method, {
+            "instrument_name": instrument,
+            "amount":          amount,
+            "type":            "market",
+            "label":           label,
+        })
+        order = result.get("order", result)
+        log.info(f"  ✅ MARKET {side.upper()} {amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
+        return result
+
+    # ── Fill price + positions ────────────────────────────────────────
+
+    def get_fill_price(self, market_result: dict, fallback: float) -> float:
+        try:
+            trades = market_result.get("trades", [])
+            if trades:
+                total_cost = sum(float(t["price"]) * float(t["amount"]) for t in trades)
+                total_qty  = sum(float(t["amount"]) for t in trades)
+                return round(total_cost / total_qty, 8) if total_qty else fallback
+            order = market_result.get("order", {})
+            avg   = order.get("average_price") or order.get("price")
+            return float(avg) if avg else fallback
+        except Exception:
+            return fallback
+
     def get_position_size(self, symbol: str) -> float:
-        """Returns current position size for a symbol (0 if no position)."""
         try:
             instrument = self.get_instrument_name(symbol)
             for p in self.get_positions():
@@ -217,39 +387,11 @@ class DeribitClient:
         except Exception as e:
             log.warning(f"  get_position_size {symbol}: {e}"); return 0.0
 
-    def calc_contracts(self, symbol: str, balance_usd: float,
-                       entry: float, stop: float, risk_mult: float = 1.0):
-        try:
-            from config import RISK_PER_TRADE as rpt
-        except ImportError:
-            rpt = 0.01
-            
-        risk_usd  = balance_usd * rpt * risk_mult
-        stop_dist = abs(entry - stop)
-        
-        # Leverage reduces the margin needed per contract — position size
-        # stays the same in notional terms; capital requirement is halved.
-        # We do NOT increase position size with leverage; we keep risk constant.
-        # This preserves the 1% risk rule while freeing up margin for other trades.
-        
-        min_amt   = self.get_min_trade_amount(symbol)
-        if stop_dist <= 0 or entry <= 0:
-            return self.round_amount(symbol, min_amt)
-        raw = risk_usd / stop_dist
-        max_pct  = (balance_usd * 0.05) / entry
-        max_risk = (risk_usd * 10) / entry
-        raw      = min(raw, max_pct, max_risk)
-        result   = self.round_amount(symbol, max(raw, min_amt))
-        notional = result * entry
-        log.info(f"  Contracts: {result} {symbol} | notional≈${notional:.0f} | risk=${risk_usd:.2f}")
-        return result
-
     def get_all_balances(self) -> dict:
         balances = {}
         for cur in ["BTC", "ETH", "USDC", "USDT"]:
             try:
-                s  = self._get("/private/get_account_summary",
-                               {"currency": cur, "extended": "true"})
+                s  = self._get("/private/get_account_summary", {"currency": cur, "extended": "true"})
                 eq = float(s.get("equity_usd") or s.get("equity") or 0)
                 av = float(s.get("available_funds", 0) or 0)
                 if eq > 0:
@@ -265,40 +407,14 @@ class DeribitClient:
         try:
             positions = []
             for cur in ["BTC", "ETH", "USDC"]:
-                r = self._get("/private/get_positions",
-                              {"currency": cur, "kind": "future"})
+                r = self._get("/private/get_positions", {"currency": cur, "kind": "future"})
                 if isinstance(r, list):
                     positions.extend(p for p in r if float(p.get("size", 0) or 0) != 0)
             return positions
         except Exception as e:
             log.warning(f"  get_positions: {e}"); return []
 
-    def place_market_order(self, symbol: str, side: str, amount) -> dict:
-        instrument = self.get_instrument_name(symbol)
-        method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
-        result     = self._post(method, {
-            "instrument_name": instrument,
-            "amount":          amount,
-            "type":            "market",
-            "label":           f"bot_entry_{int(time.time())}",
-        })
-        order = result.get("order", result)
-        log.info(f"  ✅ MARKET {side.upper()} {amount} {instrument} "
-                 f"id={order.get('order_id','')} state={order.get('order_state','')}")
-        return result
-
-    def get_fill_price(self, market_result: dict, fallback: float) -> float:
-        trades = market_result.get("trades", [])
-        if trades:
-            prices = [float(t["price"]) for t in trades if t.get("price")]
-            if prices: return round(sum(prices) / len(prices), 8)
-        order = market_result.get("order", market_result)
-        avg   = order.get("average_price") or order.get("price")
-        return float(avg) if avg and float(avg) > 0 else fallback
-
-    def place_limit_order(self, symbol: str, side: str, amount,
-                          price: float, stop_price: float = None,
-                          use_reduce_only: bool = True) -> dict:
+    def place_limit_order(self, symbol: str, side: str, amount, price: float, stop_price: float = None, use_reduce_only: bool = True) -> dict:
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
@@ -325,11 +441,10 @@ class DeribitClient:
         result = self._post(method, body)
         order  = result.get("order", result)
         kind   = "SL" if stop_price else "TP"
-        log.info(f"  ✅ {kind} {side.upper()} {amount} {instrument} "
-                 f"@ {safe_price} id={order.get('order_id','')} "
-                 f"state={order.get('order_state','')} "
-                 f"{'[no-reduce-only]' if not use_reduce_only else ''}")
+        log.info(f"  ✅ {kind} {side.upper()} {amount} {instrument} @ {safe_price} id={order.get('order_id','')} state={order.get('order_state','')} {'[no-reduce-only]' if not use_reduce_only else ''}")
         return result
+
+    # ── V7 CRITICAL METHODS RESTORED BELOW THIS LINE ──
 
     def get_order(self, order_id: str) -> dict:
         try:
@@ -387,27 +502,13 @@ class DeribitClient:
         except Exception as e:
             log.warning(f"  cancel {order_id}: {e}"); return {}
 
-    def test_connection(self) -> bool:
+    def get_open_orders(self, symbol: str) -> list:
         try:
-            total = self.get_total_equity_usd()
-            log.info(f"✅ Deribit OK — ${total:.2f} | {len(TRADEABLE_SYMBOLS)} symbols")
-            return True
+            return self._get("/private/get_open_orders_by_instrument", {"instrument_name": self.get_instrument_name(symbol)}) or []
         except Exception as e:
-            log.error(f"✗ Deribit: {e}"); raise
-            
+            log.warning(f"  open_orders {symbol}: {e}"); return []
+
     def set_leverage(self, symbol: str, leverage: int = DEFAULT_LEVERAGE) -> bool:
-        """
-        Sets leverage for a symbol before opening a position.
-        Deribit endpoint: private/set_leverage
-        Must be called before place_market_order for the leverage to apply.
-    
-        Args:
-            symbol:   e.g. "BTCUSDT"
-            leverage: integer 1–50 (default: DEFAULT_LEVERAGE = 2)
-    
-        Returns:
-            True on success, False on failure (non-blocking — trade still proceeds)
-        """
         try:
             self._ensure_auth()
             instrument = self.get_instrument_name(symbol)
@@ -419,6 +520,13 @@ class DeribitClient:
             log.info(f"  ⚡ Leverage set to {actual}x — {instrument}")
             return True
         except Exception as e:
-            # Non-fatal: if leverage setting fails, order proceeds at default margin
             log.warning(f"  set_leverage {symbol}: {e} — proceeding at default margin")
             return False
+
+    def test_connection(self) -> bool:
+        try:
+            total = self.get_total_equity_usd()
+            log.info(f"✅ Deribit OK — ${total:.2f} | {len(TRADEABLE_SYMBOLS)} symbols")
+            return True
+        except Exception as e:
+            log.error(f"✗ Deribit: {e}"); raise
