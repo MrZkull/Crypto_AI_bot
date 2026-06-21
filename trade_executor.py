@@ -400,7 +400,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         log.info(f"  {symbol}: already open — skip"); return False
     if not deribit.is_supported(symbol):
         log.info(f"  {symbol}: not on Deribit — skip"); return False
-    if not check_correlation(trades, signal): return False
+    if not check_correlation(trades, signal, symbol): return False
 
     daily_count = _get_daily_trade_count()
     if daily_count >= MAX_DAILY_TRADES:
