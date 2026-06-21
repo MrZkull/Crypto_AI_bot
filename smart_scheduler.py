@@ -148,11 +148,35 @@ def check_daily_pnl_advisory() -> str:
         return ""
     except Exception: return ""
 
-def check_correlation(trades: dict, new_signal: str) -> bool:
-    try: from config import MAX_SAME_DIRECTION
-    except ImportError: MAX_SAME_DIRECTION = 2
-    same = sum(1 for t in trades.values() if t.get("signal") == new_signal and not t.get("closed", False))
-    return same < MAX_SAME_DIRECTION
+def check_correlation(trades: dict, new_signal: str, new_symbol: str) -> bool:
+    try:
+        from config import MAX_SAME_DIRECTION
+    except ImportError:
+        MAX_SAME_DIRECTION = 2
+
+    # 1. Global Direction Cap
+    same = sum(1 for t in trades.values()
+               if t.get("signal") == new_signal and not t.get("closed", False))
+    if same >= MAX_SAME_DIRECTION:
+        log.info(f"  Correlation filter: {same} {new_signal} already open — skip")
+        return False
+
+    # 2. Sector Correlation Cap
+    SECTOR_MAP = {
+        "L1": ["SOLUSDT","AVAXUSDT","NEARUSDT","APTUSDT","SUIUSDT","MATICUSDT","TRXUSDT","ATOMUSDT"],
+        "DeFi": ["UNIUSDT","AAVEUSDT","LINKUSDT"],
+        "BTC_family": ["BTCUSDT","LTCUSDT","BCHUSDT"],
+    }
+    
+    for sector, coins in SECTOR_MAP.items():
+        if new_symbol in coins:
+            sector_open = sum(1 for t in trades.values()
+                              if t.get("symbol") in coins and not t.get("closed", False))
+            if sector_open >= 2:
+                log.info(f"  Sector cap: {sector} already has {sector_open} open — skip {new_symbol}")
+                return False
+
+    return True
 
 def should_scan() -> tuple:
     log.info(f"  Scan triggered at {datetime.now(timezone.utc).strftime('%H:%M UTC')} "
@@ -163,7 +187,6 @@ def should_scan() -> tuple:
              f"| score≥{mode['min_score']} | ADX≥{mode['min_adx']} "
              f"| risk_mult={mode['risk_mult']} | {vol['message']}")
              
-    # ── FIXED LOGIC: Correctly identify the skip reason ──
     if vol.get("skip") or mode.get("risk_mult", 1.0) == 0.0:
         skip_reason = vol["message"] if vol.get("skip") else mode["label"]
         return False, mode, vol, skip_reason
@@ -173,11 +196,10 @@ def should_scan() -> tuple:
     
     return True, mode, vol, f"{mode['label']}"
 
-
 def get_mode_thresholds(mode: dict) -> dict:
     return {"min_confidence": mode["min_confidence"], "min_score": mode["min_score"], "min_adx": mode["min_adx"], "risk_mult": mode.get("risk_mult", 1.0)}
 
 def get_effective_risk(mode: dict, vol: dict) -> float:
     ratchet = get_drawdown_ratchet()
     return max(mode.get("risk_mult", 1.0) * vol.get("risk_mult", 1.0) * ratchet, 0.25) if ratchet > 0 else 0.0
-                                           
+                           
