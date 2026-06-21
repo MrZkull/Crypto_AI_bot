@@ -24,14 +24,14 @@ TRADES_FILE        = "trades.json"
 HISTORY_FILE       = "trade_history.json"
 SIGNALS_FILE       = "signals.json"
 BALANCE_FILE       = "balance.json"
-MAX_OPEN_TRADES    = 4
+MAX_OPEN_TRADES    = 10 #changed from 4 to 10 to monitor performance in testnet but will revert changes in mainet
 
 # --- V2 PRO CONSTANTS ---
 COOLDOWN_FILE      = "cooldown.json"
 RELIABILITY_FILE   = "reliability.json"
 COOLDOWN_HOURS     = 2
 GHOST_STRIKE_LIMIT = 3
-MAX_DAILY_TRADES   = 8
+MAX_DAILY_TRADES   = 40 #changed from 8 to 40 to monitor performance in testnet but will revert changes in mainet
 FUNDING_WARN_PCT   = 0.05
 FUNDING_SKIP_PCT   = 0.10
 # ------------------------
