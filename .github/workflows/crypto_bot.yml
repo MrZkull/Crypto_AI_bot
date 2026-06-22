@@ -121,19 +121,17 @@ jobs:
           # Explicitly untrack .pkl files just in case they slipped into the index
           git rm --cached --ignore-unmatch "*.pkl" "*.joblib" 2>/dev/null || true
 
-          # Target ONLY the state files. Never use "git add -A" or "git add ."
-          git add trades.json || true
-          git add trade_history.json || true
-          git add signals.json || true
-          git add scan_mode.json || true
-          git add balance.json || true
-          git add data/ || true
-
-          # Commit only if there are actually changes to these specific files
+          # Stash current state to prevent remote overwrite
+          git stash push -- trades.json trade_history.json balance.json signals.json scan_mode.json data/ || true
+          
+          # Pull latest remote
+          git pull --rebase origin main || git pull origin main
+          
+          # Pop stash to restore our new trades
+          git stash pop || true
+          
+          # Add and commit
+          git add trades.json trade_history.json balance.json signals.json scan_mode.json data/ || true
           git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
-
-          # Pull with rebase and autostash, retry once on conflict
-          git pull --rebase origin main --autostash || \
-            (git rebase --abort && git pull origin main && git push origin main && exit 0)
-
           git push origin main
+          
