@@ -1,4 +1,4 @@
-# deribit_client.py — V9: Complete Merge (Max Caps + Slippage Protection + All V7 Methods)
+# deribit_client.py — V10: Sub-Dollar Tick Size Fix & Complete V7 Methods
 
 import math, time, logging, requests
 log = logging.getLogger(__name__)
@@ -10,7 +10,7 @@ DEFAULT_LEVERAGE      = 2      # 2x leverage — preserves 1% risk, frees margin
 MAX_SLIPPAGE_PCT      = 0.002  # 0.2% max acceptable slippage on entry
 WIDE_SPREAD_WARN_PCT  = 0.003  # warn if spread > 0.3%
 
-# ── SYMBOL MAP (Updated with Max Amounts) ──
+# ── SYMBOL MAP (Updated with Max Amounts & Tick Sizes) ──
 SYMBOL_MAP = {
     # Big 3
     "BTCUSDT":    {"instrument": "BTC_USDC-PERPETUAL",   "currency": "USDC",
@@ -193,7 +193,6 @@ class DeribitClient:
         return float(api_min) if api_min else float(SYMBOL_MAP[symbol].get("min_amount", 1.0))
 
     def get_max_trade_amount(self, symbol: str) -> float:
-        """Returns exchange ceiling for this instrument."""
         info    = self.get_instrument_info(symbol)
         api_max = info.get("max_trade_amount") or info.get("max_amount")
         return float(api_max) if api_max else float(
@@ -201,9 +200,33 @@ class DeribitClient:
         )
 
     def round_price(self, symbol: str, price: float) -> float:
-        if price <= 0: return 0.0
-        tick     = self.get_tick_size(symbol)
+        """
+        Round price to exchange tick size.
+        SAFETY: always falls back to SYMBOL_MAP tick if API returns wrong value.
+        Never returns 0.0 for a positive input price.
+        """
+        if price <= 0:
+            return 0.0
+            
+        # Try API tick first, validate it makes sense for this price
+        tick = self.get_tick_size(symbol)
+        
+        # Sanity check: if tick > price/2, the API returned garbage 
+        # (e.g. tick=1.0 for an ADA price of $0.16 would round to 0.0)
+        if tick <= 0 or tick > price / 2:
+            tick = float(SYMBOL_MAP.get(symbol, {}).get("tick_size", 0.0001))
+            log.debug(f"  round_price: API tick invalid for {symbol}@{price:.6f} — using SYMBOL_MAP tick={tick}")
+            
+        if tick <= 0:
+            tick = 0.0001  # absolute fallback
+            
         rounded  = round(round(price / tick) * tick, 10)
+        
+        if rounded <= 0:
+            # Still 0 — return raw price rounded conservatively
+            log.warning(f"  round_price({symbol}, {price:.6f}) still 0 after tick={tick} — using raw")
+            return round(price, 6)
+            
         decimals = len(str(tick).rstrip("0").split(".")[-1]) if "." in str(tick) else 0
         return round(rounded, decimals)
 
