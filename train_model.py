@@ -456,12 +456,19 @@ def train(ds: pd.DataFrame) -> float:
     # Raw ensemble predict_proba values are not true probabilities.
     # CalibratedClassifierCV (isotonic, prefit) maps them to real win rates.
     # After calibration: when model says 60%, actual win rate will be ~60%.
+    # ── Phase 2: Probability Calibration ──────────────────────────────
+    from sklearn.frozen import FrozenEstimator
+    
+    # Raw ensemble predict_proba values are not true probabilities.
+    # CalibratedClassifierCV maps them to real win rates.
     log.info("Calibrating probability estimates (isotonic regression)...")
+    
     calibrated_ensemble = CalibratedClassifierCV(
-        ensemble,
-        method="isotonic",  # isotonic = non-parametric, better for non-linear relationships
-        cv="prefit",        # prefit = calibrate on new data without retraining
+        estimator=FrozenEstimator(ensemble), # <--- New way to prefit in sklearn 1.6+
+        method="isotonic",  
+        # cv="prefit" is intentionally completely removed here
     )
+    
     calibrated_ensemble.fit(Xte, y_test)   # calibrate on held-out test set only
     log.info("Calibration complete ✓")
 
