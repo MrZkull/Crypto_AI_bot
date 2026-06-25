@@ -79,12 +79,12 @@ def get_scan_mode() -> dict:
     if is_active:
         return {
             "mode": "active", "label": "ACTIVE HOURS", "emoji": "📈",
-            "min_confidence": 55, "min_score": 3, "min_adx": 15,
+            "min_confidence": 45, "min_score": 3, "min_adx": 15,
             "interval_min": 15, "risk_mult": round(1.0 * time_mult, 3),
         }
     return {
         "mode": "quiet", "label": "QUIET HOURS", "emoji": "🌙",
-        "min_confidence": 55, "min_score": 3, "min_adx": 18,
+        "min_confidence": 45, "min_score": 3, "min_adx": 18,
         "interval_min": 30, "risk_mult": round(0.5 * time_mult, 3),
     }
 
