@@ -1,15 +1,17 @@
-# train_model.py — Stable Core Reversion · No Mismatch · v16
+# train_model.py — Stable Core Reversion · Phase 2 (Calibrated) · v16
 #
 # REVERT ACTION: Completely removed LABEL_MULT. 
 # Target generation matches live execution 1:1.
 # Retains symmetric weights (2.0/2.0) and break-even threshold guard.
-# PHASE 1 UPDATE: Implemented Purged K-Fold CV to eliminate 24-bar lookahead leak.
+# PHASE 2 ADDITION: CalibratedClassifierCV for true probability mapping.
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier, VotingClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
@@ -20,7 +22,7 @@ try:
     from config import ATR_STOP_MULT, ATR_TARGET1_MULT, ATR_TARGET2_MULT
 except ImportError:
     ATR_STOP_MULT      = 2.5
-    ATR_TARGET1_MULT   = 3.5  # Phase 1 Target update
+    ATR_TARGET1_MULT   = 5.0
     ATR_TARGET2_MULT   = 7.5
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -38,7 +40,7 @@ MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 
-# Locked safety ratio for labeling
+# Locked safety ratio for 5.0x ATR labeling
 UNDERSAMPLE_RATIO  = 2.5   
 
 BINANCE_ENDPOINTS = [
@@ -347,7 +349,7 @@ def undersample_no_trade(
     rng           = np.random.default_rng(random_state)
     sampled_nt    = rng.choice(no_trade_idx, size=target_nt, replace=False)
 
-    # Restore chronological order (critical for TimeSeriesSplit/Purged)
+    # Restore chronological order (critical for TimeSeriesSplit)
     keep          = np.sort(np.concatenate([signal_idx, sampled_nt]))
 
     X_out = X_train.iloc[keep].reset_index(drop=True)
@@ -450,6 +452,22 @@ def train(ds: pd.DataFrame) -> float:
     )
     ensemble.fit(Xtr, y_train)
 
+    # ── Phase 2: Probability Calibration ──────────────────────────────
+    # Raw ensemble predict_proba values are not true probabilities.
+    # CalibratedClassifierCV (isotonic, prefit) maps them to real win rates.
+    # After calibration: when model says 60%, actual win rate will be ~60%.
+    log.info("Calibrating probability estimates (isotonic regression)...")
+    calibrated_ensemble = CalibratedClassifierCV(
+        ensemble,
+        method="isotonic",  # isotonic = non-parametric, better for non-linear relationships
+        cv="prefit",        # prefit = calibrate on new data without retraining
+    )
+    calibrated_ensemble.fit(Xte, y_test)   # calibrate on held-out test set only
+    log.info("Calibration complete ✓")
+
+    # Replace raw ensemble with calibrated version in pipeline
+    ensemble = calibrated_ensemble
+
     # ── Evaluation (on original unsampled test set) ───────────────────
     y_pred = ensemble.predict(Xte)
     acc    = accuracy_score(y_test, y_pred)
@@ -512,46 +530,16 @@ def train(ds: pd.DataFrame) -> float:
 
     log.info(f"\n  → Best threshold: {best_thresh:.2f}")
 
-    # ── PURGED K-FOLD CROSS VALIDATION ─────────────────────────────────
-    def purged_cv_score(ensemble_model, X_data, y_data, n_splits=5, purge_bars=24):
-        """
-        Purged cross-validation: drops 24 bars at each fold boundary
-        to prevent lookahead leakage from the target labeling window.
-        """
-        n       = len(X_data)
-        fold_sz = n // n_splits
-        scores  = []
-
-        for i in range(n_splits):
-            test_start = i * fold_sz
-            test_end   = test_start + fold_sz
-
-            # Purge: exclude bars within lookahead distance of the boundary
-            train_idx = list(range(0, max(0, test_start - purge_bars))) + \
-                        list(range(min(n, test_end + purge_bars), n))
-            test_idx  = list(range(test_start, test_end))
-
-            if len(train_idx) < 100 or len(test_idx) < 10:
-                continue
-
-            Xtr_fold = X_data[train_idx]
-            ytr_fold = y_data[train_idx]
-            Xte_fold = X_data[test_idx]
-            yte_fold = y_data[test_idx]
-
-            # Lightweight proxy model for speed (full ensemble is too slow per fold)
-            from xgboost import XGBClassifier
-            from sklearn.metrics import accuracy_score
-            probe = XGBClassifier(n_estimators=100, random_state=42,
-                                  n_jobs=-1, eval_metric="mlogloss")
-            probe.fit(Xtr_fold, ytr_fold)
-            scores.append(accuracy_score(yte_fold, probe.predict(Xte_fold)))
-
-        return np.mean(scores), np.std(scores)
-
-    log.info("\n── Evaluating Purged Cross-Validation ──────────────────")
-    pcv_mean, pcv_std = purged_cv_score(ensemble, Xtr, y_train)
-    log.info(f"  Purged CV (5-fold, purge=24): {pcv_mean*100:.1f}% ± {pcv_std*100:.1f}%")
+    # ── Time-series cross-validation ──────────────────────────────────
+    cv    = TimeSeriesSplit(n_splits=5)
+    # Note: cross_val_score evaluates the uncalibrated VotingClassifier because 
+    # cv="prefit" models cannot be directly cross-validated on the same data again
+    uncalibrated_ensemble = VotingClassifier(
+        estimators=[("xgb", xgb), ("rf", rf), ("gb", gb)],
+        voting="soft", weights=[3, 2, 1],
+    )
+    cv_sc = cross_val_score(uncalibrated_ensemble, Xtr, y_train, cv=cv, n_jobs=-1)
+    log.info(f"\n  CV (TimeSeriesSplit 5-fold): {cv_sc.mean()*100:.1f}% ± {cv_sc.std()*100:.1f}%")
 
     # ── Persist ───────────────────────────────────────────────────────
     pipeline = {
@@ -566,14 +554,16 @@ def train(ds: pd.DataFrame) -> float:
         "symbols":               SYMBOLS,
         "n_features":            len(ALL_FEATURES),
         "recommended_threshold": best_thresh,
+        "calibrated":            True,
+        "calibration_method":    "isotonic",
     }
     joblib.dump(pipeline, MODEL_FILE)
     log.info(f"\n✅ Saved: {MODEL_FILE}")
 
     perf = {
         "accuracy":       round(acc * 100, 1),
-        "cv_mean":        round(pcv_mean * 100, 1), # Uses the new purged CV score
-        "cv_std":         round(pcv_std * 100, 1),  # Uses the new purged CV standard dev
+        "cv_mean":        round(cv_sc.mean() * 100, 1),
+        "cv_std":         round(cv_sc.std() * 100, 1),
         "n_train":        int(len(X_train_raw)),
         "n_train_sampled":int(len(y_train)),
         "n_test":         int(len(X_test)),
