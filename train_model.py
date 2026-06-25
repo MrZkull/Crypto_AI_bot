@@ -1,9 +1,9 @@
-# train_model.py — Stable Core Reversion · Phase 2 (Calibrated) · v16
+# train_model.py — Stable Core Reversion · Phase 2.1 (Dynamic EV & CV Fix)
 #
 # REVERT ACTION: Completely removed LABEL_MULT. 
 # Target generation matches live execution 1:1.
-# Retains symmetric weights (2.0/2.0) and break-even threshold guard.
-# PHASE 2 ADDITION: CalibratedClassifierCV for true probability mapping.
+# Retains symmetric weights (2.0/2.0).
+# PHASE 2.1: Dynamic Break-Even Thresholding + Corrected CV Order.
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -15,6 +15,7 @@ from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
+from sklearn.frozen import FrozenEstimator
 
 from feature_engineering import add_indicators, ALL_FEATURES, ImportanceSelector
 
@@ -452,23 +453,18 @@ def train(ds: pd.DataFrame) -> float:
     )
     ensemble.fit(Xtr, y_train)
 
+    # ── Time-series cross-validation (Raw Model) ──────────────────────
+    log.info("\nRunning Cross-Validation on raw ensemble...")
+    cv    = TimeSeriesSplit(n_splits=5)
+    cv_sc = cross_val_score(ensemble, Xtr, y_train, cv=cv, n_jobs=-1)
+    log.info(f"  CV (raw, pre-calibration): {cv_sc.mean()*100:.1f}% ± {cv_sc.std()*100:.1f}%")
+
     # ── Phase 2: Probability Calibration ──────────────────────────────
-    # Raw ensemble predict_proba values are not true probabilities.
-    # CalibratedClassifierCV (isotonic, prefit) maps them to real win rates.
-    # After calibration: when model says 60%, actual win rate will be ~60%.
-    # ── Phase 2: Probability Calibration ──────────────────────────────
-    from sklearn.frozen import FrozenEstimator
-    
-    # Raw ensemble predict_proba values are not true probabilities.
-    # CalibratedClassifierCV maps them to real win rates.
-    log.info("Calibrating probability estimates (isotonic regression)...")
-    
+    log.info("\nCalibrating probability estimates (isotonic regression)...")
     calibrated_ensemble = CalibratedClassifierCV(
-        estimator=FrozenEstimator(ensemble), # <--- New way to prefit in sklearn 1.6+
+        estimator=FrozenEstimator(ensemble),
         method="isotonic",  
-        # cv="prefit" is intentionally completely removed here
     )
-    
     calibrated_ensemble.fit(Xte, y_test)   # calibrate on held-out test set only
     log.info("Calibration complete ✓")
 
@@ -500,6 +496,9 @@ def train(ds: pd.DataFrame) -> float:
     log.info(f"  {'Thresh':>6}  {'Signals':>7}  {'BUY P':>7}  {'SELL P':>8}  {'Recall':>7}  {'Est P&L':>8}")
     best_thresh = 0.45
     best_score  = 0.0
+    
+    # Dynamic Break-Even Guard based on actual configured risk multipliers
+    break_even = ATR_STOP_MULT / (ATR_TARGET1_MULT + ATR_STOP_MULT)
 
     for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60]:
         yp = []
@@ -522,8 +521,7 @@ def train(ds: pd.DataFrame) -> float:
         n_signals  = int((bm | sm).sum())
         pnl        = n_signals * avg_prec * 200 - n_signals * (1 - avg_prec) * 100
         
-        # Break-even guard: Require BOTH to be individually above 33.3% break-even mark
-        if pb < 0.334 or ps < 0.334:
+        if pb < break_even or ps < break_even:
             score = 0.0
         else:
             score = avg_prec * avg_recall
@@ -535,18 +533,8 @@ def train(ds: pd.DataFrame) -> float:
         log.info(f"  {thresh:.2f}    {n_signals:>7}    {pb:>7.1%}    {ps:>8.1%}   "
                  f"{avg_recall:>7.1%}   ${pnl:>8,.0f}")
 
-    log.info(f"\n  → Best threshold: {best_thresh:.2f}")
-
-    # ── Time-series cross-validation ──────────────────────────────────
-    cv    = TimeSeriesSplit(n_splits=5)
-    # Note: cross_val_score evaluates the uncalibrated VotingClassifier because 
-    # cv="prefit" models cannot be directly cross-validated on the same data again
-    uncalibrated_ensemble = VotingClassifier(
-        estimators=[("xgb", xgb), ("rf", rf), ("gb", gb)],
-        voting="soft", weights=[3, 2, 1],
-    )
-    cv_sc = cross_val_score(uncalibrated_ensemble, Xtr, y_train, cv=cv, n_jobs=-1)
-    log.info(f"\n  CV (TimeSeriesSplit 5-fold): {cv_sc.mean()*100:.1f}% ± {cv_sc.std()*100:.1f}%")
+    log.info(f"\n  → Dynamic Break-Even Floor: {break_even*100:.1f}%")
+    log.info(f"  → Best threshold: {best_thresh:.2f}")
 
     # ── Persist ───────────────────────────────────────────────────────
     pipeline = {
