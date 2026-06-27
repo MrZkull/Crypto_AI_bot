@@ -56,20 +56,12 @@ def get_scan_mode() -> dict:
     is_weekend = now.weekday() >= 5
     time_mult  = _get_time_risk_mult()
 
-    # ── Saturday Hard Block (COMMENTED OUT FOR 24/7 TESTING) ──
-    # if now.weekday() == 5:
-    #     return {
-    #         "mode": "saturday_block", "label": "SATURDAY (NO TRADING)", "emoji": "🛑",
-    #         "min_confidence": 99, "min_score": 99, "min_adx": 99,
-    #         "interval_min": 60, "risk_mult": 0.0,
-    #     }
-
     is_active = 8 <= hour < 20
-    if is_weekend: # Now applies to both Saturday and Sunday
+    if is_weekend:
         return {
             "mode": "weekend_active" if is_active else "weekend_quiet", 
             "label": "WEEKEND ACTIVE" if is_active else "WEEKEND QUIET", "emoji": "📅",
-            "min_confidence": 55 if is_active else 60, 
+            "min_confidence": 45,  # FIXED: Matched to active 45% standard
             "min_score": 3 if is_active else 4, 
             "min_adx": 18 if is_active else 22,
             "interval_min": 15 if is_active else 30, 
@@ -89,17 +81,36 @@ def get_scan_mode() -> dict:
     }
 
 def check_fear_and_greed() -> dict:
-    """Returns contrarian bias based on extreme market sentiment."""
+    """Fetches F&G for both Score Modification AND Hard Regime Blocks."""
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
         val = int(r.json()["data"][0]["value"])
+        
+        # Original scoring logic (Required by trade_executor for scoring)
         if val >= 75:
-            return {"bias": "SELL", "score_mod": 1, "message": f"Extreme Greed ({val}) — SELL Bias"}
+            bias, score_mod, msg, label = "SELL", 1, f"Extreme Greed ({val}) — SELL Bias", "Extreme Greed"
         elif val <= 25:
-            return {"bias": "BUY", "score_mod": 1, "message": f"Extreme Fear ({val}) — BUY Bias"}
-        return {"bias": None, "score_mod": 0, "message": f"Neutral ({val})"}
-    except Exception:
-        return {"bias": None, "score_mod": 0, "message": "F&G fetch failed"}
+            bias, score_mod, msg, label = "BUY", 1, f"Extreme Fear ({val}) — BUY Bias", "Extreme Fear"
+        else:
+            bias, score_mod, msg, label = None, 0, f"Neutral ({val})", "Neutral"
+
+        return {
+            # Old Keys
+            "bias": bias, 
+            "score_mod": score_mod, 
+            "message": msg,
+            # New Keys (For Hard Blocks)
+            "value": val,
+            "fg_blocks_sell": val <= 25,
+            "fg_blocks_buy": val >= 75,
+            "label": label
+        }
+    except Exception as e:
+        log.warning(f"F&G fetch failed ({e}) — defaulting neutral")
+        return {
+            "bias": None, "score_mod": 0, "message": "F&G fetch failed",
+            "value": 50, "fg_blocks_sell": False, "fg_blocks_buy": False, "label": "Neutral"
+        }
 
 def check_btc_momentum() -> dict:
     try:
@@ -202,4 +213,4 @@ def get_mode_thresholds(mode: dict) -> dict:
 def get_effective_risk(mode: dict, vol: dict) -> float:
     ratchet = get_drawdown_ratchet()
     return max(mode.get("risk_mult", 1.0) * vol.get("risk_mult", 1.0) * ratchet, 0.25) if ratchet > 0 else 0.0
-                           
+            
