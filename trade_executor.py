@@ -219,7 +219,7 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
 
 # ════════════ SIGNAL GENERATION ══════════════════════════════════════
 
-def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None):
+def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, fng_data=None):
     try:
         df15 = add_indicators(get_data(symbol, TIMEFRAME_ENTRY)).fillna(0)
         df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
