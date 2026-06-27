@@ -219,7 +219,7 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
 
 # ════════════ SIGNAL GENERATION ══════════════════════════════════════
 
-def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, fng_data=None):
+def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None):
     try:
         df15 = add_indicators(get_data(symbol, TIMEFRAME_ENTRY)).fillna(0)
         df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
@@ -250,6 +250,17 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, fng_data=No
 
         log.info(f"    ML: {sig} {conf:.1f}% (need ≥{thresholds['min_confidence']}%)")
         if sig == "NO_TRADE" or conf < thresholds["min_confidence"]: return None
+
+        # ── Hard F&G Regime Gate ───────────────────────────────────────────
+        if fng_data:
+            if sig == "SELL" and fng_data.get("fg_blocks_sell", False):
+                log.info(f"    [FILTER:FG_HARD] F&G={fng_data.get('value')} ({fng_data.get('label')}) "
+                         f"— blocking new SELL at potential bottom")
+                return None
+            if sig == "BUY" and fng_data.get("fg_blocks_buy", False):
+                log.info(f"    [FILTER:FG_HARD] F&G={fng_data.get('value')} ({fng_data.get('label')}) "
+                         f"— blocking new BUY at potential top")
+                return None
 
         adx = float(row.get("adx", 0))
         log.info(f"    [{symbol}] ML={sig} {conf:.1f}% ADX={adx:.1f} — evaluating filters")
@@ -1134,14 +1145,18 @@ def run_execution_scan():
     log.info(f"  Whale flow:   {whale_flow['message']}")
 
     fng_data = check_fear_and_greed()
-    log.info(f"  Fear & Greed: {fng_data['message']}")
+    log.info(f"  F&G: {fng_data.get('value')} ({fng_data.get('label')}) "
+             f"| Block SELL: {fng_data.get('fg_blocks_sell')} "
+             f"| Block BUY: {fng_data.get('fg_blocks_buy')}")
     
     vol_state = vol.get("status", "NORMAL")
 
     for symbol in SYMBOLS:
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
+        
         sig = generate_signal(symbol, pipeline, thresholds, btc_momentum, whale_flow, fng_data)
         if sig is None: time.sleep(0.2); continue
+        
         found += 1
         if execute_trade(deribit, sig, risk_mult, balance, vol_state): time.sleep(1.5)
 
