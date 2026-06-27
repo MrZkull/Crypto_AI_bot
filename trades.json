@@ -87,7 +87,8 @@
     "order_ids": {
       "entry": "",
       "stop_loss": "USDC-SLTB-28419",
-      "tp1": "USDC-220492897128"
+      "tp1": "USDC-220492897128",
+      "tp2": "USDC-220532612249"
     },
     "opened_at": "2026-06-27T11:57:30.644055+00:00",
     "tp1_hit": false,
@@ -104,6 +105,42 @@
       "F&G extreme countered (-1)"
     ],
     "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet"
+  },
+  "LINKUSDT": {
+    "symbol": "LINKUSDT",
+    "signal": "SELL",
+    "entry": 7.41465025,
+    "stop": 7.471,
+    "tp1": 7.336,
+    "tp2": 7.246,
+    "qty": 1178,
+    "qty_tp1": 589,
+    "qty_tp2": 589,
+    "risk_usd": 1786.42,
+    "balance_at_open": 175138.85,
+    "risk_mult": 1.02,
+    "order_ids": {
+      "entry": "USDC-220532764651",
+      "stop_loss": "USDC-SLTB-28440",
+      "tp1": "USDC-220532768687",
+      "tp2": "USDC-220532768829"
+    },
+    "opened_at": "2026-06-27T15:23:09.433420+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 57.4,
+    "score": 4,
+    "reasons": [
+      "Strong ADX 55",
+      "RSI not oversold (63)",
+      "4h trend aligns (RSI 49)",
+      "4h trend established (20h)",
+      "F&G extreme countered (-1)",
+      "Volume surge 2.5\u00d7"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"
   }
 }
