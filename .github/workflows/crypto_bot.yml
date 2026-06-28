@@ -11,6 +11,7 @@ on:
         default: 'scan'
         type: choice
         options: [scan, diagnostic]
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -121,8 +122,8 @@ jobs:
           # Explicitly untrack .pkl files just in case they slipped into the index
           git rm --cached --ignore-unmatch "*.pkl" "*.joblib" 2>/dev/null || true
 
-          # Stash current state to prevent remote overwrite
-          git stash push -- trades.json trade_history.json balance.json signals.json scan_mode.json data/ || true
+          # CRITICAL FIX: Stash with --include-untracked to protect fresh JSON files
+          git stash push --include-untracked -- trades.json trade_history.json balance.json signals.json scan_mode.json data/ || true
           
           # Pull latest remote
           git pull --rebase origin main || git pull origin main
@@ -134,4 +135,3 @@ jobs:
           git add trades.json trade_history.json balance.json signals.json scan_mode.json data/ || true
           git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
           git push origin main
-          
