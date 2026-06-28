@@ -3,7 +3,7 @@
 # REVERT ACTION: Completely removed LABEL_MULT. 
 # Target generation matches live execution 1:1.
 # Retains symmetric weights (2.0/2.0).
-# PHASE 2.1: Dynamic Break-Even Thresholding + Corrected CV Order.
+# PHASE 2.1: Dynamic Break-Even Thresholding.
 # PHASE 3: Walk-forward validation + Asymmetric XGBoost Loss.
 
 import os, json, time, logging, joblib, requests
@@ -350,7 +350,7 @@ def undersample_no_trade(
     rng           = np.random.default_rng(random_state)
     sampled_nt    = rng.choice(no_trade_idx, size=target_nt, replace=False)
 
-    # Restore chronological order (critical for TimeSeriesSplit)
+    # Restore chronological order (critical for temporal integrity)
     keep          = np.sort(np.concatenate([signal_idx, sampled_nt]))
 
     X_out = X_train.iloc[keep].reset_index(drop=True)
@@ -416,7 +416,7 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights (Phase 3: Asymmetric setup) ──
+    # ── Phase 3: Sample weights (Asymmetric setup) ────────────────────
     log.info("Building asymmetric sample weights for XGBoost...")
     sw_asym = np.ones(len(y_train))
     sw_asym[y_train == buy_idx]  = 2.0
@@ -581,6 +581,7 @@ def train(ds: pd.DataFrame) -> float:
     joblib.dump(pipeline, MODEL_FILE)
     log.info(f"\n✅ Saved: {MODEL_FILE}")
 
+    # Phase 3 Cleanup: JSON Output correctly maps Walk-Forward metrics
     perf = {
         "accuracy":       round(acc * 100, 1),
         "wf_mean":        round(wf_mean * 100, 1),
