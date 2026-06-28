@@ -1,9 +1,10 @@
-# train_model.py — Stable Core Reversion · Phase 2.1 (Dynamic EV & CV Fix)
+# train_model.py — Stable Core Reversion · Phase 3 (Walk-Forward & Asymmetric Loss)
 #
 # REVERT ACTION: Completely removed LABEL_MULT. 
 # Target generation matches live execution 1:1.
 # Retains symmetric weights (2.0/2.0).
 # PHASE 2.1: Dynamic Break-Even Thresholding + Corrected CV Order.
+# PHASE 3: Walk-forward validation + Asymmetric XGBoost Loss.
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -11,7 +12,6 @@ import numpy as np
 from datetime import datetime, timezone
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier, VotingClassifier
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
@@ -416,10 +416,18 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Sample weights (Symmetric setup) ──
-    sw          = np.ones(len(y_train))
-    sw[y_train == buy_idx]  = 2.0
-    sw[y_train == sell_idx] = 2.0
+    # ── Sample weights (Phase 3: Asymmetric setup) ──
+    log.info("Building asymmetric sample weights for XGBoost...")
+    sw_asym = np.ones(len(y_train))
+    sw_asym[y_train == buy_idx]  = 2.0
+    sw_asym[y_train == sell_idx] = 2.0
+    
+    # Apply 2x additional penalty (4.0 total) for BUY signals during downtrends
+    if "trend_1h" in selected:
+        trend_idx = selected.index("trend_1h")
+        downtrend_mask = Xtr[:, trend_idx] < 0
+        sw_asym[(y_train == buy_idx) & downtrend_mask] *= 2.0
+        log.info("  -> Asymmetric penalty applied to counter-trend BUYs.")
 
     # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
@@ -428,7 +436,7 @@ def train(ds: pd.DataFrame) -> float:
         subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
         gamma=0.05, eval_metric="mlogloss", random_state=42, n_jobs=-1,
     )
-    xgb.fit(Xtr, y_train, sample_weight=sw)
+    xgb.fit(Xtr, y_train, sample_weight=sw_asym)
 
     log.info("Training RandomForest...")
     rf = RandomForestClassifier(
@@ -453,11 +461,29 @@ def train(ds: pd.DataFrame) -> float:
     )
     ensemble.fit(Xtr, y_train)
 
-    # ── Time-series cross-validation (Raw Model) ──────────────────────
-    log.info("\nRunning Cross-Validation on raw ensemble...")
-    cv    = TimeSeriesSplit(n_splits=5)
-    cv_sc = cross_val_score(ensemble, Xtr, y_train, cv=cv, n_jobs=-1)
-    log.info(f"  CV (raw, pre-calibration): {cv_sc.mean()*100:.1f}% ± {cv_sc.std()*100:.1f}%")
+    # ── Phase 3: Walk-forward validation (Raw Model) ──────────────────
+    log.info("\nRunning Walk-Forward Validation (4 chronological windows)...")
+    wf_scores = []
+    window = len(Xtr) // 5
+    
+    for i in range(4):
+        wf_train_end  = (i + 1) * window
+        wf_test_start = wf_train_end
+        wf_test_end   = wf_test_start + window
+        
+        if wf_test_end > len(Xtr): break
+        
+        probe = XGBClassifier(n_estimators=100, random_state=42, eval_metric="mlogloss", n_jobs=-1)
+        probe.fit(Xtr[:wf_train_end], y_train[:wf_train_end])
+        
+        preds = probe.predict(Xtr[wf_test_start:wf_test_end])
+        acc_wf = accuracy_score(y_train[wf_test_start:wf_test_end], preds)
+        wf_scores.append(acc_wf)
+        
+    wf_mean = np.mean(wf_scores) if wf_scores else 0.0
+    wf_std  = np.std(wf_scores) if wf_scores else 0.0
+    log.info(f"  Walk-forward Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
+    log.info(f"  Window scores: {[f'{s*100:.1f}%' for s in wf_scores]}")
 
     # ── Phase 2: Probability Calibration ──────────────────────────────
     log.info("\nCalibrating probability estimates (isotonic regression)...")
@@ -557,8 +583,8 @@ def train(ds: pd.DataFrame) -> float:
 
     perf = {
         "accuracy":       round(acc * 100, 1),
-        "cv_mean":        round(cv_sc.mean() * 100, 1),
-        "cv_std":         round(cv_sc.std() * 100, 1),
+        "wf_mean":        round(wf_mean * 100, 1),
+        "wf_std":         round(wf_std * 100, 1),
         "n_train":        int(len(X_train_raw)),
         "n_train_sampled":int(len(y_train)),
         "n_test":         int(len(X_test)),
