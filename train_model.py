@@ -43,7 +43,7 @@ N_FEATURES         = 35
 MIN_BARS           = 100
 
 # Locked safety ratio for 5.0x ATR labeling
-UNDERSAMPLE_RATIO  = 2.5   
+UNDERSAMPLE_RATIO  = 1.5   
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
