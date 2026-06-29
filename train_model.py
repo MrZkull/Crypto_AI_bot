@@ -1,10 +1,11 @@
-# train_model.py — Stable Core Reversion · Phase 3 (Walk-Forward & Asymmetric Loss)
+# train_model.py — Stable Core Reversion · Phase 3.1 (Regime Expansion)
 #
 # REVERT ACTION: Completely removed LABEL_MULT. 
 # Target generation matches live execution 1:1.
 # Retains symmetric weights (2.0/2.0).
 # PHASE 2.1: Dynamic Break-Even Thresholding.
 # PHASE 3: Walk-forward validation + Asymmetric XGBoost Loss.
+# PHASE 3.1: Added Recovery_Jan23 to patch Window 3 transition gap.
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -58,6 +59,7 @@ BEAR_WINDOWS = [
     {"label": "Aug2023_dip",        "start_ms": 1690848000000, "end_ms": 1692057600000, "candles": 1440},
     {"label": "Apr2024_halving",    "start_ms": 1713225600000, "end_ms": 1714435200000, "candles": 1440},
     {"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880}, 
+    {"label": "Recovery_Jan23",     "start_ms": 1672531200000, "end_ms": 1675209600000, "candles": 2880}, # Phase 3.1 Gap Fix
 ]
 
 # ── Data fetching ──────────────────────────────────────────────────────
@@ -252,14 +254,12 @@ def _process_segment(df15, df1h, df4h, regime):
     
     df15 = add_indicators(df15)
     
-    # 1H Alignment
     if not df1h.empty:
         df1h_feat = add_indicators(df1h)
         df15 = _align_1h_to_15m(df1h_feat, df15)
     else:
         df15["rsi_1h"] = 50.0; df15["adx_1h"] = 0.0; df15["trend_1h"] = 0.0
 
-    # 4H Alignment
     if not df4h.empty:
         df4h_feat = add_indicators(df4h)
         df15 = _align_4h_to_15m(df4h_feat, df15)
@@ -345,12 +345,11 @@ def undersample_no_trade(
     no_trade_idx  = np.where(~signal_mask)[0]
 
     target_nt     = int(len(signal_idx) * ratio)
-    target_nt     = min(target_nt, len(no_trade_idx))  # can't sample more than exists
+    target_nt     = min(target_nt, len(no_trade_idx))  
 
     rng           = np.random.default_rng(random_state)
     sampled_nt    = rng.choice(no_trade_idx, size=target_nt, replace=False)
 
-    # Restore chronological order (critical for temporal integrity)
     keep          = np.sort(np.concatenate([signal_idx, sampled_nt]))
 
     X_out = X_train.iloc[keep].reset_index(drop=True)
@@ -369,7 +368,6 @@ def undersample_no_trade(
 # ── Training ───────────────────────────────────────────────────────────
 
 def train(ds: pd.DataFrame) -> float:
-    # Sort the ENTIRE dataset chronologically before splitting.
     if "open_time" in ds.columns:
         ds = ds.sort_values("open_time").reset_index(drop=True)
         log.info("Dataset sorted globally by open_time ✓")
@@ -388,12 +386,10 @@ def train(ds: pd.DataFrame) -> float:
     buy_idx  = classes.index("BUY")      if "BUY"      in classes else 0
     sell_idx = classes.index("SELL")     if "SELL"     in classes else 2
 
-    # ── Chronological split (test set untouched) ──────────────────────
     split_idx           = int(len(X) * (1 - TEST_SPLIT))
     X_train_raw, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train_raw, y_test = y[:split_idx], y[split_idx:]
 
-    # ── Feature importance scan (on raw balanced training set) ────────
     log.info("Importance scan...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train_raw, y_train_raw)
@@ -412,24 +408,20 @@ def train(ds: pd.DataFrame) -> float:
     X_train_raw_sel = X_train_raw[selected]
     Xte             = X_test[selected].values
 
-    # ── NO_TRADE undersampling (training set only) ────────────────────
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # ── Phase 3: Sample weights (Asymmetric setup) ────────────────────
     log.info("Building asymmetric sample weights for XGBoost...")
     sw_asym = np.ones(len(y_train))
     sw_asym[y_train == buy_idx]  = 2.0
     sw_asym[y_train == sell_idx] = 2.0
     
-    # Apply 2x additional penalty (4.0 total) for BUY signals during downtrends
     if "trend_1h" in selected:
         trend_idx = selected.index("trend_1h")
         downtrend_mask = Xtr[:, trend_idx] < 0
         sw_asym[(y_train == buy_idx) & downtrend_mask] *= 2.0
         log.info("  -> Asymmetric penalty applied to counter-trend BUYs.")
 
-    # ── Model training ────────────────────────────────────────────────
     log.info("Training XGBoost...")
     xgb = XGBClassifier(
         n_estimators=300, max_depth=6, learning_rate=0.03,
@@ -461,7 +453,6 @@ def train(ds: pd.DataFrame) -> float:
     )
     ensemble.fit(Xtr, y_train)
 
-    # ── Phase 3: Walk-forward validation (Raw Model) ──────────────────
     log.info("\nRunning Walk-Forward Validation (4 chronological windows)...")
     wf_scores = []
     window = len(Xtr) // 5
@@ -485,19 +476,16 @@ def train(ds: pd.DataFrame) -> float:
     log.info(f"  Walk-forward Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
     log.info(f"  Window scores: {[f'{s*100:.1f}%' for s in wf_scores]}")
 
-    # ── Phase 2: Probability Calibration ──────────────────────────────
     log.info("\nCalibrating probability estimates (isotonic regression)...")
     calibrated_ensemble = CalibratedClassifierCV(
         estimator=FrozenEstimator(ensemble),
         method="isotonic",  
     )
-    calibrated_ensemble.fit(Xte, y_test)   # calibrate on held-out test set only
+    calibrated_ensemble.fit(Xte, y_test)
     log.info("Calibration complete ✓")
 
-    # Replace raw ensemble with calibrated version in pipeline
     ensemble = calibrated_ensemble
 
-    # ── Evaluation (on original unsampled test set) ───────────────────
     y_pred = ensemble.predict(Xte)
     acc    = accuracy_score(y_test, y_pred)
     report = classification_report(y_test, y_pred, target_names=classes, output_dict=True)
@@ -513,7 +501,6 @@ def train(ds: pd.DataFrame) -> float:
         log.info(f"  {label:<5} precision: {p:.1%}  recall: {r:.1%}  f1: {f1:.1%}")
     log.info("  (target: both ≥55% precision, both ≥25% recall)")
 
-    # ── Threshold calibration ─────────────────────────────────────────
     probas    = ensemble.predict_proba(Xte)
     real_buy  = (y_test == buy_idx).sum()
     real_sell = (y_test == sell_idx).sum()
@@ -523,7 +510,6 @@ def train(ds: pd.DataFrame) -> float:
     best_thresh = 0.45
     best_score  = 0.0
     
-    # Dynamic Break-Even Guard based on actual configured risk multipliers
     break_even = ATR_STOP_MULT / (ATR_TARGET1_MULT + ATR_STOP_MULT)
 
     for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60]:
@@ -562,7 +548,6 @@ def train(ds: pd.DataFrame) -> float:
     log.info(f"\n  → Dynamic Break-Even Floor: {break_even*100:.1f}%")
     log.info(f"  → Best threshold: {best_thresh:.2f}")
 
-    # ── Persist ───────────────────────────────────────────────────────
     pipeline = {
         "ensemble":              ensemble,
         "selector":              ImportanceSelector(selected),
@@ -581,7 +566,6 @@ def train(ds: pd.DataFrame) -> float:
     joblib.dump(pipeline, MODEL_FILE)
     log.info(f"\n✅ Saved: {MODEL_FILE}")
 
-    # Phase 3 Cleanup: JSON Output correctly maps Walk-Forward metrics
     perf = {
         "accuracy":       round(acc * 100, 1),
         "wf_mean":        round(wf_mean * 100, 1),
