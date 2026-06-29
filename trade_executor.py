@@ -1,4 +1,4 @@
-# trade_executor.py — V2.8: Drift Gates, Sentiment Biases, Dynamic ATR Sizing
+# trade_executor.py — V2.9: Institutional Confidence Sizing + Sentiment Gates
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -24,14 +24,14 @@ TRADES_FILE        = "trades.json"
 HISTORY_FILE       = "trade_history.json"
 SIGNALS_FILE       = "signals.json"
 BALANCE_FILE       = "balance.json"
-MAX_OPEN_TRADES    = 10 #changed from 4 to 10 to monitor performance in testnet but will revert changes in mainet
+MAX_OPEN_TRADES    = 10 # changed from 4 to 10 to monitor performance in testnet but will revert changes in mainnet
 
 # --- V2 PRO CONSTANTS ---
 COOLDOWN_FILE      = "cooldown.json"
 RELIABILITY_FILE   = "reliability.json"
 COOLDOWN_HOURS     = 2
 GHOST_STRIKE_LIMIT = 3
-MAX_DAILY_TRADES   = 40 #changed from 8 to 40 to monitor performance in testnet but will revert changes in mainet
+MAX_DAILY_TRADES   = 40 # changed from 8 to 40 to monitor performance in testnet but will revert changes in mainnet
 FUNDING_WARN_PCT   = 0.05
 FUNDING_SKIP_PCT   = 0.10
 # ------------------------
@@ -54,7 +54,7 @@ def load_json(path, default):
 def save_json(path, data):
     for dest in [Path(path), Path("data") / Path(path).name]:
         try:
-            dest.parent.mkdir(exist_ok=True)
+            dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = str(dest) + ".tmp"
             with open(tmp,"w") as f: json.dump(data, f, indent=2, default=str)
             os.replace(tmp, str(dest))
@@ -391,10 +391,22 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         # Note: Dynamic TP calculations shifted to execute_trade where drift is calculated.
         # Storing base limits here so Executor can dynamically adjust them against Volatility limits
         
-        return {"symbol":symbol,"signal":sig,"confidence":conf,"score":score,
-                "entry":entry,"atr":atr,"stop":0,"tp1":0,"tp2":0,"reasons":reasons}
+        return {
+            "symbol": symbol,
+            "signal": sig,
+            "confidence": conf,
+            "score": score,
+            "entry": entry,
+            "atr": atr,
+            "stop": 0,
+            "tp1": 0,
+            "tp2": 0,
+            "reasons": reasons,
+            "conf_tier": "high" if conf >= 60.0 else "normal"
+        }
     except Exception as e:
-        log.error(f"    Signal {symbol}: {e}"); return None
+        log.error(f"    Signal {symbol}: {e}")
+        return None
 
 
 # ════════════ EXECUTE TRADE ══════════════════════════════════════════
@@ -464,9 +476,16 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     sig["tp1"]  = tp1
     sig["tp2"]  = tp2
 
-    total_q          = deribit.calc_contracts(symbol, balance, entry, stop, risk_mult)
+    # ── High-Conviction Institutional Risk Boost ──
+    risk_boost = 1.5 if sig.get("conf_tier") == "high" else 1.0
+    final_risk_mult = risk_mult * risk_boost
+    
+    if risk_boost > 1.0:
+        log.info(f"  🔥 High Conviction ({sig['confidence']}%) — Risk multiplier boosted by {risk_boost}x")
+
+    total_q          = deribit.calc_contracts(symbol, balance, entry, stop, final_risk_mult)
     qty_tp1, qty_tp2 = deribit.split_amount(symbol, total_q)
-    risk_usd         = round(balance * RISK_PER_TRADE * risk_mult, 2)
+    risk_usd         = round(balance * RISK_PER_TRADE * final_risk_mult, 2)
 
     log.info(f"  {signal} {symbol} total={total_q} risk=${risk_usd:.2f}")
     log.info(f"  SL={stop:.{dec}f} TP1={tp1:.{dec}f} TP2={tp2:.{dec}f}")
@@ -535,7 +554,8 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         "symbol":symbol,"signal":signal,"entry":actual_entry,
         "stop":stop,"tp1":tp1,"tp2":tp2,
         "qty":total_q,"qty_tp1":qty_tp1,"qty_tp2":qty_tp2,
-        "risk_usd":risk_usd,"balance_at_open":balance,"risk_mult":risk_mult,
+        "risk_usd":risk_usd,"balance_at_open":balance,
+        "risk_mult":final_risk_mult,
         "order_ids":order_ids,
         "opened_at":datetime.now(timezone.utc).isoformat(),
         "tp1_hit":False,"tp2_hit":False,"closed":False,
@@ -890,7 +910,6 @@ def check_open_trades(deribit: DeribitClient):
                     except Exception as e:
                         log.error(f"  Mark-breach close {symbol}: {e}")
 
-
                 if not sl_hit and sl_breached and sl_not_waiting:
                     log.warning(f"  ⚠️ {symbol}: price {live:.{dec}f} past SL {stop:.{dec}f} (state='{sl_state}') — SCENARIO B market close")
                     try:
@@ -1145,9 +1164,7 @@ def run_execution_scan():
     log.info(f"  Whale flow:   {whale_flow['message']}")
 
     fng_data = check_fear_and_greed()
-    log.info(f"  F&G: {fng_data.get('value')} ({fng_data.get('label')}) "
-             f"| Block SELL: {fng_data.get('fg_blocks_sell')} "
-             f"| Block BUY: {fng_data.get('fg_blocks_buy')}")
+    log.info(f"  Fear & Greed: {fng_data['message']}")
     
     vol_state = vol.get("status", "NORMAL")
 
