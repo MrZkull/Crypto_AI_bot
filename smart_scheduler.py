@@ -76,7 +76,7 @@ def get_scan_mode() -> dict:
         }
     return {
         "mode": "quiet", "label": "QUIET HOURS", "emoji": "🌙",
-        "min_confidence": 45, "min_score": 3, "min_adx": 18,
+        "min_confidence": 50, "min_score": 3, "min_adx": 18,
         "interval_min": 30, "risk_mult": round(0.5 * time_mult, 3),
     }
 
