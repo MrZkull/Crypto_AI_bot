@@ -61,7 +61,7 @@ def get_scan_mode() -> dict:
         return {
             "mode": "weekend_active" if is_active else "weekend_quiet", 
             "label": "WEEKEND ACTIVE" if is_active else "WEEKEND QUIET", "emoji": "📅",
-            "min_confidence": 45,  # FIXED: Matched to active 45% standard
+            "min_confidence": 50,  # FIXED: Matched to active 45% standard
             "min_score": 3 if is_active else 4, 
             "min_adx": 18 if is_active else 22,
             "interval_min": 15 if is_active else 30, 
