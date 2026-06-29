@@ -1,4 +1,4 @@
-# train_model.py — Stable Core Reversion · Phase 3.1 (Regime Expansion)
+# train_model.py — Stable Core Reversion · Phase 3.3 (EV Threshold Selector)
 #
 # REVERT ACTION: Completely removed LABEL_MULT. 
 # Target generation matches live execution 1:1.
@@ -6,6 +6,8 @@
 # PHASE 2.1: Dynamic Break-Even Thresholding.
 # PHASE 3: Walk-forward validation + Asymmetric XGBoost Loss.
 # PHASE 3.1: Added Recovery_Jan23 to patch Window 3 transition gap.
+# PHASE 3.2: Strict 1.0 Undersampling ratio for balanced class weights.
+# PHASE 3.3: EV-based threshold selector to maximize actual R-yield.
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -42,8 +44,8 @@ MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 
-# Locked safety ratio for 5.0x ATR labeling
-UNDERSAMPLE_RATIO  = 1.5   
+# Strict 1.0 ratio ensures enough NO_TRADE samples exist to correctly balance the classes
+UNDERSAMPLE_RATIO  = 1.0   
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -59,7 +61,7 @@ BEAR_WINDOWS = [
     {"label": "Aug2023_dip",        "start_ms": 1690848000000, "end_ms": 1692057600000, "candles": 1440},
     {"label": "Apr2024_halving",    "start_ms": 1713225600000, "end_ms": 1714435200000, "candles": 1440},
     {"label": "Bull_peak_Oct21",    "start_ms": 1633046400000, "end_ms": 1638316800000, "candles": 2880}, 
-    {"label": "Recovery_Jan23",     "start_ms": 1672531200000, "end_ms": 1675209600000, "candles": 2880}, # Phase 3.1 Gap Fix
+    {"label": "Recovery_Jan23",     "start_ms": 1672531200000, "end_ms": 1675209600000, "candles": 2880}, 
 ]
 
 # ── Data fetching ──────────────────────────────────────────────────────
@@ -254,17 +256,22 @@ def _process_segment(df15, df1h, df4h, regime):
     
     df15 = add_indicators(df15)
     
+    # 1H Alignment
     if not df1h.empty:
         df1h_feat = add_indicators(df1h)
         df15 = _align_1h_to_15m(df1h_feat, df15)
     else:
-        df15["rsi_1h"] = 50.0; df15["adx_1h"] = 0.0; df15["trend_1h"] = 0.0
+        df15["rsi_1h"] = 50.0
+        df15["adx_1h"] = 0.0
+        df15["trend_1h"] = 0.0
 
+    # 4H Alignment
     if not df4h.empty:
         df4h_feat = add_indicators(df4h)
         df15 = _align_4h_to_15m(df4h_feat, df15)
     else:
-        df15["rsi_4h"] = 50.0; df15["trend_4h"] = 0.0
+        df15["rsi_4h"] = 50.0
+        df15["trend_4h"] = 0.0
 
     df15["target"] = make_targets(df15)
     df15["regime"] = regime
@@ -273,6 +280,7 @@ def _process_segment(df15, df1h, df4h, regime):
 def build_dataset() -> pd.DataFrame:
     log.info(f"Building REGIME-BALANCED dataset — {len(SYMBOLS)} symbols")
     all_rows = []
+    
     for symbol in SYMBOLS:
         symbol_segments = []
         log.info(f"  [{symbol}] Fetching recent...")
@@ -317,17 +325,20 @@ def build_dataset() -> pd.DataFrame:
     b  = (ds.target == "BUY").sum()
     s  = (ds.target == "SELL").sum()
     nt = (ds.target == "NO_TRADE").sum()
+    
     log.info(f"\n{'='*60}")
     log.info(f"DATASET SUMMARY: {n:,} rows")
     log.info(f"  BUY:      {b:>7,} ({b/n*100:.1f}%)")
     log.info(f"  SELL:     {s:>7,} ({s/n*100:.1f}%)")
     log.info(f"  NO_TRADE: {nt:>7,} ({nt/n*100:.1f}%)")
+    
     if "regime" in ds.columns:
         log.info("Rows per regime:")
         for regime, cnt in ds["regime"].value_counts().items():
             sr = (ds[ds.regime == regime].target == "SELL").sum()
             log.info(f"  {regime:<32} {cnt:>7,} rows | SELL: {sr:,}")
     log.info(f"{'='*60}")
+    
     return ds
 
 
@@ -358,10 +369,12 @@ def undersample_no_trade(
     n      = len(y_out)
     n_nt   = (y_out == nt_idx).sum()
     n_sig  = n - n_nt
+    
     log.info(f"\nAfter NO_TRADE undersampling (ratio={ratio}):")
     log.info(f"  {n:,} train rows  (was {len(y_train):,})")
     log.info(f"  Signals (BUY+SELL): {n_sig:,} ({n_sig/n*100:.1f}%)")
     log.info(f"  NO_TRADE:           {n_nt:,}  ({n_nt/n*100:.1f}%)")
+    
     return X_out, y_out
 
 
@@ -380,6 +393,7 @@ def train(ds: pd.DataFrame) -> float:
     le = LabelEncoder()
     y  = le.fit_transform(ds["target"])
     classes = list(le.classes_)
+    
     log.info(f"Classes: {list(zip(range(len(classes)), classes))}")
 
     nt_idx   = classes.index("NO_TRADE") if "NO_TRADE" in classes else -1
@@ -394,15 +408,16 @@ def train(ds: pd.DataFrame) -> float:
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train_raw, y_train_raw)
     top_idx  = np.argsort(scanner.feature_importances_)[::-1]
-    essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width",
-                 "atr_pct", "volatility", "vwap_dev"]
+    
+    essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"]
     selected  = [f for f in essential if f in ALL_FEATURES]
+    
     for i in top_idx:
-        f = ALL_FEATURES[i]
-        if f not in selected:
-            selected.append(f)
+        if ALL_FEATURES[i] not in selected:
+            selected.append(ALL_FEATURES[i])
         if len(selected) >= N_FEATURES:
             break
+            
     log.info(f"Top {len(selected)} features selected.")
 
     X_train_raw_sel = X_train_raw[selected]
@@ -462,28 +477,23 @@ def train(ds: pd.DataFrame) -> float:
         wf_test_start = wf_train_end
         wf_test_end   = wf_test_start + window
         
-        if wf_test_end > len(Xtr): break
+        if wf_test_end > len(Xtr):
+            break
         
         probe = XGBClassifier(n_estimators=100, random_state=42, eval_metric="mlogloss", n_jobs=-1)
         probe.fit(Xtr[:wf_train_end], y_train[:wf_train_end])
         
-        preds = probe.predict(Xtr[wf_test_start:wf_test_end])
-        acc_wf = accuracy_score(y_train[wf_test_start:wf_test_end], preds)
+        acc_wf = accuracy_score(y_train[wf_test_start:wf_test_end], probe.predict(Xtr[wf_test_start:wf_test_end]))
         wf_scores.append(acc_wf)
         
     wf_mean = np.mean(wf_scores) if wf_scores else 0.0
     wf_std  = np.std(wf_scores) if wf_scores else 0.0
     log.info(f"  Walk-forward Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
-    log.info(f"  Window scores: {[f'{s*100:.1f}%' for s in wf_scores]}")
 
     log.info("\nCalibrating probability estimates (isotonic regression)...")
-    calibrated_ensemble = CalibratedClassifierCV(
-        estimator=FrozenEstimator(ensemble),
-        method="isotonic",  
-    )
+    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
     calibrated_ensemble.fit(Xte, y_test)
-    log.info("Calibration complete ✓")
-
+    
     ensemble = calibrated_ensemble
 
     y_pred = ensemble.predict(Xte)
@@ -493,25 +503,22 @@ def train(ds: pd.DataFrame) -> float:
     log.info(f"\n{'='*60}")
     log.info(f"RAW ACCURACY (misleading — dominated by NO_TRADE): {acc*100:.1f}%")
     log.info(f"{'='*60}")
+    
     log.info("\n── What Actually Matters ─────────────────────────────────")
     for label in ["BUY", "SELL"]:
-        p  = report.get(label, {}).get("precision", 0)
-        r  = report.get(label, {}).get("recall",    0)
-        f1 = report.get(label, {}).get("f1-score",  0)
-        log.info(f"  {label:<5} precision: {p:.1%}  recall: {r:.1%}  f1: {f1:.1%}")
-    log.info("  (target: both ≥55% precision, both ≥25% recall)")
+        log.info(f"  {label:<5} precision: {report.get(label, {}).get('precision', 0):.1%}  "
+                 f"recall: {report.get(label, {}).get('recall', 0):.1%}  "
+                 f"f1: {report.get(label, {}).get('f1-score', 0):.1%}")
 
     probas    = ensemble.predict_proba(Xte)
     real_buy  = (y_test == buy_idx).sum()
     real_sell = (y_test == sell_idx).sum()
 
     log.info("\n── Confidence Threshold Calibration ────────────────────")
-    log.info(f"  {'Thresh':>6}  {'Signals':>7}  {'BUY P':>7}  {'SELL P':>8}  {'Recall':>7}  {'Est P&L':>8}")
     best_thresh = 0.45
     best_score  = 0.0
     
-    break_even = ATR_STOP_MULT / (ATR_TARGET1_MULT + ATR_STOP_MULT)
-
+    # ── Expected Value Scoring Logic ──
     for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60]:
         yp = []
         for prob in probas:
@@ -523,6 +530,7 @@ def train(ds: pd.DataFrame) -> float:
         yp = np.array(yp)
         bm = yp == buy_idx
         sm = yp == sell_idx
+        
         pb = (y_test[bm] == buy_idx).mean()  if bm.sum() > 0 else 0
         ps = (y_test[sm] == sell_idx).mean() if sm.sum() > 0 else 0
         rb = (yp[y_test == buy_idx]  == buy_idx).mean()  if real_buy  > 0 else 0
@@ -533,20 +541,22 @@ def train(ds: pd.DataFrame) -> float:
         n_signals  = int((bm | sm).sum())
         pnl        = n_signals * avg_prec * 200 - n_signals * (1 - avg_prec) * 100
         
-        if pb < break_even or ps < break_even:
-            score = 0.0
+        # EV calculation
+        buy_ev  = pb * ATR_TARGET1_MULT - (1 - pb) * ATR_STOP_MULT
+        sell_ev = ps * ATR_TARGET1_MULT - (1 - ps) * ATR_STOP_MULT
+        
+        if buy_ev <= 0 or sell_ev <= 0:
+            score = 0.0  # reject — either direction loses money
         else:
-            score = avg_prec * avg_recall
+            score = (buy_ev + sell_ev) * avg_recall * n_signals
             
-        if score > best_score and n_signals > 20:
+        if score > best_score and n_signals > 20: 
             best_score  = score
             best_thresh = thresh
             
-        log.info(f"  {thresh:.2f}    {n_signals:>7}    {pb:>7.1%}    {ps:>8.1%}   "
-                 f"{avg_recall:>7.1%}   ${pnl:>8,.0f}")
+        log.info(f"  {thresh:.2f}    {n_signals:>7}    {pb:>7.1%}    {ps:>8.1%}   {avg_recall:>7.1%}   ${pnl:>8,.0f}")
 
-    log.info(f"\n  → Dynamic Break-Even Floor: {break_even*100:.1f}%")
-    log.info(f"  → Best threshold: {best_thresh:.2f}")
+    log.info(f"\n  → Best EV threshold: {best_thresh:.2f}")
 
     pipeline = {
         "ensemble":              ensemble,
@@ -580,9 +590,10 @@ def train(ds: pd.DataFrame) -> float:
         "buy_recall":     round(report.get("BUY",  {}).get("recall",    0), 4),
         "sell_recall":    round(report.get("SELL", {}).get("recall",    0), 4),
     }
-    with open("model_performance.json", "w") as f:
+    
+    with open("model_performance.json", "w") as f: 
         json.dump(perf, f, indent=2)
-    log.info("✅ Saved: model_performance.json")
+        
     return acc
 
 if __name__ == "__main__":
