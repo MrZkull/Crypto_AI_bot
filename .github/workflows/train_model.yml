@@ -55,7 +55,7 @@ jobs:
             p = json.load(f)
           print('='*50)
           print(f'ACCURACY:  {p.get(\"accuracy\", 0)}%')
-          print(f'WF SCORE:  {p.get("wf_mean", 0)}% ± {p.get("wf_std", 0)}%')
+          print(f'WF SCORE:  {p.get(\"wf_mean\", 0)}% ± {p.get(\"wf_std\", 0)}%')
           print(f'TRAIN SET: {p.get(\"n_train\", 0)} samples')
           print(f'TEST SET:  {p.get(\"n_test\", 0)} samples')
           print(f'FEATURES:  {len(p.get(\"features\", []))} total')
