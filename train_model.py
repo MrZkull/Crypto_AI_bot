@@ -576,6 +576,7 @@ def train(ds: pd.DataFrame) -> float:
     joblib.dump(pipeline, MODEL_FILE)
     log.info(f"\n✅ Saved: {MODEL_FILE}")
 
+    # Verified output mapping to fix github action log
     perf = {
         "accuracy":       round(acc * 100, 1),
         "wf_mean":        round(wf_mean * 100, 1),
