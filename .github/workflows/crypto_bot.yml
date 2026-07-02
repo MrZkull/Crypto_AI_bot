@@ -9,8 +9,8 @@ on:
         description: 'Run mode'
         required: false
         default: 'scan'
-        type: choice
-        options: [scan, diagnostic]
+        #type: choice
+        #options: [scan, diagnostic]
   workflow_run:
     workflows: ["CryptoBot AI — Trading Scanner"]
     types: [completed]
