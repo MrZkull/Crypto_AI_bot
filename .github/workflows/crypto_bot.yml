@@ -11,6 +11,9 @@ on:
         default: 'scan'
         type: choice
         options: [scan, diagnostic]
+  workflow_run:
+    workflows: ["CryptoBot AI — Trading Scanner"]
+    types: [completed]
 
 jobs:
   run-bot:
@@ -82,7 +85,6 @@ jobs:
             python trade_executor.py
           fi
 
-      # If bot failed (e.g. Deribit 502), wait 30s and try once more
       - name: Retry bot on failure
         if: failure() && steps.run_bot.outcome == 'failure'
         run: |
@@ -113,25 +115,38 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Remove secrets file — never commit this
-          rm -f .env
-          
-          # Delete the downloaded model so Git physically cannot see it
-          rm -f pro_crypto_ai_model.pkl
-
-          # Explicitly untrack .pkl files just in case they slipped into the index
+          # Remove secrets and model — never commit these
+          rm -f .env pro_crypto_ai_model.pkl
           git rm --cached --ignore-unmatch "*.pkl" "*.joblib" 2>/dev/null || true
 
-          # CRITICAL FIX: Stash with --include-untracked to protect fresh JSON files
-          git stash push --include-untracked -- trades.json trade_history.json balance.json signals.json scan_mode.json data/ || true
-          
-          # Pull latest remote
-          git pull --rebase origin main || git pull origin main
-          
-          # Pop stash to restore our new trades
-          git stash pop || true
-          
-          # Add and commit
-          git add trades.json trade_history.json balance.json signals.json scan_mode.json data/ || true
+          # ── CRITICAL: Backup runtime state to /tmp BEFORE any git operation ──
+          # This guarantees our fresh trades.json survives the git pull.
+          # Previous stash approach silently failed (stash pop conflict → empty {}).
+          cp trades.json        /tmp/trades_runtime.json        2>/dev/null || echo '{}' > /tmp/trades_runtime.json
+          cp trade_history.json /tmp/trade_history_runtime.json 2>/dev/null || echo '[]' > /tmp/trade_history_runtime.json
+          cp signals.json       /tmp/signals_runtime.json       2>/dev/null || echo '[]' > /tmp/signals_runtime.json
+          cp balance.json       /tmp/balance_runtime.json       2>/dev/null || echo '{}' > /tmp/balance_runtime.json
+          cp scan_mode.json     /tmp/scan_mode_runtime.json     2>/dev/null || echo '{}' > /tmp/scan_mode_runtime.json
+
+          # Pull latest remote without touching our backed-up state
+          git fetch origin main
+          git pull --rebase origin main || git pull origin main || true
+
+          # ── CRITICAL: Restore runtime state after pull ──
+          # Local runtime data ALWAYS wins over repo — the repo only has stale data.
+          cp /tmp/trades_runtime.json        trades.json
+          cp /tmp/trade_history_runtime.json trade_history.json
+          cp /tmp/signals_runtime.json       signals.json
+          cp /tmp/balance_runtime.json       balance.json
+          cp /tmp/scan_mode_runtime.json     scan_mode.json
+
+          # Stage and commit only state files — never use "git add ."
+          git add trades.json        || true
+          git add trade_history.json || true
+          git add signals.json       || true
+          git add scan_mode.json     || true
+          git add balance.json       || true
+          git add data/              || true
+
           git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
           git push origin main
