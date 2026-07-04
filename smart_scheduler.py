@@ -101,7 +101,7 @@ def check_fear_and_greed() -> dict:
             "message": msg,
             # New Keys (For Hard Blocks)
             "value": val,
-            "fg_blocks_sell": val <= 25,
+            "fg_blocks_sell": val <= 20,
             "fg_blocks_buy": val >= 75,
             "label": label
         }
