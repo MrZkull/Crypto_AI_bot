@@ -102,7 +102,7 @@ def check_fear_and_greed() -> dict:
             # New Keys (For Hard Blocks)
             "value": val,
             "fg_blocks_sell": val <= 20,
-            "fg_blocks_buy": val >= 75,
+            "fg_blocks_buy": val >= 70,
             "label": label
         }
     except Exception as e:
