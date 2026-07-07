@@ -8,6 +8,7 @@
 # PHASE 3.1: Added Recovery_Jan23 to patch Window 3 transition gap.
 # PHASE 3.2: Strict 1.0 Undersampling ratio for balanced class weights.
 # PHASE 3.3: EV-based threshold selector to maximize actual R-yield.
+# LEAKAGE REFACTOR: Chronological 3-way split & Time-Series Embargo Purging implemented.
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -400,9 +401,23 @@ def train(ds: pd.DataFrame) -> float:
     buy_idx  = classes.index("BUY")      if "BUY"      in classes else 0
     sell_idx = classes.index("SELL")     if "SELL"     in classes else 2
 
-    split_idx           = int(len(X) * (1 - TEST_SPLIT))
-    X_train_raw, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train_raw, y_test = y[:split_idx], y[split_idx:]
+    # CRITICAL LEAKAGE BUG FIX: Chronological 3-way split (Train=70%, Calib=10%, Test=20%)
+    # Test set matches original TEST_SPLIT = 0.20 length for diagnostic alignment
+    train_end_idx = int(len(X) * 0.70)
+    calib_end_idx = int(len(X) * 0.80)
+
+    # CRITICAL LEAKAGE BUG FIX: Combinatorial Embargo Zone (Purging 24 trailing rows)
+    # Since lookahead is 24 bars, boundary overlaps bleed future action into past blocks
+    LOOKAHEAD_BARS = 24
+    
+    X_train_raw = X.iloc[:train_end_idx - LOOKAHEAD_BARS]
+    y_train_raw = y[:train_end_idx - LOOKAHEAD_BARS]
+
+    X_calib_raw = X.iloc[train_end_idx:calib_end_idx - LOOKAHEAD_BARS]
+    y_calib_raw = y[train_end_idx:calib_end_idx - LOOKAHEAD_BARS]
+
+    X_test      = X.iloc[calib_end_idx:]
+    y_test      = y[calib_end_idx:]
 
     log.info("Importance scan...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
@@ -420,7 +435,9 @@ def train(ds: pd.DataFrame) -> float:
             
     log.info(f"Top {len(selected)} features selected.")
 
+    # Slice feature domains based on un-leaked array rosters
     X_train_raw_sel = X_train_raw[selected]
+    X_calib_sel     = X_calib_raw[selected].values
     Xte             = X_test[selected].values
 
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
@@ -490,12 +507,14 @@ def train(ds: pd.DataFrame) -> float:
     wf_std  = np.std(wf_scores) if wf_scores else 0.0
     log.info(f"  Walk-forward Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
 
-    log.info("\nCalibrating probability estimates (isotonic regression)...")
-    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
-    calibrated_ensemble.fit(Xte, y_test)
+    # CRITICAL LEAKAGE BUG FIX: Prefit calibration executes ONLY on isolated Calibration matrix
+    log.info("\nCalibrating probability estimates (isotonic regression) on isolated out-of-sample data...")
+    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic", cv="prefit")
+    calibrated_ensemble.fit(X_calib_sel, y_calib_raw)
     
     ensemble = calibrated_ensemble
 
+    # Pristine, zero-leakage evaluation against untouched test split
     y_pred = ensemble.predict(Xte)
     acc    = accuracy_score(y_test, y_pred)
     report = classification_report(y_test, y_pred, target_names=classes, output_dict=True)
