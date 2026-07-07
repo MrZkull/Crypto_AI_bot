@@ -509,7 +509,7 @@ def train(ds: pd.DataFrame) -> float:
 
     # CRITICAL LEAKAGE BUG FIX: Prefit calibration executes ONLY on isolated Calibration matrix
     log.info("\nCalibrating probability estimates (isotonic regression) on isolated out-of-sample data...")
-    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic", cv="prefit")
+    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
     calibrated_ensemble.fit(X_calib_sel, y_calib_raw)
     
     ensemble = calibrated_ensemble
