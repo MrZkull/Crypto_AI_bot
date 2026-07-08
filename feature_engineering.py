@@ -159,6 +159,26 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         )
     ).astype(float)
 
+    # ── NEW: Order flow — how much of each candle's volume was aggressive buying ──
+    if "taker_buy_base_vol" in df.columns:
+        vol_safe = v.replace(0, np.nan)
+        df["taker_buy_ratio"] = (df["taker_buy_base_vol"] / vol_safe).fillna(0.5).clip(0, 1)
+    else:
+        df["taker_buy_ratio"] = 0.5  # neutral default if raw kline data lacks this column
+
+    # ── NEW: Time-of-day / day-of-week (cyclical encoding — no midnight/week discontinuity) ──
+    if "open_time" in df.columns:
+        ts   = pd.to_datetime(df["open_time"], unit="ms", utc=True, errors="coerce")
+        hour = ts.dt.hour.fillna(0)
+        dow  = ts.dt.dayofweek.fillna(0)
+        df["hour_sin"] = np.sin(2 * np.pi * hour / 24)
+        df["hour_cos"] = np.cos(2 * np.pi * hour / 24)
+        df["dow_sin"]  = np.sin(2 * np.pi * dow / 7)
+        df["dow_cos"]  = np.cos(2 * np.pi * dow / 7)
+    else:
+        df["hour_sin"] = 0.0; df["hour_cos"] = 1.0
+        df["dow_sin"]  = 0.0; df["dow_cos"]  = 1.0
+
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.ffill(inplace=True)
     df.fillna(0, inplace=True)
@@ -180,4 +200,6 @@ ALL_FEATURES = [
     "rsi_1h","adx_1h","trend_1h",
     "rsi_4h","trend_4h",
     "vol_regime",  # <--- Added Feature
+    "taker_buy_ratio",                          # NEW: order flow
+    "hour_sin","hour_cos","dow_sin","dow_cos",  # NEW: cyclical time features
 ]
