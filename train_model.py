@@ -571,6 +571,35 @@ def undersample_no_trade(
 
     return X_out, y_out
 
+# -----------------------------------
+def split_by_regime(ds, test_split=TEST_SPLIT, calib_split=CALIB_SPLIT, embargo=EMBARGO_BARS):
+    train_parts, calib_parts, test_parts = [], [], []
+
+    for regime, g in ds.groupby("regime"):
+        g = g.sort_values("open_time").reset_index(drop=True)
+        n = len(g)
+        test_size  = int(n * test_split)
+        calib_size = int(n * calib_split)
+
+        test_start  = n - test_size
+        calib_end   = test_start - embargo
+        calib_start = calib_end - calib_size
+        train_end   = calib_start - embargo
+
+        if train_end <= 0:
+            log.warning(f"  regime '{regime}' too small ({n} rows) for embargoed split — skipping calib/test, using all as train")
+            train_parts.append(g)
+            continue
+
+        train_parts.append(g.iloc[:train_end])
+        calib_parts.append(g.iloc[calib_start:calib_end])
+        test_parts.append(g.iloc[test_start:])
+
+    train_ds = pd.concat(train_parts, ignore_index=True).sort_values("open_time").reset_index(drop=True)
+    calib_ds = pd.concat(calib_parts, ignore_index=True).sort_values("open_time").reset_index(drop=True)
+    test_ds  = pd.concat(test_parts,  ignore_index=True).sort_values("open_time").reset_index(drop=True)
+    return train_ds, calib_ds, test_ds
+
 
 # ── Training ───────────────────────────────────────────────────────────
 
