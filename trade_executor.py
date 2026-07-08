@@ -1,4 +1,4 @@
-# trade_executor.py — V2.9: Institutional Confidence Sizing + Sentiment Gates
+# trade_executor.py — V2.9: Institutional Confidence Sizing + Sentiment Gates (Patched for Phase 3.4)
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -163,13 +163,6 @@ def _wait_for_position(deribit, symbol: str, side: str, entry_oid: str, timeout:
     return False
 
 def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, label: str, trade: dict, key: str, dec: int) -> str:
-    """
-    Place TP limit order WITHOUT reduce_only by default.
-    Code:11030 (invalid_reduce_only) was triggered because:
-      - reduce_only requires qty to exactly match remaining position size
-      - IoC entry fill size often differs slightly from recorded qty
-    Fix: place TP without reduce_only + cap qty at actual position size.
-    """
     # Cap qty at actual position size to prevent over-sizing
     try:
         actual_pos = abs(deribit.get_position_size(symbol))
@@ -218,20 +211,94 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
         try:
             r = requests.get(url, params={"symbol":symbol,"interval":interval,"limit":LIVE_LIMIT}, timeout=10)
             if r.status_code == 200:
-                df = pd.DataFrame(r.json()).iloc[:,:6]
-                df.columns = ["open_time","open","high","low","close","volume"]
-                for c in ["open","high","low","close","volume"]:
-                    df[c] = pd.to_numeric(df[c], errors="coerce")
-                return df
+                raw = r.json()
+                df = pd.DataFrame(raw)
+                cols = ["open_time","open","high","low","close","volume",
+                        "close_time","quote_vol","trades",
+                        "taker_buy_base_vol","taker_buy_quote_vol","ignore"]
+                df.columns = cols[:df.shape[1]]
+                for c in ["open","high","low","close","volume","taker_buy_base_vol"]:
+                    if c in df.columns:
+                        df[c] = pd.to_numeric(df[c], errors="coerce")
+                keep = [c for c in ["open_time","open","high","low","close","volume","taker_buy_base_vol"]
+                        if c in df.columns]
+                return df[keep]
         except Exception: continue
     return pd.DataFrame()
+
+FUTURES_FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
+
+def get_funding_history_live(symbol: str, limit: int = 30) -> pd.DataFrame:
+    """Recent funding history from Binance USDM futures (public, no auth) — used to build
+    funding_rate_pct / funding_rate_chg the same way train_model.py does. Empty on any failure."""
+    try:
+        r = requests.get(FUTURES_FUNDING_URL, params={"symbol": symbol, "limit": limit}, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if data:
+                df = pd.DataFrame(data).rename(columns={"fundingTime":"open_time","fundingRate":"funding_rate"})
+                df["open_time"]    = df["open_time"].astype("int64")
+                df["funding_rate"] = pd.to_numeric(df["funding_rate"], errors="coerce").fillna(0.0)
+                return df[["open_time","funding_rate"]].sort_values("open_time")
+    except Exception:
+        pass
+    return pd.DataFrame(columns=["open_time","funding_rate"])
+
+def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame, funding_df: pd.DataFrame) -> pd.DataFrame:
+    """Mirrors train_model.py's _add_extra_features/_align_btc_to_15m/_align_funding_to_15m.
+    MUST stay in sync with train_model.py if you change either file.
+
+    NOTE: taker_buy_ratio + hour/dow cyclical features are NOT computed here — they now
+    live inside feature_engineering.add_indicators() itself, so they're already present
+    in df15 by the time this function runs, as long as get_data() supplies
+    taker_buy_base_vol."""
+    df = df15.copy()
+
+    if btc_df15 is not None and not btc_df15.empty and "close" in btc_df15.columns:
+        btc_slim = (btc_df15[["open_time","close"]].rename(columns={"close":"btc_close"})
+                    .assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time"))
+        df_work = df.assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time")
+        df = pd.merge_asof(df_work, btc_slim, on="open_time", direction="backward")
+
+    if "btc_close" in df.columns and df["btc_close"].notna().sum() > 30:
+        btc_ret  = df["btc_close"].pct_change()
+        coin_ret = df["close"].pct_change()
+        roll_cov = coin_ret.rolling(20, min_periods=10).cov(btc_ret)
+        roll_var = btc_ret.rolling(20, min_periods=10).var()
+        df["btc_corr_20"]      = coin_ret.rolling(20, min_periods=10).corr(btc_ret)
+        df["btc_beta_20"]      = roll_cov / roll_var.replace(0, np.nan)
+        df["btc_rel_strength"] = (df["close"].pct_change(6) - df["btc_close"].pct_change(6)) * 100
+    else:
+        df["btc_corr_20"] = 0.0
+        df["btc_beta_20"] = 1.0
+        df["btc_rel_strength"] = 0.0
+
+    df["btc_corr_20"]      = df["btc_corr_20"].fillna(0.0).clip(-1, 1)
+    df["btc_beta_20"]      = df["btc_beta_20"].fillna(1.0).clip(-5, 5)
+    df["btc_rel_strength"] = df["btc_rel_strength"].fillna(0.0).clip(-50, 50)
+
+    if funding_df is not None and not funding_df.empty:
+        f_slim  = funding_df.sort_values("open_time")
+        df_work = df.assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time")
+        df = pd.merge_asof(df_work, f_slim, on="open_time", direction="backward")
+        df["funding_rate"] = df["funding_rate"].fillna(0.0)
+    else:
+        df["funding_rate"] = 0.0
+
+    df["funding_rate_pct"] = (df["funding_rate"] * 100).fillna(0.0)
+    df["funding_rate_chg"] = df["funding_rate_pct"].diff(3).fillna(0.0)
+
+    return df.sort_values("open_time").reset_index(drop=True)
 
 
 # ════════════ SIGNAL GENERATION ══════════════════════════════════════
 
-def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None):
+def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None, btc_df15_live=None):
     try:
-        df15 = add_indicators(get_data(symbol, TIMEFRAME_ENTRY)).fillna(0)
+        raw15 = get_data(symbol, TIMEFRAME_ENTRY)
+        df15  = add_indicators(raw15)
+        funding_df = get_funding_history_live(symbol)
+        df15  = _merge_extra_features_live(df15, btc_df15_live, funding_df).fillna(0)
         df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
         df1h = add_indicators(df1h_raw).fillna(0) if not df1h_raw.empty else pd.DataFrame()
         df4h_raw = get_data(symbol, "4h")
@@ -397,9 +464,6 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         if not reasons: reasons.append(f"ML {conf:.0f}%")
 
         entry = float(row["close"]); atr = float(row["atr"])
-        
-        # Note: Dynamic TP calculations shifted to execute_trade where drift is calculated.
-        # Storing base limits here so Executor can dynamically adjust them against Volatility limits
         
         return {
             "symbol": symbol,
@@ -1200,10 +1264,13 @@ def run_execution_scan():
     
     vol_state = vol.get("status", "NORMAL")
 
+    btc_df15_live = get_data("BTCUSDT", TIMEFRAME_ENTRY)  # fetched once per scan, reused for all coins
+
     for symbol in SYMBOLS:
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
         
-        sig = generate_signal(symbol, pipeline, thresholds, btc_momentum, whale_flow, fng_data)
+        sig = generate_signal(symbol, pipeline, thresholds, btc_momentum, whale_flow, fng_data,
+                               btc_df15_live=btc_df15_live)
         if sig is None: time.sleep(0.2); continue
         
         found += 1
