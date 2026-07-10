@@ -562,6 +562,23 @@ def build_dataset() -> pd.DataFrame:
             log.info(f"  {regime:<32} {cnt:>7,} rows | SELL: {sr:,}")
     log.info(f"{'='*60}")
 
+    # ── DIAGNOSTIC: rule out a data-coverage bug before trusting low importance ──
+    # scores for these features — a flat/default value across many rows would tank
+    # importance for reasons unrelated to whether the feature is actually predictive.
+    log.info("Engineered feature coverage check:")
+    if "taker_buy_ratio" in ds.columns:
+        tbr = ds["taker_buy_ratio"]
+        log.info(f"  taker_buy_ratio:  mean={tbr.mean():.3f}  std={tbr.std():.3f}  "
+                 f"at-default(0.5)={(tbr == 0.5).mean()*100:.1f}%")
+    if "funding_rate_pct" in ds.columns:
+        frp = ds["funding_rate_pct"]
+        log.info(f"  funding_rate_pct: mean={frp.mean():.4f}  std={frp.std():.4f}  "
+                 f"exactly-zero={(frp == 0.0).mean()*100:.1f}%")
+    if "btc_rel_strength" in ds.columns:
+        brs = ds["btc_rel_strength"]
+        log.info(f"  btc_rel_strength: mean={brs.mean():.3f}  std={brs.std():.3f}  "
+                 f"exactly-zero={(brs == 0.0).mean()*100:.1f}%")
+
     return ds
 
 
