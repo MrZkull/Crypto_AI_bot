@@ -73,6 +73,19 @@ FUTURES_FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
 
 RECENT_CANDLES = 5000
 
+# ── A/B TESTING TOGGLE ──────────────────────────────────────────────────
+# RECENT_CANDLES pulls "the latest N candles as of right now" — which means every
+# retrain silently gets a DIFFERENT recent-data window (today's run drops the oldest
+# day and adds a new one). Since your test/calib splits live mostly inside this
+# window, that means every run is being graded against a different holdout too —
+# so you can't tell whether two runs differ because of a code change or just because
+# the sliding window shifted. Set PINNED_RECENT_WINDOW below to fix the window to
+# specific dates so back-to-back runs are actually comparable. Leave as None for
+# normal ongoing production retraining (always-fresh data).
+PINNED_RECENT_WINDOW = {"start_ms": 1778976000000, "end_ms": 1783468800000, "candles": 5000}
+# Example — uncomment and set real timestamps (ms since epoch) to pin it:
+# PINNED_RECENT_WINDOW = {"start_ms": 1746057600000, "end_ms": 1751328000000, "candles": 5000}
+
 BEAR_WINDOWS = [
     {"label": "LUNA_crash_May22",   "start_ms": 1651708800000, "end_ms": 1653004800000, "candles": 1440},
     {"label": "FTX_collapse_Nov22", "start_ms": 1667779200000, "end_ms": 1669075200000, "candles": 1440},
@@ -444,20 +457,36 @@ def _process_segment(df15, df1h, df4h, regime, btc_df15=None, funding_df=None):
     df15["regime"] = regime
     return df15.iloc[:-24].copy()
 
+def _fetch_recent(symbol: str, interval: str, limit_divisor: int = 1) -> pd.DataFrame:
+    """Fetches the 'recent' segment — pinned to fixed dates if PINNED_RECENT_WINDOW is
+    set (for reproducible A/B testing), otherwise the normal sliding latest-N-candles
+    fetch used in production."""
+    if PINNED_RECENT_WINDOW is not None:
+        return fetch_klines_window(
+            symbol, interval,
+            PINNED_RECENT_WINDOW["start_ms"], PINNED_RECENT_WINDOW["end_ms"],
+            max(PINNED_RECENT_WINDOW["candles"] // limit_divisor, 50),
+        )
+    return fetch_klines(symbol, interval, RECENT_CANDLES // limit_divisor)
+
+
 def build_dataset() -> pd.DataFrame:
     log.info(f"Building REGIME-BALANCED dataset — {len(SYMBOLS)} symbols")
+    if PINNED_RECENT_WINDOW is not None:
+        log.info(f"  ⚠ PINNED_RECENT_WINDOW active — recent segment fixed to {PINNED_RECENT_WINDOW} "
+                  "(A/B testing mode, not a normal sliding-window run)")
     all_rows = []
 
     log.info("  Fetching BTC benchmark (recent)...")
-    btc_df15_rec = fetch_klines("BTCUSDT", "15m", RECENT_CANDLES)
+    btc_df15_rec = _fetch_recent("BTCUSDT", "15m")
     btc_bear_cache = {}
 
     for symbol in SYMBOLS:
         symbol_segments = []
         log.info(f"  [{symbol}] Fetching recent...")
-        df15_rec = fetch_klines(symbol, "15m", RECENT_CANDLES)
-        df1h_rec = fetch_klines(symbol, "1h",  RECENT_CANDLES // 4)
-        df4h_rec = fetch_klines(symbol, "4h",  RECENT_CANDLES // 16)
+        df15_rec = _fetch_recent(symbol, "15m")
+        df1h_rec = _fetch_recent(symbol, "1h", 4)
+        df4h_rec = _fetch_recent(symbol, "4h", 16)
 
         funding_rec = pd.DataFrame()
         if not df15_rec.empty:
@@ -583,9 +612,8 @@ def train(ds: pd.DataFrame) -> float:
         if f not in ds.columns:
             ds[f] = 0.0
 
-    X  = ds[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
     le = LabelEncoder()
-    y  = le.fit_transform(ds["target"])
+    le.fit(ds["target"])
     classes = list(le.classes_)
 
     log.info(f"Classes: {list(zip(range(len(classes)), classes))}")
@@ -594,33 +622,57 @@ def train(ds: pd.DataFrame) -> float:
     buy_idx  = classes.index("BUY")      if "BUY"      in classes else 0
     sell_idx = classes.index("SELL")     if "SELL"     in classes else 2
 
-    # ── FIX: three-way split (train / calib / test) with embargo gaps ──
-    # Embargo prevents label leakage across split boundaries: each label looks
-    # EMBARGO_BARS candles into the future, so rows straddling a boundary can
-    # otherwise "see" price action from the other side of the split.
-    n_total    = len(X)
-    test_size  = int(n_total * TEST_SPLIT)
-    calib_size = int(n_total * CALIB_SPLIT)
+    # ── FIX (v2): per-regime stratified split, each with its own embargo ──
+    # The old global chronological split put almost all 2021-2024 bear-window data in
+    # train, and almost all current-regime ("recent_bull") data in calib+test — meaning
+    # the model was graded on transferring old-crash-era patterns to a totally different
+    # current regime. That's a much harder, less representative test than intended, and
+    # it's the likely cause of SELL recall collapsing once calibration leakage was fixed.
+    # Splitting each regime independently and pooling ensures train/calib/test all see a
+    # proportional mix of every regime (crash/recovery/bull/chop), not just the newest one.
+    if "regime" not in ds.columns:
+        ds["regime"] = "unknown"
 
-    test_start  = n_total - test_size
-    calib_end   = test_start - EMBARGO_BARS
-    calib_start = calib_end - calib_size
-    train_end   = calib_start - EMBARGO_BARS
+    train_parts, calib_parts, test_parts = [], [], []
+    dropped_total = 0
 
-    if train_end <= 0:
-        raise ValueError(
-            "Not enough rows for an embargoed train/calib/test split — "
-            "reduce CALIB_SPLIT/TEST_SPLIT or gather more data."
-        )
+    for regime, grp in ds.groupby("regime", sort=False):
+        grp = grp.sort_values("open_time").reset_index(drop=True)
+        n_r = len(grp)
 
-    X_train_raw, y_train_raw = X.iloc[:train_end], y[:train_end]
-    X_calib,     y_calib     = X.iloc[calib_start:calib_end], y[calib_start:calib_end]
-    X_test,      y_test      = X.iloc[test_start:], y[test_start:]
+        test_size_r  = int(n_r * TEST_SPLIT)
+        calib_size_r = int(n_r * CALIB_SPLIT)
+
+        test_start_r  = n_r - test_size_r
+        calib_end_r   = test_start_r - EMBARGO_BARS
+        calib_start_r = calib_end_r - calib_size_r
+        train_end_r   = calib_start_r - EMBARGO_BARS
+
+        if train_end_r <= 0:
+            # Regime too small to embargo-split safely — keep it all in train rather
+            # than risk a leaky/empty split for this slice.
+            train_parts.append(grp)
+            log.warning(f"  [{regime}] too small for embargoed split ({n_r:,} rows) — kept entirely in train")
+            continue
+
+        train_parts.append(grp.iloc[:train_end_r])
+        calib_parts.append(grp.iloc[calib_start_r:calib_end_r])
+        test_parts.append(grp.iloc[test_start_r:])
+        dropped_total += n_r - train_end_r - (calib_end_r - calib_start_r) - test_size_r
+
+    X_train_raw = pd.concat(train_parts, ignore_index=True)[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+    y_train_raw = le.transform(pd.concat(train_parts, ignore_index=True)["target"])
+
+    X_calib = pd.concat(calib_parts, ignore_index=True)[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0) if calib_parts else X_train_raw.iloc[:0]
+    y_calib = le.transform(pd.concat(calib_parts, ignore_index=True)["target"]) if calib_parts else np.array([])
+
+    X_test = pd.concat(test_parts, ignore_index=True)[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0) if test_parts else X_train_raw.iloc[:0]
+    y_test = le.transform(pd.concat(test_parts, ignore_index=True)["target"]) if test_parts else np.array([])
 
     log.info(
-        f"Split (embargo={EMBARGO_BARS} bars/boundary): "
+        f"Per-regime split (embargo={EMBARGO_BARS} bars/boundary/regime): "
         f"train={len(X_train_raw):,}  calib={len(X_calib):,}  test={len(X_test):,}  "
-        f"(dropped {n_total - len(X_train_raw) - len(X_calib) - len(X_test):,} embargoed rows)"
+        f"(dropped ~{dropped_total:,} embargoed rows across regimes)"
     )
     if len(X_calib) < 200:
         log.warning("  ⚠ Calibration split is small (<200 rows) — isotonic calibration may be noisy.")
@@ -714,6 +766,17 @@ def train(ds: pd.DataFrame) -> float:
     wf_std  = np.std(wf_scores) if wf_scores else 0.0
     log.info(f"  Walk-forward Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
 
+    # ── DIAGNOSTIC: raw (uncalibrated) ensemble performance on test, for comparison ──
+    # This isolates whether isotonic calibration is itself hurting SELL, or whether the
+    # underlying ensemble already struggles on SELL before calibration even runs.
+    raw_pred   = ensemble.predict(Xte)
+    raw_report = classification_report(y_test, raw_pred, target_names=classes, output_dict=True, zero_division=0)
+    log.info("\n── Pre-calibration (raw ensemble) test performance ─────────")
+    for label in ["BUY", "SELL"]:
+        log.info(f"  {label:<5} precision: {raw_report.get(label, {}).get('precision', 0):.1%}  "
+                 f"recall: {raw_report.get(label, {}).get('recall', 0):.1%}  "
+                 f"f1: {raw_report.get(label, {}).get('f1-score', 0):.1%}")
+
     # ── FIX: calibrate on the dedicated calibration split, NOT on the test set ──
     log.info("\nCalibrating probability estimates (isotonic regression) on held-out calibration split...")
     calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
@@ -724,7 +787,7 @@ def train(ds: pd.DataFrame) -> float:
     # Final evaluation on Xte/y_test — untouched by both training AND calibration
     y_pred = ensemble.predict(Xte)
     acc    = accuracy_score(y_test, y_pred)
-    report = classification_report(y_test, y_pred, target_names=classes, output_dict=True)
+    report = classification_report(y_test, y_pred, target_names=classes, output_dict=True, zero_division=0)
 
     log.info(f"\n{'='*60}")
     log.info(f"RAW ACCURACY (misleading — dominated by NO_TRADE): {acc*100:.1f}%")
