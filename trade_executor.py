@@ -31,7 +31,7 @@ COOLDOWN_FILE      = "cooldown.json"
 RELIABILITY_FILE   = "reliability.json"
 COOLDOWN_HOURS     = 2
 GHOST_STRIKE_LIMIT = 3
-MAX_DAILY_TRADES   = 20  # MAINNET: 8 | TESTNET: 40 — hard daily trade cap
+MAX_DAILY_TRADES    = 20  # MAINNET: 8 | TESTNET: 40 — hard daily trade cap
 FUNDING_WARN_PCT   = 0.05
 FUNDING_SKIP_PCT   = 0.10
 # ------------------------
@@ -226,27 +226,11 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
         except Exception: continue
     return pd.DataFrame()
 
-FUTURES_FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
-
-def get_funding_history_live(symbol: str, limit: int = 30) -> pd.DataFrame:
-    """Recent funding history from Binance USDM futures (public, no auth) — used to build
-    funding_rate_pct / funding_rate_chg the same way train_model.py does. Empty on any failure."""
-    try:
-        r = requests.get(FUTURES_FUNDING_URL, params={"symbol": symbol, "limit": limit}, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            if data:
-                df = pd.DataFrame(data).rename(columns={"fundingTime":"open_time","fundingRate":"funding_rate"})
-                df["open_time"]    = df["open_time"].astype("int64")
-                df["funding_rate"] = pd.to_numeric(df["funding_rate"], errors="coerce").fillna(0.0)
-                return df[["open_time","funding_rate"]].sort_values("open_time")
-    except Exception:
-        pass
-    return pd.DataFrame(columns=["open_time","funding_rate"])
-
-def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame, funding_df: pd.DataFrame) -> pd.DataFrame:
-    """Mirrors train_model.py's _add_extra_features/_align_btc_to_15m/_align_funding_to_15m.
+def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame) -> pd.DataFrame:
+    """Mirrors train_model.py's _add_extra_features/_align_btc_to_15m.
     MUST stay in sync with train_model.py if you change either file.
+    
+    Geoblocked funding rate parameters removed cleanly for Phase 3.4 parity.
 
     NOTE: taker_buy_ratio + hour/dow cyclical features are NOT computed here — they now
     live inside feature_engineering.add_indicators() itself, so they're already present
@@ -254,7 +238,7 @@ def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame, fundi
     taker_buy_base_vol."""
     df = df15.copy()
 
-    if btc_df15 is not None and not btc_df15.empty and "close" in btc_df15.columns:
+    if btc_df15 is not None and not btc_df15.empty and "close" not in btc_df15.columns:
         btc_slim = (btc_df15[["open_time","close"]].rename(columns={"close":"btc_close"})
                     .assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time"))
         df_work = df.assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time")
@@ -277,17 +261,6 @@ def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame, fundi
     df["btc_beta_20"]      = df["btc_beta_20"].fillna(1.0).clip(-5, 5)
     df["btc_rel_strength"] = df["btc_rel_strength"].fillna(0.0).clip(-50, 50)
 
-    if funding_df is not None and not funding_df.empty:
-        f_slim  = funding_df.sort_values("open_time")
-        df_work = df.assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time")
-        df = pd.merge_asof(df_work, f_slim, on="open_time", direction="backward")
-        df["funding_rate"] = df["funding_rate"].fillna(0.0)
-    else:
-        df["funding_rate"] = 0.0
-
-    df["funding_rate_pct"] = (df["funding_rate"] * 100).fillna(0.0)
-    df["funding_rate_chg"] = df["funding_rate_pct"].diff(3).fillna(0.0)
-
     return df.sort_values("open_time").reset_index(drop=True)
 
 
@@ -297,8 +270,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
     try:
         raw15 = get_data(symbol, TIMEFRAME_ENTRY)
         df15  = add_indicators(raw15)
-        funding_df = get_funding_history_live(symbol)
-        df15  = _merge_extra_features_live(df15, btc_df15_live, funding_df).fillna(0)
+        df15  = _merge_extra_features_live(df15, btc_df15_live).fillna(0)
         df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
         df1h = add_indicators(df1h_raw).fillna(0) if not df1h_raw.empty else pd.DataFrame()
         df4h_raw = get_data(symbol, "4h")
