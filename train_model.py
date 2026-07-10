@@ -20,10 +20,12 @@
 #           at every split boundary, and applies an approximate embargo gap
 #           inside the walk-forward loop too.
 #   NEW FEATURES — taker_buy_ratio (order flow), btc_corr_20 / btc_beta_20 /
-#           btc_rel_strength (cross-asset context vs BTC), funding_rate_pct /
-#           funding_rate_chg (derivatives positioning). These are computed
+#           btc_rel_strength (cross-asset context vs BTC). These are computed
 #           directly in this file (feature_engineering.py is untouched) and
-#           appended to ALL_FEATURES via FULL_FEATURES.
+#           appended to ALL_FEATURES via FULL_FEATURES. (funding_rate_pct/chg
+#           were removed 2026-07-10 — fapi.binance.com is geo-blocked (HTTP
+#           451) from GitHub Actions runners, and the feature never scored a
+#           top-35 importance slot in any run before removal.)
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -75,7 +77,6 @@ BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
     "https://api.binance.com/api/v3/klines",
 ]
-FUTURES_FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
 
 RECENT_CANDLES = 5000
 
@@ -103,16 +104,13 @@ BEAR_WINDOWS = [
 ]
 
 # ── New engineered features (appended on top of feature_engineering.ALL_FEATURES) ──
-# NOTE: taker_buy_ratio + hour/dow cyclical features now live in feature_engineering.py's
-# add_indicators() itself (added there so trade_executor.py gets them for free with zero
-# extra live-side merging). Only the features that need EXTERNAL data (BTC benchmark,
-# funding history) are computed here.
+# NOTE: taker_buy_ratio + hour/dow cyclical features live in feature_engineering.py's
+# add_indicators() itself (so trade_executor.py gets them for free). Only BTC-benchmark
+# features (needing external data) are computed here.
 NEW_FEATURES = [
     "btc_corr_20",         # rolling 20-bar correlation of returns vs BTC
     "btc_beta_20",         # rolling 20-bar beta vs BTC
     "btc_rel_strength",    # coin's 6-bar return minus BTC's 6-bar return
-    "funding_rate_pct",    # current perpetual funding rate (%)
-    "funding_rate_chg",    # change in funding rate over the last 3 fundings
 ]
 FULL_FEATURES = ALL_FEATURES + NEW_FEATURES
 
@@ -190,53 +188,6 @@ def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
     if not all_data:
         return pd.DataFrame()
     return _raw_to_df(all_data[:max_candles])
-
-_funding_diag = {"attempts": 0, "failures": 0, "first_reason": None}
-
-def fetch_funding_history(symbol: str, start_ms: int, end_ms: int, limit: int = 1000) -> pd.DataFrame:
-    """Historical perpetual funding rate from Binance USDM futures (public endpoint).
-    Gracefully returns an empty frame if the symbol has no futures listing or the
-    request fails — callers must default funding_rate to 0.0 in that case.
-
-    NOTE: fapi.binance.com (unlike data-api.binance.vision, used for klines) is not a
-    geo-unblocked mirror — Binance restricts derivatives-API access by cloud-provider
-    IP range for compliance reasons, and GitHub Actions runners are commonly caught by
-    this. If _funding_diag shows 100% failures with a 451/403 status, that's why."""
-    global _funding_diag
-    _funding_diag["attempts"] += 1
-    all_data = []
-    cursor = start_ms
-    try:
-        while cursor < end_ms:
-            params = {"symbol": symbol, "startTime": cursor, "endTime": end_ms, "limit": limit}
-            r = requests.get(FUTURES_FUNDING_URL, params=params, timeout=10)
-            if r.status_code != 200:
-                if _funding_diag["first_reason"] is None:
-                    _funding_diag["first_reason"] = f"HTTP {r.status_code}: {r.text[:200]}"
-                break
-            batch = r.json()
-            if not batch:
-                break
-            all_data.extend(batch)
-            cursor = int(batch[-1]["fundingTime"]) + 1
-            time.sleep(0.2)
-            if len(batch) < limit:
-                break
-    except Exception as e:
-        if _funding_diag["first_reason"] is None:
-            _funding_diag["first_reason"] = f"Exception: {e}"
-        log.debug(f"  funding history fetch failed [{symbol}]: {e}")
-
-    if not all_data:
-        _funding_diag["failures"] += 1
-        return pd.DataFrame(columns=["open_time", "funding_rate"])
-
-
-    df = pd.DataFrame(all_data).rename(columns={"fundingTime": "open_time", "fundingRate": "funding_rate"})
-    df["open_time"]    = df["open_time"].astype("int64")
-    df["funding_rate"] = pd.to_numeric(df["funding_rate"], errors="coerce").fillna(0.0)
-    return df[["open_time", "funding_rate"]].sort_values("open_time").reset_index(drop=True)
-
 
 # ── Feature Alignment ──────────────────────────────────────────────────
 
@@ -363,28 +314,6 @@ def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFram
         return df15
 
 
-def _align_funding_to_15m(funding_df: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    """NEW: merges the last-known perpetual funding rate onto every row as 'funding_rate'."""
-    if funding_df is None or funding_df.empty:
-        df15["funding_rate"] = 0.0
-        return df15
-    try:
-        f_slim = funding_df.sort_values("open_time")
-        df15_work = (
-            df15.drop(columns=["funding_rate"], errors="ignore")
-            .dropna(subset=["open_time"])
-            .assign(open_time=lambda d: d["open_time"].astype("int64"))
-            .sort_values("open_time")
-        )
-        merged = pd.merge_asof(df15_work, f_slim, on="open_time", direction="backward")
-        merged["funding_rate"] = merged["funding_rate"].fillna(0.0)
-        return merged.reset_index(drop=True)
-    except Exception as e:
-        log.warning(f"_align_funding_to_15m failed ({e})")
-        df15["funding_rate"] = 0.0
-        return df15
-
-
 def _add_extra_features(df15: pd.DataFrame) -> pd.DataFrame:
     """NEW: computes NEW_FEATURES from raw columns already merged onto df15.
     taker_buy_ratio/hour_sin/hour_cos/dow_sin/dow_cos are handled inside
@@ -409,14 +338,6 @@ def _add_extra_features(df15: pd.DataFrame) -> pd.DataFrame:
     df["btc_beta_20"]      = df["btc_beta_20"].fillna(1.0).clip(-5, 5)
     df["btc_rel_strength"] = df["btc_rel_strength"].fillna(0.0).clip(-50, 50)
 
-    # Derivatives positioning
-    if "funding_rate" in df.columns:
-        df["funding_rate_pct"] = (df["funding_rate"] * 100).fillna(0.0)
-        df["funding_rate_chg"] = df["funding_rate_pct"].diff(3).fillna(0.0)
-    else:
-        df["funding_rate_pct"] = 0.0
-        df["funding_rate_chg"] = 0.0
-
     return df
 
 
@@ -438,7 +359,7 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
     labels[(future_low  <= sell_tp) & (future_high < sell_sl)] = "SELL"
     return labels
 
-def _process_segment(df15, df1h, df4h, regime, btc_df15=None, funding_df=None):
+def _process_segment(df15, df1h, df4h, regime, btc_df15=None):
     if df15.empty or len(df15) < MIN_BARS:
         return pd.DataFrame()
 
@@ -469,9 +390,8 @@ def _process_segment(df15, df1h, df4h, regime, btc_df15=None, funding_df=None):
         df15["rsi_4h"] = 50.0
         df15["trend_4h"] = 0.0
 
-    # NEW: BTC benchmark + funding rate alignment, then derived features
+    # NEW: BTC benchmark alignment, then derived features
     df15 = _align_btc_to_15m(btc_df15, df15)
-    df15 = _align_funding_to_15m(funding_df, df15)
     df15 = _add_extra_features(df15)
 
     df15["target"] = make_targets(df15)
@@ -509,17 +429,8 @@ def build_dataset() -> pd.DataFrame:
         df1h_rec = _fetch_recent(symbol, "1h", 4)
         df4h_rec = _fetch_recent(symbol, "4h", 16)
 
-        funding_rec = pd.DataFrame()
-        if not df15_rec.empty:
-            try:
-                f_start = int(df15_rec["open_time"].min())
-                f_end   = int(df15_rec["open_time"].max()) + 1
-                funding_rec = fetch_funding_history(symbol, f_start, f_end)
-            except Exception as e:
-                log.debug(f"    [{symbol}] funding history (recent) skipped: {e}")
-
         seg = _process_segment(df15_rec, df1h_rec, df4h_rec, regime="recent_bull",
-                                btc_df15=btc_df15_rec, funding_df=funding_rec)
+                                btc_df15=btc_df15_rec)
         if not seg.empty:
             symbol_segments.append(seg)
         else:
@@ -540,14 +451,8 @@ def build_dataset() -> pd.DataFrame:
                 )
             btc_bear_df15 = btc_bear_cache[bw["label"]]
 
-            funding_bear = pd.DataFrame()
-            try:
-                funding_bear = fetch_funding_history(symbol, bw["start_ms"], bw["end_ms"])
-            except Exception as e:
-                log.debug(f"    [{symbol}] funding history ({bw['label']}) skipped: {e}")
-
             seg = _process_segment(df15_bear, df1h_bear, df4h_bear, regime=bw["label"],
-                                    btc_df15=btc_bear_df15, funding_df=funding_bear)
+                                    btc_df15=btc_bear_df15)
             if not seg.empty:
                 symbol_segments.append(seg)
 
@@ -587,18 +492,10 @@ def build_dataset() -> pd.DataFrame:
     # scores for these features — a flat/default value across many rows would tank
     # importance for reasons unrelated to whether the feature is actually predictive.
     log.info("Engineered feature coverage check:")
-    if _funding_diag["attempts"] > 0:
-        fail_pct = _funding_diag["failures"] / _funding_diag["attempts"] * 100
-        log.info(f"  funding fetch: {_funding_diag['failures']}/{_funding_diag['attempts']} calls failed "
-                 f"({fail_pct:.0f}%) — first failure reason: {_funding_diag['first_reason']}")
     if "taker_buy_ratio" in ds.columns:
         tbr = ds["taker_buy_ratio"]
         log.info(f"  taker_buy_ratio:  mean={tbr.mean():.3f}  std={tbr.std():.3f}  "
                  f"at-default(0.5)={(tbr == 0.5).mean()*100:.1f}%")
-    if "funding_rate_pct" in ds.columns:
-        frp = ds["funding_rate_pct"]
-        log.info(f"  funding_rate_pct: mean={frp.mean():.4f}  std={frp.std():.4f}  "
-                 f"exactly-zero={(frp == 0.0).mean()*100:.1f}%")
     if "btc_rel_strength" in ds.columns:
         brs = ds["btc_rel_strength"]
         log.info(f"  btc_rel_strength: mean={brs.mean():.3f}  std={brs.std():.3f}  "
