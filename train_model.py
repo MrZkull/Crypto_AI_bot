@@ -82,7 +82,7 @@ RECENT_CANDLES = 5000
 # the sliding window shifted. Set PINNED_RECENT_WINDOW below to fix the window to
 # specific dates so back-to-back runs are actually comparable. Leave as None for
 # normal ongoing production retraining (always-fresh data).
-PINNED_RECENT_WINDOW = {"start_ms": 1778976000000, "end_ms": 1783468800000, "candles": 5000}
+PINNED_RECENT_WINDOW = None
 # Example — uncomment and set real timestamps (ms since epoch) to pin it:
 # PINNED_RECENT_WINDOW = {"start_ms": 1746057600000, "end_ms": 1751328000000, "candles": 5000}
 
@@ -693,6 +693,9 @@ def train(ds: pd.DataFrame) -> float:
 
     log.info(f"Top {len(selected)} features selected.")
     log.info(f"  New features included: {[f for f in NEW_FEATURES if f in selected]}")
+    engineered_all = ["taker_buy_ratio", "hour_sin", "hour_cos", "dow_sin", "dow_cos"] + NEW_FEATURES
+    log.info(f"  All engineered features — selected: {[f for f in engineered_all if f in selected]}")
+    log.info(f"  All engineered features — NOT selected: {[f for f in engineered_all if f not in selected]}")
 
     X_train_raw_sel = X_train_raw[selected]
     Xte             = X_test[selected].values
@@ -777,9 +780,21 @@ def train(ds: pd.DataFrame) -> float:
                  f"recall: {raw_report.get(label, {}).get('recall', 0):.1%}  "
                  f"f1: {raw_report.get(label, {}).get('f1-score', 0):.1%}")
 
-    # ── FIX: calibrate on the dedicated calibration split, NOT on the test set ──
-    log.info("\nCalibrating probability estimates (isotonic regression) on held-out calibration split...")
-    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
+    # ── A/B TESTING: isotonic vs sigmoid calibration ──
+    # Xcal keeps the NATURAL class distribution (unlike Xtr, which was rebalanced
+    # 50/50 for training) — calibration exists specifically to correct the ensemble's
+    # overconfidence from training on that rebalanced data back to real-world base
+    # rates. A recall drop here isn't automatically a bug: it can mean the balanced-
+    # training numbers were inflated all along and calibration is honestly correcting
+    # that. Isotonic (unconstrained step function) is more expressive but can overfit/
+    # overcorrect on a calibration set this imbalanced; sigmoid (2-parameter Platt
+    # scaling) is smoother and less prone to that, but also less flexible. Neither is
+    # automatically "right" — the real test is whether trades taken at a given
+    # confidence level actually win at roughly that rate over live/fresh data. Toggle
+    # this to compare both on the SAME split (use PINNED_RECENT_WINDOW for a fair A/B).
+    calibration_method = "isotonic"  # "isotonic" or "sigmoid" — change this line to A/B test
+    log.info(f"\nCalibrating probability estimates ({calibration_method}) on held-out calibration split...")
+    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method=calibration_method)
     calibrated_ensemble.fit(Xcal, y_calib)
 
     ensemble = calibrated_ensemble
@@ -808,7 +823,14 @@ def train(ds: pd.DataFrame) -> float:
     best_score  = 0.0
 
     # ── Expected Value Scoring Logic ──
-    for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60]:
+    # NOTE: previously weighted by raw n_signals, which implicitly assumes you can take
+    # every single signal at full size — but MAX_SAME_DIRECTION + cooldowns cap real
+    # throughput regardless of how many signals fire. Weighting by sqrt(n_signals)
+    # instead still rewards having enough samples to trust the precision estimate, but
+    # stops assuming unlimited capital, so it optimizes for per-trade quality once
+    # volume is no longer the bottleneck — a better match for how this bot actually
+    # trades with capped concurrent positions.
+    for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
         yp = []
         for prob in probas:
             bc = np.argmax(prob)
@@ -837,7 +859,7 @@ def train(ds: pd.DataFrame) -> float:
         if buy_ev <= 0 or sell_ev <= 0:
             score = 0.0  # reject — either direction loses money
         else:
-            score = (buy_ev + sell_ev) * avg_recall * n_signals
+            score = (buy_ev + sell_ev) * avg_recall * np.sqrt(max(n_signals, 1))
 
         if score > best_score and n_signals > 20:
             best_score  = score
@@ -860,7 +882,7 @@ def train(ds: pd.DataFrame) -> float:
         "n_features":            len(FULL_FEATURES),
         "recommended_threshold": best_thresh,
         "calibrated":            True,
-        "calibration_method":    "isotonic",
+        "calibration_method":    calibration_method,
         "calibration_split":     "dedicated_embargoed",  # marker so you can tell old vs new models apart
     }
     joblib.dump(pipeline, MODEL_FILE)
