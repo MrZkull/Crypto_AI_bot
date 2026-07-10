@@ -49,10 +49,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
 SYMBOLS = [
+    # REMOVED 2026-07-10: MATICUSDT (Binance delisted Sep 2024, Deribit delisted Feb
+    # 2025 — dead on both data source and execution venue) and DOGEUSDT (no Deribit
+    # SYMBOL_MAP entry at all — was un-tradeable live despite being trained on).
+    # ADDED: FETUSDT, RENDERUSDT — already fully configured in deribit_client.py's
+    # SYMBOL_MAP (instrument/tick_size/min-max amount) but were never in the live
+    # scan list, so this is zero new integration work.
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT", "NEARUSDT",
-    "MATICUSDT", "TRXUSDT", "SUIUSDT", "APTUSDT", "ATOMUSDT", "LINKUSDT",
+    "TRXUSDT", "SUIUSDT", "APTUSDT", "ATOMUSDT", "LINKUSDT",
     "DOTUSDT", "UNIUSDT", "XRPUSDT", "LTCUSDT", "BCHUSDT", "ALGOUSDT",
-    "AAVEUSDT", "ADAUSDT", "DOGEUSDT",
+    "AAVEUSDT", "ADAUSDT", "FETUSDT", "RENDERUSDT",
 ]
 
 TEST_SPLIT         = 0.20
