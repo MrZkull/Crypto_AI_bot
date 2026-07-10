@@ -185,10 +185,19 @@ def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
         return pd.DataFrame()
     return _raw_to_df(all_data[:max_candles])
 
+_funding_diag = {"attempts": 0, "failures": 0, "first_reason": None}
+
 def fetch_funding_history(symbol: str, start_ms: int, end_ms: int, limit: int = 1000) -> pd.DataFrame:
     """Historical perpetual funding rate from Binance USDM futures (public endpoint).
     Gracefully returns an empty frame if the symbol has no futures listing or the
-    request fails — callers must default funding_rate to 0.0 in that case."""
+    request fails — callers must default funding_rate to 0.0 in that case.
+
+    NOTE: fapi.binance.com (unlike data-api.binance.vision, used for klines) is not a
+    geo-unblocked mirror — Binance restricts derivatives-API access by cloud-provider
+    IP range for compliance reasons, and GitHub Actions runners are commonly caught by
+    this. If _funding_diag shows 100% failures with a 451/403 status, that's why."""
+    global _funding_diag
+    _funding_diag["attempts"] += 1
     all_data = []
     cursor = start_ms
     try:
@@ -196,6 +205,8 @@ def fetch_funding_history(symbol: str, start_ms: int, end_ms: int, limit: int = 
             params = {"symbol": symbol, "startTime": cursor, "endTime": end_ms, "limit": limit}
             r = requests.get(FUTURES_FUNDING_URL, params=params, timeout=10)
             if r.status_code != 200:
+                if _funding_diag["first_reason"] is None:
+                    _funding_diag["first_reason"] = f"HTTP {r.status_code}: {r.text[:200]}"
                 break
             batch = r.json()
             if not batch:
@@ -206,10 +217,14 @@ def fetch_funding_history(symbol: str, start_ms: int, end_ms: int, limit: int = 
             if len(batch) < limit:
                 break
     except Exception as e:
+        if _funding_diag["first_reason"] is None:
+            _funding_diag["first_reason"] = f"Exception: {e}"
         log.debug(f"  funding history fetch failed [{symbol}]: {e}")
 
     if not all_data:
+        _funding_diag["failures"] += 1
         return pd.DataFrame(columns=["open_time", "funding_rate"])
+
 
     df = pd.DataFrame(all_data).rename(columns={"fundingTime": "open_time", "fundingRate": "funding_rate"})
     df["open_time"]    = df["open_time"].astype("int64")
@@ -566,6 +581,10 @@ def build_dataset() -> pd.DataFrame:
     # scores for these features — a flat/default value across many rows would tank
     # importance for reasons unrelated to whether the feature is actually predictive.
     log.info("Engineered feature coverage check:")
+    if _funding_diag["attempts"] > 0:
+        fail_pct = _funding_diag["failures"] / _funding_diag["attempts"] * 100
+        log.info(f"  funding fetch: {_funding_diag['failures']}/{_funding_diag['attempts']} calls failed "
+                 f"({fail_pct:.0f}%) — first failure reason: {_funding_diag['first_reason']}")
     if "taker_buy_ratio" in ds.columns:
         tbr = ds["taker_buy_ratio"]
         log.info(f"  taker_buy_ratio:  mean={tbr.mean():.3f}  std={tbr.std():.3f}  "
