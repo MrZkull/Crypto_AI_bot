@@ -31,8 +31,6 @@ SYMBOL_MAP = {
                    "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
     "APTUSDT":    {"instrument": "APT_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
-    "MATICUSDT":  {"instrument": "MATIC_USDC-PERPETUAL", "currency": "USDC",
-                   "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
     "ATOMUSDT":   {"instrument": "ATOM_USDC-PERPETUAL",  "currency": "USDC",
                    "min_amount": 1,      "max_amount": 2100,      "tick_size": 0.001},
     "TRXUSDT":    {"instrument": "TRX_USDC-PERPETUAL",   "currency": "USDC",
@@ -63,6 +61,10 @@ SYMBOL_MAP = {
                    "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
     "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
+    "HYPEUSDT":    {"instrument": "HYPE_USDC-PERPETUAL", "currency": "USDC",
+                    "min_amount": 0.1,      "max_amount": 10000,     "tick_size": 0.001},
+    "DOGEUSDT":    {"instrument": "DOGE_USDC-PERPETUAL", "currency": "USDC",
+                    "min_amount": 100,      "max_amount": 1000000,   "tick_size": 0.00001},
 }
 
 TRADEABLE_SYMBOLS: list = []
