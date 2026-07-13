@@ -9,6 +9,7 @@ TESTNET_BASE = "https://test.deribit.com/api/v2"
 DEFAULT_LEVERAGE      = 2      # 2x leverage — preserves 1% risk, frees margin
 MAX_SLIPPAGE_PCT      = 0.002  # 0.2% max acceptable slippage on entry
 WIDE_SPREAD_WARN_PCT  = 0.003  # warn if spread > 0.3%
+MAX_TRADEABLE_SPREAD_PCT = 0.05  # NEW: hard abort if spread > 5% — book is too thin to trade safely, not just "wide"
 
 # ── SYMBOL MAP (Updated with Max Amounts & Tick Sizes) ──
 SYMBOL_MAP = {
@@ -346,6 +347,14 @@ class DeribitClient:
             spread = self.get_order_book_spread(symbol)
             best_bid = spread["best_bid"]
             best_ask = spread["best_ask"]
+
+            # NEW: hard abort — a 5%+ spread means the book is too thin to fill safely,
+            # not just "wide". Proceeding here is how a 54,370-contract order fills 3,592
+            # (6.6%) at an unknown, likely terrible price. Skip the trade entirely.
+            if spread["spread_pct"] > MAX_TRADEABLE_SPREAD_PCT:
+                log.warning(f"  🚫 {symbol}: spread {spread['spread_pct']*100:.1f}% exceeds "
+                            f"{MAX_TRADEABLE_SPREAD_PCT*100:.0f}% ceiling — book too thin, skipping entry")
+                return {}
 
             if best_bid > 0 and best_ask > 0:
                 if side.upper() == "BUY":
