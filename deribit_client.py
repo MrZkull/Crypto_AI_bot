@@ -337,8 +337,19 @@ class DeribitClient:
 
     # ── Order execution ───────────────────────────────────────────────
 
+    @staticmethod
+    def _is_position_size_limit_error(e) -> bool:
+        """Code:10057 — non-PME accounts have a max position size per instrument that's
+        SEPARATE from the instrument's general max_trade_amount (which calc_contracts()
+        already checks). This can reject an order calc_contracts() thought was fine —
+        worst case, on a closing/emergency order, which previously had no fallback and
+        just failed outright, leaving a breached-stop position with zero protection."""
+        return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
+
     def place_market_order(self, symbol: str, side: str, amount) -> dict:
-        """Entry order with slippage protection (IoC limit)."""
+        """Entry order with slippage protection (IoC limit). Reduce-and-retry on a
+        non-PME position-size rejection (Code:10057) rather than failing outright —
+        critical for emergency/SL-missed closes, where partial closure beats none."""
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         label      = f"bot_entry_{int(time.time())}"
@@ -364,37 +375,70 @@ class DeribitClient:
 
                 log.info(f"  IoC limit {side} {amount} {instrument} @ max {worst_price} (spread {spread['spread_pct']*100:.3f}%)")
 
-                result = self._post(method, {
-                    "instrument_name": instrument,
-                    "amount":          amount,
-                    "type":            "limit",
-                    "price":           worst_price,
-                    "time_in_force":   "immediate_or_cancel",
-                    "label":           label,
-                })
-                order = result.get("order", result)
-                state = order.get("order_state", "")
+                cur_amount = amount
+                for attempt in range(4):
+                    try:
+                        result = self._post(method, {
+                            "instrument_name": instrument,
+                            "amount":          cur_amount,
+                            "type":            "limit",
+                            "price":           worst_price,
+                            "time_in_force":   "immediate_or_cancel",
+                            "label":           label,
+                        })
+                        order = result.get("order", result)
+                        state = order.get("order_state", "")
 
-                if state == "cancelled":
-                    log.warning(f"  ⚠️ IoC CANCELLED — market moved >{MAX_SLIPPAGE_PCT*100:.1f}%. Skipping entry.")
-                    return {} 
+                        if state == "cancelled":
+                            log.warning(f"  ⚠️ IoC CANCELLED — market moved >{MAX_SLIPPAGE_PCT*100:.1f}%. Skipping entry.")
+                            return {}
 
-                log.info(f"  ✅ IoC {side.upper()} {amount} {instrument} id={order.get('order_id','')} state={state}")
-                return result
+                        log.info(f"  ✅ IoC {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={state}")
+                        return result
+                    except Exception as e:
+                        if self._is_position_size_limit_error(e) and attempt < 3:
+                            cur_amount = self.round_amount(symbol, cur_amount * 0.5)
+                            if cur_amount <= 0:
+                                log.error(f"  {symbol}: position-size limit — reduced to 0, giving up on IoC")
+                                break
+                            log.warning(f"  ⚠️ {symbol}: position-size limit (Code:10057) — "
+                                        f"retrying IoC at reduced size {cur_amount}")
+                            continue
+                        raise
 
         except Exception as e:
             log.warning(f"  IoC order failed ({e}) — falling back to market order")
 
-        # Fallback pure market order
-        result = self._post(method, {
-            "instrument_name": instrument,
-            "amount":          amount,
-            "type":            "market",
-            "label":           label,
-        })
-        order = result.get("order", result)
-        log.info(f"  ✅ MARKET {side.upper()} {amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
-        return result
+        # Fallback pure market order — same reduce-and-retry protection
+        cur_amount = amount
+        for attempt in range(4):
+            try:
+                result = self._post(method, {
+                    "instrument_name": instrument,
+                    "amount":          cur_amount,
+                    "type":            "market",
+                    "label":           label,
+                })
+                order = result.get("order", result)
+                log.info(f"  ✅ MARKET {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
+                if cur_amount != amount:
+                    log.warning(f"  ⚠️ {symbol}: only filled {cur_amount}/{amount} due to position-size "
+                                f"limit — position may be PARTIALLY closed, verify manually")
+                return result
+            except Exception as e:
+                if self._is_position_size_limit_error(e) and attempt < 3:
+                    cur_amount = self.round_amount(symbol, cur_amount * 0.5)
+                    if cur_amount <= 0:
+                        break
+                    log.warning(f"  ⚠️ {symbol}: position-size limit (Code:10057) on market fallback — "
+                                f"retrying at reduced size {cur_amount}")
+                    continue
+                log.error(f"  Market order failed permanently for {symbol}: {e}")
+                return {}
+
+        log.error(f"  🚨 {symbol}: could not fill even at minimum size after repeated position-size "
+                  f"rejections — order NOT placed, manual intervention required")
+        return {}
 
     # ── Fill price + positions ────────────────────────────────────────
 
