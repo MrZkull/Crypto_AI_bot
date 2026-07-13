@@ -833,7 +833,7 @@ def check_open_trades(deribit: DeribitClient):
                 tp1_price_hit = tp1_p > 0 and ((signal == "BUY" and live >= tp1_p) or (signal == "SELL" and live <= tp1_p))
                 tp1_o_gone = state in ("filled", "cancelled", "closed", "rejected", "")
 
-                if tp1_order_filled or tp1_partial or (tp1_price_hit and tp1_o_gone):
+                if tp1_order_filled or tp1_partial or (tp1_price_hit && tp1_o_gone):
                     trade["tp1_hit"] = True
                     method = ("order" if tp1_order_filled else "partial" if tp1_partial else "price-fallback")
                     fill   = fp(o, tp1_p) if (tp1_order_filled or tp1_partial) else live
