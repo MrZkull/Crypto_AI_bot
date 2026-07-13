@@ -1,38 +1,4 @@
 {
-  "ATOMUSDT": {
-    "symbol": "ATOMUSDT",
-    "signal": "SELL",
-    "entry": 1.5045,
-    "stop": 1.5145,
-    "tp1": 1.49,
-    "tp2": 1.474,
-    "qty": 2100,
-    "qty_tp1": 61,
-    "qty_tp2": 0.0,
-    "risk_usd": 3162.04,
-    "balance_at_open": 175669.02,
-    "risk_mult": 1.7999999999999998,
-    "order_ids": {
-      "entry": "USDC-224979384490",
-      "tp1": "USDC-224979389674"
-    },
-    "opened_at": "2026-07-13T13:52:18.673891+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 61.1,
-    "score": 6,
-    "reasons": [
-      "Conf (61%)",
-      "Strong ADX 35",
-      "EMA bearish",
-      "1h confirms",
-      "4h trend aligns (RSI 38)",
-      "4h trend established (16h)"
-    ],
-    "tier": "\u26a1 High-Liquidity L1s",
-    "exchange": "deribit_testnet"
-  },
   "XRPUSDT": {
     "symbol": "XRPUSDT",
     "signal": "SELL",
@@ -103,6 +69,41 @@
       "4h trend established (20h)"
     ],
     "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet"
+  },
+  "LTCUSDT": {
+    "symbol": "LTCUSDT",
+    "signal": "SELL",
+    "entry": 43.24143913,
+    "stop": 43.53,
+    "tp1": 42.84,
+    "tp2": 42.39,
+    "qty": 202.9,
+    "qty_tp1": 101.4,
+    "qty_tp2": 101.5,
+    "risk_usd": 878.59,
+    "balance_at_open": 175717.63,
+    "risk_mult": 0.5,
+    "order_ids": {
+      "entry": "USDC-225085674382",
+      "stop_loss": "USDC-SLTB-29188",
+      "tp1": "USDC-225085679767",
+      "tp2": "USDC-225085680333"
+    },
+    "opened_at": "2026-07-13T22:15:14.645378+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 48.2,
+    "score": 5,
+    "reasons": [
+      "ADX 19",
+      "RSI not oversold (52)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 37)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"
   }
 }
