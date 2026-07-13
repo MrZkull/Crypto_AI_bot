@@ -547,6 +547,9 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
             log.debug(f"  set_leverage skipped — position already open ({existing_pos})")
 
         er = deribit.place_market_order(symbol, side, total_q)
+        if not er:
+            log.warning(f"  {symbol}: entry order aborted (thin book / slippage) — skip")
+            return False
         eo = er.get("order", er)
         order_ids["entry"] = str(eo.get("order_id",""))
         actual_entry = deribit.get_fill_price(er, entry) or entry
@@ -833,7 +836,7 @@ def check_open_trades(deribit: DeribitClient):
                 tp1_price_hit = tp1_p > 0 and ((signal == "BUY" and live >= tp1_p) or (signal == "SELL" and live <= tp1_p))
                 tp1_o_gone = state in ("filled", "cancelled", "closed", "rejected", "")
 
-                if tp1_order_filled or tp1_partial or (tp1_price_hit && tp1_o_gone):
+                if tp1_order_filled or tp1_partial or (tp1_price_hit and tp1_o_gone):
                     trade["tp1_hit"] = True
                     method = ("order" if tp1_order_filled else "partial" if tp1_partial else "price-fallback")
                     fill   = fp(o, tp1_p) if (tp1_order_filled or tp1_partial) else live
