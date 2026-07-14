@@ -52,15 +52,23 @@ log = logging.getLogger(__name__)
 
 SYMBOLS = [
     # REMOVED 2026-07-10: MATICUSDT (Binance delisted Sep 2024, Deribit delisted Feb
-    # 2025 — dead on both data source and execution venue) and DOGEUSDT (no Deribit
-    # SYMBOL_MAP entry at all — was un-tradeable live despite being trained on).
-    # ADDED: FETUSDT, RENDERUSDT — already fully configured in deribit_client.py's
-    # SYMBOL_MAP (instrument/tick_size/min-max amount) but were never in the live
-    # scan list, so this is zero new integration work.
+    # 2025 — dead on both data source and execution venue).
+    # RE-ADDED 2026-07-12: DOGEUSDT (now confirmed tradeable live via Deribit — a
+    # proper SYMBOL_MAP entry must have been added since the earlier flag) and
+    # HYPEUSDT (kept for parity with live config.py, but note: Binance has NO spot
+    # market for HYPE, only futures — this will always show "no recent data" and
+    # contribute zero training rows unless the fetch pipeline is extended to the
+    # futures klines endpoint, which likely hits the same geo-block as funding data).
+    # ADDED: FETUSDT, RENDERUSDT (already mapped in deribit_client.py, unused before).
+    # ADDED 2026-07-12: XLMUSDT (long history, full regime coverage), WLDUSDT (spot
+    # since Jul 2023 — covers Aug2023_dip onward only), VIRTUALUSDT (spot since Apr
+    # 2025 — recent_bull data ONLY, zero bear-window coverage; verified correct
+    # tickers for all three, no MATIC/HYPE-style listing traps).
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT", "NEARUSDT",
     "TRXUSDT", "SUIUSDT", "APTUSDT", "ATOMUSDT", "LINKUSDT",
     "DOTUSDT", "UNIUSDT", "XRPUSDT", "LTCUSDT", "BCHUSDT", "ALGOUSDT",
-    "AAVEUSDT", "ADAUSDT", "FETUSDT", "RENDERUSDT", "HYPEUSDT", "DOGEUSDT",
+    "AAVEUSDT", "ADAUSDT", "FETUSDT", "RENDERUSDT", "DOGEUSDT", "HYPEUSDT",
+    "XLMUSDT", "WLDUSDT", "VIRTUALUSDT",
 ]
 
 TEST_SPLIT         = 0.20
@@ -643,16 +651,31 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    log.info("Building asymmetric sample weights for XGBoost...")
+    log.info("Building sample weights for XGBoost...")
     sw_asym = np.ones(len(y_train))
     sw_asym[y_train == buy_idx]  = 2.0
     sw_asym[y_train == sell_idx] = 2.0
 
-    if "trend_1h" in selected:
-        trend_idx = selected.index("trend_1h")
-        downtrend_mask = Xtr[:, trend_idx] < 0
-        sw_asym[(y_train == buy_idx) & downtrend_mask] *= 2.0
-        log.info("  -> Asymmetric penalty applied to counter-trend BUYs.")
+    # REMOVED 2026-07-14: previously applied an EXTRA 2x penalty (4x total) to
+    # counter-trend BUYs only, with no equivalent for counter-trend SELLs. This was
+    # a real, standing asymmetry — not a bug in the sense of broken code, but a
+    # deliberate one-sided training signal — and it lines up exactly with observed
+    # live behavior: the model calling SELL on BTCUSDT/ETHUSDT while 4h was bullish
+    # with no apparent hesitation, and SELL signals clearing score thresholds even
+    # against an active F&G contrarian penalty (BUY bias at Extreme Fear) that
+    # should have been pulling the other way. Counter-trend suppression already
+    # exists downstream as an explicit, tunable rule ([FILTER:4H_BIAS] in
+    # trade_executor.py) — baking an extra asymmetric penalty into training on top
+    # of that rule was fighting the model's ability to call BUY at all, not just
+    # discouraging bad counter-trend calls.
+    #
+    # RISK: this penalty was presumably added to fix a real, previously-observed
+    # problem (bad counter-trend BUY calls). Removing it could let that original
+    # problem resurface if [FILTER:4H_BIAS] alone isn't sufficient. Watch BUY
+    # precision/recall specifically in the next few training runs and live cycles —
+    # if BUY quality craters (not just BUY volume increasing), the right fix is
+    # probably symmetric penalties on BOTH directions, not reverting to this
+    # one-sided version.
 
     log.info("Training XGBoost...")
     xgb = XGBClassifier(
