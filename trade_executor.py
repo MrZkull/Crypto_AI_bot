@@ -436,7 +436,17 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         if not reasons: reasons.append(f"ML {conf:.0f}%")
 
         entry = float(row["close"]); atr = float(row["atr"])
-        
+
+        # DIAGNOSTIC: catch corrupted entry/atr at the source, before they poison
+        # every downstream SL/TP/entry-price calculation.
+        import math
+        if not math.isfinite(entry) or entry <= 0:
+            log.error(f"    🚨 {symbol}: bad entry price from model row: {entry!r} — aborting signal")
+            return None
+        if not math.isfinite(atr) or atr <= 0:
+            log.error(f"    🚨 {symbol}: bad ATR from model row: {atr!r} (entry={entry}) — aborting signal")
+            return None
+
         return {
             "symbol": symbol,
             "signal": sig,
@@ -517,6 +527,18 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         stop = round(entry + atr * ATR_STOP_MULT, dec)
         tp1  = round(entry - atr * dyn_tp1, dec)
         tp2  = round(entry - atr * dyn_tp2, dec)
+
+    # DIAGNOSTIC: log every input to this calculation, and hard-abort on anything
+    # non-finite/non-positive, so the NEXT occurrence pinpoints the exact bad value
+    # instead of surfacing as Deribit's generic "positive float required".
+    import math
+    log.info(f"  [PRICE CALC] {symbol} entry={entry} atr={atr} dyn_tp1={dyn_tp1} "
+             f"dyn_tp2={dyn_tp2} -> stop={stop} tp1={tp1} tp2={tp2}")
+    for name, val in [("stop", stop), ("tp1", tp1), ("tp2", tp2)]:
+        if not math.isfinite(val) or val <= 0:
+            log.error(f"  🚨 {symbol}: computed {name}={val!r} is invalid "
+                      f"(entry={entry}, atr={atr}) — aborting trade, NOT sending to Deribit")
+            return False
 
     sig["stop"] = stop
     sig["tp1"]  = tp1
