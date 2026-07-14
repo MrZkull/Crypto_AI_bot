@@ -35,42 +35,6 @@
     "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"
   },
-  "SOLUSDT": {
-    "symbol": "SOLUSDT",
-    "signal": "SELL",
-    "entry": 74.397,
-    "stop": 75.098,
-    "tp1": 73.416,
-    "tp2": 72.294,
-    "qty": 117.8,
-    "qty_tp1": 58.9,
-    "qty_tp2": 58.9,
-    "risk_usd": 1317.61,
-    "balance_at_open": 175680.9,
-    "risk_mult": 0.75,
-    "order_ids": {
-      "entry": "USDC-225071557162",
-      "stop_loss": "USDC-SLTB-29187",
-      "tp1": "USDC-225071561084",
-      "tp2": "USDC-225071561300"
-    },
-    "opened_at": "2026-07-13T21:10:00.543479+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 65.5,
-    "score": 6,
-    "reasons": [
-      "Conf (66%)",
-      "Strong ADX 32",
-      "EMA bearish",
-      "1h confirms",
-      "4h trend aligns (RSI 31)",
-      "4h trend established (20h)"
-    ],
-    "tier": "\u26a1 High-Liquidity L1s",
-    "exchange": "deribit_testnet"
-  },
   "LTCUSDT": {
     "symbol": "LTCUSDT",
     "signal": "SELL",
@@ -104,6 +68,43 @@
       "4h trend aligns (RSI 37)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "SOLUSDT": {
+    "symbol": "SOLUSDT",
+    "signal": "SELL",
+    "entry": 74.904,
+    "stop": 75.591,
+    "tp1": 73.942,
+    "tp2": 72.843,
+    "qty": 116.9,
+    "qty_tp1": 58.4,
+    "qty_tp2": 58.5,
+    "risk_usd": 877.74,
+    "balance_at_open": 175548.73,
+    "risk_mult": 0.5,
+    "order_ids": {
+      "entry": "USDC-225110720173",
+      "stop_loss": "USDC-SLTB-29189",
+      "tp1": "USDC-225110726628",
+      "tp2": "USDC-225110726914"
+    },
+    "opened_at": "2026-07-14T00:11:58.495060+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 53.5,
+    "score": 5,
+    "reasons": [
+      "Strong ADX 29",
+      "RSI not oversold (56)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 34)",
+      "4h trend established (20h)",
+      "F&G extreme countered (-1)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
   }
 }
