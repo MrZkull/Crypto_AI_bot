@@ -52,20 +52,20 @@ jobs:
           echo "DERIBIT_CLIENT_ID=${{ secrets.DERIBIT_CLIENT_ID }}"           >> .env
           echo "DERIBIT_CLIENT_SECRET=${{ secrets.DERIBIT_CLIENT_SECRET }}"   >> .env
 
-      - name: Restore state files
-        uses: actions/cache@v4
-        id: state-cache
-        with:
-          path: |
-            trades.json
-            trade_history.json
-            signals.json
-            scan_mode.json
-            balance.json
-            data/
-          key: bot-state-v4-${{ github.run_id }}
-          restore-keys: |
-            bot-state-v4-
+      # REMOVED 2026-07-15: "Restore state files" (actions/cache@v4) step.
+      #
+      # Root cause of trades.json intermittently reverting to {} / positions going
+      # untracked: this step's cache `key` used `github.run_id`, which is unique
+      # per run and therefore NEVER hits on the primary key — it always fell
+      # through to the `restore-keys` prefix match, i.e. a lottery over whatever
+      # old cache entries hadn't been evicted yet (bot runs every 15 min = ~96
+      # cache entries/day, churning fast against GitHub's eviction limits).
+      #
+      # Whatever that lottery restored then OVERWROTE the correct trades.json
+      # that "Checkout repository" had already pulled from git — the git-commit
+      # persistence in "Commit and Push State to Repo" below is already a
+      # complete, reliable mechanism on its own. Running both was pure downside:
+      # git checkout gets it right, then cache-restore randomly clobbers it.
 
       - name: Init state files if missing
         run: |
@@ -96,18 +96,9 @@ jobs:
             python trade_executor.py
           fi
 
-      - name: Save state to Cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            trades.json
-            trade_history.json
-            signals.json
-            scan_mode.json
-            balance.json
-            data/
-          key: bot-state-v4-${{ github.run_id }}
+      # REMOVED 2026-07-15: "Save state to Cache" step — paired with the removed
+      # restore step above. No longer needed; git commit below is the sole,
+      # reliable persistence mechanism.
 
       - name: Commit and Push State to Repo
         if: always()
