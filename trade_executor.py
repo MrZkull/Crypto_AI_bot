@@ -187,6 +187,22 @@ def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, 
         log.warning(f"  {label} re-place {symbol}: {e}")
     return ""
 
+def _get_safe_close_qty(deribit: DeribitClient, symbol: str, trade: dict) -> float:
+    """Always close against the REAL live position size, not the recorded qty.
+    A mismatch here (partial fills, earlier position-size-limit retries, etc.)
+    is exactly how emergency closes leave residual untracked positions behind
+    while the local trade record gets deleted as if fully closed."""
+    try:
+        actual = abs(deribit.get_position_size(symbol))
+        if actual > 0:
+            return deribit.round_amount(symbol, actual)
+    except Exception as e:
+        log.debug(f"  _get_safe_close_qty {symbol}: position check failed ({e})")
+
+    # Fall back to recorded qty only if we couldn't verify the real position
+    recorded = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
+    return recorded
+
 def save_balance(deribit: DeribitClient) -> float:
     try:
         bals  = deribit.get_all_balances()
@@ -664,7 +680,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal}")
     return True
 
-
 # ════════════ MONITOR OPEN TRADES ════════════════════════════════════
 
 def _safe_get_order(deribit, oid_str):
@@ -728,8 +743,7 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
                 log.warning(f"  🚨 {symbol}: SL trigger already passed — MARKET CLOSE")
                 try:
                     close_side = "SELL" if signal == "BUY" else "BUY"
-                    close_qty  = (float(trade.get("qty_tp2", qty))
-                                  if trade.get("tp1_hit") else qty)
+                    close_qty  = _get_safe_close_qty(deribit, symbol, trade)
                     if close_qty > 0:
                         deribit.place_market_order(symbol, close_side, close_qty)
                     live = deribit.get_live_price(symbol)
@@ -815,7 +829,7 @@ def check_open_trades(deribit: DeribitClient):
 
         risk_usd = float(trade.get("risk_usd", 0))
         if risk_usd > 0:
-            mae_qty  = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade["qty"])
+            mae_qty  = _get_safe_close_qty(deribit, symbol, trade)
             mae_diff = (live - entry) if signal == "BUY" else (entry - live)
             mae_pnl  = round(mae_diff * mae_qty, 4)
 
@@ -990,8 +1004,7 @@ def check_open_trades(deribit: DeribitClient):
                     )
                     try:
                         close_side = "SELL" if signal == "BUY" else "BUY"
-                        close_qty  = (float(trade.get("qty_tp2", 0))
-                                      if trade.get("tp1_hit") else float(trade["qty"]))
+                        close_qty  = _get_safe_close_qty(deribit, symbol, trade)
                         if close_qty > 0:
                             deribit.place_market_order(symbol, close_side, close_qty)
                         for k in ("tp1", "tp2"):
@@ -1007,7 +1020,7 @@ def check_open_trades(deribit: DeribitClient):
                     log.warning(f"  ⚠️ {symbol}: price {live:.{dec}f} past SL {stop:.{dec}f} (state='{sl_state}') — SCENARIO B market close")
                     try:
                         close_side = "SELL" if signal == "BUY" else "BUY"
-                        close_qty  = (float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade["qty"]))
+                        close_qty  = _get_safe_close_qty(deribit, symbol, trade)
                         if close_qty > 0:
                             deribit.place_market_order(symbol, close_side, close_qty)
                         for k in ("tp1", "tp2"):
@@ -1075,7 +1088,7 @@ def check_stale_trades(deribit: DeribitClient):
                     except Exception: pass
 
             live      = deribit.get_live_price(symbol)
-            close_qty = (float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade["qty"]))
+            close_qty = _get_safe_close_qty(deribit, symbol, trade)
             if close_qty > 0:
                 close_side = "SELL" if trade["signal"] == "BUY" else "BUY"
                 try: deribit.place_market_order(symbol, close_side, close_qty)
@@ -1110,8 +1123,22 @@ def clean_ghost_trades(deribit: DeribitClient):
             log.warning(f"  🗑️ {symbol}: broken state — remove")
             to_remove.append(symbol); continue
             
-        # ZOMBIE CLEANER: Purge corrupted score:0 / confidence:0 records
+        # ZOMBIE CLEANER: Purge corrupted score:0 / confidence:0 records —
+        # but check for and close a real position FIRST, don't just forget about it.
         if float(trade.get("score", 1)) == 0 and float(trade.get("confidence", 1)) == 0:
+            try:
+                actual = deribit.get_position_size(symbol)
+            except Exception:
+                actual = 0
+            if abs(actual) > 0:
+                log.warning(f"  🗑️ {symbol}: broken record BUT real position exists "
+                            f"(size={actual}) — closing before removing record")
+                try:
+                    close_side = "SELL" if actual > 0 else "BUY"
+                    deribit.place_market_order(symbol, close_side, abs(actual))
+                except Exception as e:
+                    log.error(f"  Ghost-cleanup close {symbol} failed: {e} — "
+                              f"will resurface via [3c] untracked-position check")
             log.warning(f"  🗑️ {symbol}: score=0 confidence=0 — broken record, removing")
             _close_record(trade, float(trade.get("entry", 0)), 0.0, "Ghost — broken record")
             to_remove.append(symbol)
