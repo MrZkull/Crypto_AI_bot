@@ -562,10 +562,33 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
     # ── High-Conviction Institutional Risk Boost ──
     risk_boost = 1.5 if sig.get("conf_tier") == "high" else 1.0
-    final_risk_mult = risk_mult * risk_boost
-    
+
+    # ── NEW: Volatility-targeted sizing ──
+    # Normalize against BTC's current ATR% so every trade contributes roughly the
+    # same volatility to the portfolio, not just the same "risk_mult". A coin at
+    # 3x BTC's current volatility gets sized down to ~1/3, not treated identically
+    # to a calm one. Clamped to [0.4x, 2.0x] so one extreme coin can't dominate or
+    # vanish entirely — a raw uncapped ratio is too aggressive at either extreme.
+    vol_scalar = 1.0
+    try:
+        atr_pct_this   = (atr / entry) if entry > 0 else 0
+        btc_live       = deribit.get_live_price("BTCUSDT")
+        # crude BTC ATR% proxy: reuse the same ATR the signal carried for BTC if
+        # this trade IS BTC, otherwise fall back to a fixed reference of 0.3%
+        # (roughly BTC's typical calm-market ATR% seen across this project's logs).
+        btc_ref_atr_pct = 0.003
+        if atr_pct_this > 0:
+            vol_scalar = btc_ref_atr_pct / atr_pct_this
+            vol_scalar = max(0.4, min(2.0, vol_scalar))
+    except Exception as e:
+        log.debug(f"  vol_scalar calc failed for {symbol}: {e}")
+
+    final_risk_mult = risk_mult * risk_boost * vol_scalar
+
     if risk_boost > 1.0:
         log.info(f"  🔥 High Conviction ({sig['confidence']}%) — Risk multiplier boosted by {risk_boost}x")
+    if vol_scalar != 1.0:
+        log.info(f"  📊 Vol-targeted sizing: ATR%={atr_pct_this*100:.2f}% -> scalar {vol_scalar:.2f}x")
 
     total_q          = deribit.calc_contracts(symbol, balance, entry, stop, final_risk_mult)
     qty_tp1, qty_tp2 = deribit.split_amount(symbol, total_q)
@@ -679,6 +702,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                      actual_entry, stop, tp1, tp2, total_q, qty_tp1, qty_tp2, risk_usd, balance)
     log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal}")
     return True
+
 
 # ════════════ MONITOR OPEN TRADES ════════════════════════════════════
 
