@@ -159,6 +159,24 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         )
     ).astype(float)
 
+    # ── NEW: Directional regime state (P2 — explicit, model-visible regime feature) ──
+    # vol_regime above only captures volatility LEVEL, not direction. This adds
+    # direction so the model can condition behavior on "which regime am I in"
+    # explicitly, instead of only implicitly inferring it from raw price features.
+    # Priority order matters: volatile/chop are checked before trend, since a
+    # violent or directionless move should override a technically-present trend
+    # reading (ADX can briefly spike during chop before a real trend forms).
+    is_volatile = df["vol_regime"] == 2
+    is_chop     = df["vol_regime"] == 0
+    is_uptrend  = (df["trend"] == 1)  & (adx_smooth > 25) & ~is_volatile & ~is_chop
+    is_downtrend = (df["trend"] == -1) & (adx_smooth > 25) & ~is_volatile & ~is_chop
+
+    df["regime_volatile"]     = is_volatile.astype(float)
+    df["regime_chop"]         = is_chop.astype(float)
+    df["regime_uptrend"]      = is_uptrend.astype(float)
+    df["regime_downtrend"]    = is_downtrend.astype(float)
+    df["regime_transitional"] = (~is_volatile & ~is_chop & ~is_uptrend & ~is_downtrend).astype(float)
+
     # ── NEW: Order flow — how much of each candle's volume was aggressive buying ──
     if "taker_buy_base_vol" in df.columns:
         vol_safe = v.replace(0, np.nan)
@@ -200,6 +218,7 @@ ALL_FEATURES = [
     "rsi_1h","adx_1h","trend_1h",
     "rsi_4h","trend_4h",
     "vol_regime",  # <--- Added Feature
+    "regime_volatile", "regime_chop", "regime_uptrend", "regime_downtrend", "regime_transitional",  # NEW: P2 directional regime
     "taker_buy_ratio",                          # NEW: order flow
     "hour_sin","hour_cos","dow_sin","dow_cos",  # NEW: cyclical time features
 ]
