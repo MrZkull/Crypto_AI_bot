@@ -1,45 +1,9 @@
 {
-  "SOLUSDT": {
-    "symbol": "SOLUSDT",
-    "signal": "SELL",
-    "entry": 74.73951682,
-    "stop": 75.13,
-    "tp1": 74.192,
-    "tp2": 73.567,
-    "qty": 115.9,
-    "qty_tp1": 57.9,
-    "qty_tp2": 58.0,
-    "risk_usd": 2080.94,
-    "balance_at_open": 173411.84,
-    "risk_mult": 1.2,
-    "order_ids": {
-      "entry": "USDC-226087471612",
-      "stop_loss": "USDC-SLTB-29515",
-      "tp1": "USDC-226087475443",
-      "tp2": "USDC-226087475841"
-    },
-    "opened_at": "2026-07-17T11:00:19.778371+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 54.0,
-    "score": 6,
-    "reasons": [
-      "ADX 20",
-      "RSI not oversold (50)",
-      "EMA bearish",
-      "1h confirms",
-      "4h trend aligns (RSI 36)",
-      "4h trend established (20h)"
-    ],
-    "tier": "\u26a1 High-Liquidity L1s",
-    "exchange": "deribit_testnet"
-  },
   "BNBUSDT": {
     "symbol": "BNBUSDT",
     "signal": "SELL",
     "entry": 562.32,
-    "stop": 565.04,
+    "stop": 562.32,
     "tp1": 558.52,
     "tp2": 554.17,
     "qty": 15.39,
@@ -50,12 +14,12 @@
     "risk_mult": 1.0,
     "order_ids": {
       "entry": "USDC-226102127982",
-      "stop_loss": "USDC-SLTB-29524",
+      "stop_loss": "USDC-SLTB-29550",
       "tp1": "USDC-226102131530",
       "tp2": "USDC-226102131712"
     },
     "opened_at": "2026-07-17T12:18:33.428687+00:00",
-    "tp1_hit": false,
+    "tp1_hit": true,
     "tp2_hit": false,
     "closed": false,
     "confidence": 47.2,
@@ -68,6 +32,43 @@
       "4h trend aligns (RSI 33)"
     ],
     "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet"
+  },
+  "SOLUSDT": {
+    "symbol": "SOLUSDT",
+    "signal": "SELL",
+    "entry": 74.59093213,
+    "stop": 75.605,
+    "tp1": 73.171,
+    "tp2": 71.549,
+    "qty": 116.4,
+    "qty_tp1": 58.2,
+    "qty_tp2": 58.2,
+    "risk_usd": 2085.67,
+    "balance_at_open": 173805.8,
+    "risk_mult": 1.2,
+    "order_ids": {
+      "entry": "USDC-226123680824",
+      "stop_loss": "USDC-SLTB-29551",
+      "tp1": "USDC-226123684808",
+      "tp2": "USDC-226123684925"
+    },
+    "opened_at": "2026-07-17T14:09:29.399055+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 49.9,
+    "score": 7,
+    "reasons": [
+      "Strong ADX 39",
+      "RSI not oversold (53)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 35)",
+      "4h trend established (20h)",
+      "Volume surge 1.8\u00d7"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
   }
 }
