@@ -1,5 +1,4 @@
 name: Train ML Model
-
 on:
   schedule:
     - cron: '0 2 1 * *'   # Runs at 02:00 UTC on the 1st of every month
@@ -13,40 +12,33 @@ on:
         description: 'Reason for retraining (optional note)'
         required: false
         default: 'Manual retrain'
-
 jobs:
   train:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     # Give the bot permission to write back to your repository and releases
     permissions:
       contents: write
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Fetches all history so rebase works
           lfs: false
-
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-
       - name: Install dependencies
         run: |
           pip install -q pandas numpy scikit-learn xgboost joblib requests
-
       - name: Run training
         run: |
           echo "Starting model training at $(date -u)"
           echo "Note: ${{ github.event.inputs.note }}"
           python train_model.py
           echo "Training complete at $(date -u)"
-
       - name: Show results
         run: |
           python -c "
@@ -61,24 +53,49 @@ jobs:
           print(f'FEATURES:  {len(p.get(\"features\", []))} total')
           print('='*50)
           "
-
+      # ── NEW: Meta-labeling — trains a second model on top of pro_crypto_ai_model.pkl
+      # which was just produced by "Run training" above and is still in the workspace.
+      # Continues on error rather than failing the whole job: the primary model is
+      # already trained and committed by this point, so a meta-training problem
+      # shouldn't block that from shipping.
+      - name: Train Meta Model
+        id: train_meta
+        continue-on-error: true
+        run: |
+          echo "Starting meta-model training at $(date -u)"
+          python train_meta_model.py
+          echo "Meta-model training complete at $(date -u)"
+      - name: Show meta results
+        if: steps.train_meta.outcome == 'success'
+        run: |
+          python -c "
+          import json
+          with open('meta_model_performance.json') as f:
+            p = json.load(f)
+          print('='*50)
+          print(f'META TEST ACCURACY: {p.get(\"test_accuracy\", 0)}%')
+          print(f'BASE RATE:          {p.get(\"base_rate\", 0)}%  (primary calls a direction this often, correct this often)')
+          print(f'DIRECTIONAL CALLS:  {p.get(\"n_directional_calls\", 0)}')
+          print(f'META THRESHOLD:     {p.get(\"recommended_meta_threshold\", 0)}')
+          print('='*50)
+          "
       - name: Commit Performance Data ONLY
         run: |
           git config user.name  "CryptoBot AI"
           git config user.email "bot@cryptobot.ai"
-          
-          # Stage ONLY the lightweight JSON tracking file
+
+          # Stage the lightweight JSON tracking files (meta one only if it exists)
           git add model_performance.json || true
-          
+          [ -f meta_model_performance.json ] && git add meta_model_performance.json || true
+
           # Commit with results
           git commit -m "🤖 Retrain model — $(python -c "import json; p=json.load(open('model_performance.json')); print(f'{p.get(\"accuracy\", 0)}% accuracy')")" || echo "No changes to commit"
-          
+
           # Pull with autostash to prevent crashes, then push the JSON
           git pull origin main --rebase --autostash
           git push origin main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Upload Model to Releases (Bypass LFS)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,6 +104,15 @@ jobs:
           gh release upload v2.0 pro_crypto_ai_model.pkl --clobber
           echo "Successfully uploaded new model to v2.0 Release!"
 
+          # NEW: upload the meta-model too, if this run produced one. Separate
+          # asset name (meta_pipeline.pkl) in the SAME v2.0 release — trade_executor.py
+          # would download both the same way it already downloads the primary model.
+          if [ -f meta_pipeline.pkl ]; then
+            gh release upload v2.0 meta_pipeline.pkl --clobber
+            echo "Successfully uploaded meta-model to v2.0 Release!"
+          else
+            echo "No meta_pipeline.pkl produced this run — skipping meta-model upload"
+          fi
       - name: Upload model as artifact (backup)
         uses: actions/upload-artifact@v4
         with:
@@ -94,5 +120,7 @@ jobs:
           path: |
             pro_crypto_ai_model.pkl
             model_performance.json
+            meta_pipeline.pkl
+            meta_model_performance.json
           retention-days: 30
-          
+          if-no-files-found: ignore
