@@ -14,6 +14,15 @@
 #
 # Usage: python train_meta_model.py
 # (Run AFTER train_model.py — this needs pro_crypto_ai_model.pkl to already exist.)
+#
+# FIXED 2026-07-17: first version evaluated "was the primary correct" over the
+# FULL dataset, including the ~65% of rows the primary was trained on — the same
+# in-sample-evaluation leak this project spent a long time hunting down and fixing
+# in train_model.py's own calibration step. That produced a fake 74.5% "base rate"
+# (vs. the primary's real ~42-49% held-out precision) and a meta-model that just
+# learned to predict "correct" for almost everything (50% precision / 99% recall —
+# no real signal). Now reconstructs the primary's own per-regime split and only
+# evaluates/labels on its genuinely held-out test rows.
 
 import json, logging, time
 import numpy as np
@@ -108,24 +117,41 @@ def train_meta_model():
     ds = build_dataset()
     ds = ds.sort_values("open_time").reset_index(drop=True)
 
-    log.info("Getting primary model's directional calls across the full dataset...")
-    ds = get_primary_predictions(ds, primary_pipeline)
+    # ── FIX: only evaluate "was the primary correct" on rows the primary never
+    # trained OR calibrated on. Running this on the full dataset (including the
+    # ~65% of rows the primary was FIT on) is exactly the in-sample-evaluation
+    # leak this whole project spent a long time finding and fixing in
+    # train_model.py's own calibration step — reintroducing it here would make
+    # every downstream meta-label, and the reported "base rate", meaningless.
+    # Reconstruct the SAME per-regime split primary used, and only touch its
+    # held-out test portion.
+    log.info("Reconstructing primary's train/calib/test split to isolate truly held-out rows...")
+    _, _, primary_test = per_regime_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
+    log.info(f"Primary's held-out test portion: {len(primary_test):,} rows "
+             f"(evaluating meta-labels ONLY on these — never seen by primary's training or calibration)")
 
-    directional = build_meta_labels(ds)
+    log.info("Getting primary model's directional calls on held-out rows only...")
+    primary_test = get_primary_predictions(primary_test, primary_pipeline)
+
+    directional = build_meta_labels(primary_test)
     n_dir = len(directional)
     n_correct = directional["meta_label"].sum()
-    log.info(f"Primary model called a direction on {n_dir:,} rows "
-             f"({n_dir/len(ds)*100:.1f}% of dataset) — {n_correct:,} were correct "
-             f"({n_correct/n_dir*100:.1f}% base rate)")
+    log.info(f"Primary model called a direction on {n_dir:,} held-out rows "
+             f"({n_dir/len(primary_test)*100:.1f}% of held-out set) — {n_correct:,} were correct "
+             f"({n_correct/n_dir*100:.1f}% TRUE out-of-sample base rate)")
+    log.info(f"  (Compare this to train_model.py's own test-split BUY/SELL precision — "
+             f"they should now roughly agree, since both are evaluating the same held-out rows.)")
 
-    if n_dir < 5000:
-        log.error("Too few directional calls to train a meta-model reliably — "
-                   "check that primary_pipeline is actually calling BUY/SELL, not "
-                   "always NO_TRADE (if so, fix the primary model first).")
+    if n_dir < 3000:
+        log.error("Too few directional calls in the held-out set to train a meta-model reliably "
+                   "— this is expected to be smaller than before now that it's leak-free. If this "
+                   "is really too small, the fix is more held-out data (lower TEST_SPLIT elsewhere "
+                   "isn't the answer — that would reduce primary's own training data instead).")
         return
 
     train_df, calib_df, test_df = per_regime_split(directional, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
-    log.info(f"Meta split: train={len(train_df):,}  calib={len(calib_df):,}  test={len(test_df):,}")
+    log.info(f"Meta split (nested within primary's held-out test): "
+             f"train={len(train_df):,}  calib={len(calib_df):,}  test={len(test_df):,}")
 
     for f in FULL_FEATURES:
         for part in (train_df, calib_df, test_df):
@@ -258,3 +284,4 @@ if __name__ == "__main__":
     t0 = time.time()
     train_meta_model()
     log.info(f"\nDone in {(time.time()-t0)/60:.1f} min")
+  
