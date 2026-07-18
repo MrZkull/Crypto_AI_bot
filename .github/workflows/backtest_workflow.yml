@@ -1,0 +1,87 @@
+name: Backtest Model
+
+on:
+  # Runs automatically a few hours after the monthly training cron (02:00 UTC on
+  # the 1st) — gives the training + meta-training workflow time to finish and
+  # upload fresh models to the v2.0 release before this pulls them down.
+  schedule:
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'How many recent days to backtest'
+        required: false
+        default: '20'
+      tag:
+        description: 'Label for this run (shows in the leaderboard)'
+        required: false
+        default: 'manual-check'
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: false
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -q pandas numpy scikit-learn xgboost joblib requests
+
+      - name: Download latest primary model
+        run: |
+          wget -q -O pro_crypto_ai_model.pkl "https://github.com/MrZkull/Crypto_AI_bot/releases/download/v2.0/pro_crypto_ai_model.pkl"
+
+      - name: Download latest meta model (if it exists)
+        continue-on-error: true
+        run: |
+          wget -q -O meta_pipeline.pkl "https://github.com/MrZkull/Crypto_AI_bot/releases/download/v2.0/meta_pipeline.pkl"
+
+      - name: Backtest — primary model alone
+        run: |
+          echo "=== PRIMARY ONLY ==="
+          python backtest.py --days ${{ github.event.inputs.days || '20' }} --tag "${{ github.event.inputs.tag || 'scheduled' }}-primary"
+
+      - name: Backtest — primary + meta filter (if meta model was downloaded)
+        run: |
+          if [ -f meta_pipeline.pkl ]; then
+            echo "=== PRIMARY + META ==="
+            python backtest.py --days ${{ github.event.inputs.days || '20' }} --use-meta --tag "${{ github.event.inputs.tag || 'scheduled' }}-meta"
+          else
+            echo "No meta_pipeline.pkl available (not yet trained, or upload failed) — skipping meta comparison"
+          fi
+
+      - name: Commit backtest history
+        run: |
+          git config user.name  "CryptoBot AI"
+          git config user.email "bot@cryptobot.ai"
+
+          git add backtest_history.json || true
+          git commit -m "📊 Backtest run — $(date -u +%Y-%m-%d)" || echo "No changes to commit"
+
+          git pull origin main --rebase --autostash
+          git push origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload backtest artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-results-${{ github.run_number }}
+          path: |
+            backtest_results.json
+            backtest_history.json
+          retention-days: 90
+          if-no-files-found: ignore
