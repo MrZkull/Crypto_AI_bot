@@ -40,14 +40,22 @@ LOOKAHEAD_BARS  = 24       # matches make_targets()'s label lookahead (6h on 15m
 MAX_OPEN_TRADES = 10       # matches trade_executor.py's testnet cap
 RISK_PER_TRADE  = 0.01     # 1% of current equity risked per trade — matches config.py
 STARTING_EQUITY = 100_000.0
+META_MODEL_FILE = "meta_pipeline.pkl"  # NEW — see train_meta_model.py
 
 
-def simulate_symbol(symbol: str, df15: pd.DataFrame, pipeline: dict, threshold: float) -> list:
+def simulate_symbol(symbol: str, df15: pd.DataFrame, pipeline: dict, threshold: float,
+                     meta_pipeline: dict = None, meta_threshold: float = None) -> list:
     """Walk every bar of df15, generate a signal via the trained pipeline exactly
     like generate_signal() does live, and if one fires, resolve the outcome by
     checking forward bars for TP1/SL — first one touched wins. Returns a list of
     trade dicts (not yet filtered by portfolio position caps — that happens after
-    merging all symbols chronologically)."""
+    merging all symbols chronologically).
+
+    NEW: if meta_pipeline is provided, every primary signal is additionally passed
+    through the meta-model — a signal only survives if BOTH the primary confidence
+    clears `threshold` AND the meta-model's P(call is correct) clears
+    `meta_threshold`. This lets us directly compare "primary alone" vs "primary +
+    meta filter" on the exact same realistic-cost, position-capped simulation."""
     af       = pipeline["all_features"]
     selector = pipeline["selector"]
     ensemble = pipeline["ensemble"]
@@ -62,6 +70,15 @@ def simulate_symbol(symbol: str, df15: pd.DataFrame, pipeline: dict, threshold: 
     preds  = ensemble.predict(Xs)
     probas = ensemble.predict_proba(Xs)
 
+    meta_probas = None
+    if meta_pipeline is not None:
+        mf = meta_pipeline["meta_features"]
+        for f in mf:
+            if f not in df15.columns:
+                df15[f] = 0.0
+        Xm = df15[mf].replace([np.inf, -np.inf], np.nan).fillna(0)
+        meta_probas = meta_pipeline["meta_ensemble"].predict_proba(Xm)[:, 1]
+
     trades = []
     n = len(df15)
     highs  = df15["high"].values
@@ -75,6 +92,9 @@ def simulate_symbol(symbol: str, df15: pd.DataFrame, pipeline: dict, threshold: 
         conf = float(max(probas[i]))
         if sig == "NO_TRADE" or conf < threshold:
             continue
+        if meta_probas is not None:
+            if meta_probas[i] < meta_threshold:
+                continue
         if atrs is None or atrs[i] <= 0:
             continue
 
@@ -209,14 +229,24 @@ def run_portfolio_simulation(all_trades: list) -> dict:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=20, help="How many recent days per symbol to backtest")
-    parser.add_argument("--threshold", type=float, default=None, help="Confidence threshold (default: pipeline's recommended_threshold)")
+    parser.add_argument("--threshold", type=float, default=None, help="Primary confidence threshold (default: pipeline's recommended_threshold)")
     parser.add_argument("--symbols", nargs="+", default=None, help="Subset of symbols (default: all)")
+    parser.add_argument("--use-meta", action="store_true", help="Apply meta_pipeline.pkl as an additional filter — compare against a run WITHOUT this flag on the same days/symbols")
+    parser.add_argument("--meta-threshold", type=float, default=None, help="Meta confidence threshold (default: meta_pipeline's recommended_meta_threshold)")
+    parser.add_argument("--tag", type=str, default=None, help="Label for this run in backtest_history.json (e.g. 'post-orphan-fix', 'meta-v1') — makes the leaderboard readable")
     args = parser.parse_args()
 
     pipeline = joblib.load(MODEL_FILE)
     threshold = args.threshold if args.threshold is not None else pipeline.get("recommended_threshold", 0.45)
     symbols = args.symbols if args.symbols else SYMBOLS
     candles = args.days * 96  # 96 15m candles/day
+
+    meta_pipeline, meta_threshold = None, None
+    if args.use_meta:
+        meta_pipeline = joblib.load(META_MODEL_FILE)
+        meta_threshold = args.meta_threshold if args.meta_threshold is not None else meta_pipeline.get("recommended_meta_threshold", 0.5)
+        log.info(f"META FILTER ACTIVE — meta_threshold={meta_threshold} "
+                 f"(meta model trained_at={meta_pipeline.get('trained_at', 'unknown')})")
 
     log.info(f"Backtesting {len(symbols)} symbols, last {args.days} days (~{candles} candles each), threshold={threshold}")
     log.info(f"Model trained_at: {pipeline.get('trained_at', 'unknown')} — make sure this window is genuinely AFTER that")
@@ -235,7 +265,8 @@ def main():
             processed = _process_segment(df15, df1h, df4h, regime="backtest", btc_df15=btc_df15)
             if processed.empty:
                 continue
-            trades = simulate_symbol(symbol, processed, pipeline, threshold)
+            trades = simulate_symbol(symbol, processed, pipeline, threshold,
+                                      meta_pipeline=meta_pipeline, meta_threshold=meta_threshold)
             log.info(f"  [{symbol}] {len(trades)} signals generated")
             all_trades.extend(trades)
         except Exception as e:
@@ -260,6 +291,51 @@ def main():
                    "days": args.days, "symbols": symbols}, f, indent=2)
     log.info("Saved: backtest_results.json")
 
+    # ── Persistent history — every run gets appended, never overwritten, so you
+    # can track which training/config actually held up best over time instead of
+    # only ever seeing the most recent run's numbers. ──
+    HISTORY_FILE = "backtest_history.json"
+    try:
+        with open(HISTORY_FILE) as f:
+            history = json.load(f)
+    except Exception:
+        history = []
+
+    entry = {
+        "run_at": pd.Timestamp.now("UTC").isoformat(),
+        "tag": args.tag,
+        "model_trained_at": pipeline.get("trained_at", "unknown"),
+        "meta_used": bool(args.use_meta),
+        "meta_trained_at": meta_pipeline.get("trained_at", "unknown") if meta_pipeline else None,
+        "primary_threshold": threshold,
+        "meta_threshold": meta_threshold,
+        "days": args.days,
+        "n_symbols": len(symbols),
+        **results,
+    }
+    history.append(entry)
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+    log.info(f"Appended to {HISTORY_FILE} ({len(history)} runs tracked total)")
+
+    # ── Leaderboard — rank every tracked run by risk-adjusted return (Sharpe),
+    # not raw total return, since a higher-return run with a much worse drawdown
+    # isn't actually "better" for a live account. ──
+    log.info("\n" + "=" * 78)
+    log.info(f"{'LEADERBOARD (all tracked runs, ranked by Sharpe)':^78}")
+    log.info("=" * 78)
+    log.info(f"{'#':<3}{'run_at':<20}{'tag':<16}{'meta':<6}{'sharpe':<9}{'maxDD%':<9}{'PF':<8}{'ret%':<8}")
+    ranked = sorted(history, key=lambda r: r.get("sharpe_annualized_approx", -999), reverse=True)
+    for i, r in enumerate(ranked[:15], 1):
+        marker = " <-- THIS RUN" if r is entry else ""
+        log.info(f"{i:<3}{r['run_at'][:16]:<20}{str(r.get('tag') or '-'):<16}"
+                 f"{'Y' if r['meta_used'] else 'N':<6}{r.get('sharpe_annualized_approx','-'):<9}"
+                 f"{r.get('max_drawdown_pct','-'):<9}{str(r.get('profit_factor','-'))[:6]:<8}"
+                 f"{r.get('total_return_pct','-'):<8}{marker}")
+    log.info("=" * 78)
+
+
 
 if __name__ == "__main__":
     main()
+    
