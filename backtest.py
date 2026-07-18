@@ -39,6 +39,10 @@ SLIPPAGE_PCT    = 0.0005   # 0.05% adverse slippage per side, beyond fee — con
 LOOKAHEAD_BARS  = 24       # matches make_targets()'s label lookahead (6h on 15m candles)
 MAX_OPEN_TRADES = 10       # matches trade_executor.py's testnet cap
 RISK_PER_TRADE  = 0.01     # 1% of current equity risked per trade — matches config.py
+MAX_LEVERAGE    = 10.0     # NEW: hard cap on notional as a multiple of equity — prevents
+                            # tight-stop trades from implying unrealistic leverage. 10x is
+                            # a reasonable ceiling for a testnet perpetual account; tune
+                            # down if you want to be more conservative.
 STARTING_EQUITY = 100_000.0
 META_MODEL_FILE = "meta_pipeline.pkl"  # NEW — see train_meta_model.py
 
@@ -165,14 +169,34 @@ def run_portfolio_simulation(all_trades: list) -> dict:
     wins, losses = 0, 0
     gross_win, gross_loss = 0.0, 0.0
     r_multiples = []
+    capped_count = 0
 
     for t in taken:
         entry_fill = t["entry"] * (1 + SLIPPAGE_PCT) if t["signal"] == "BUY" else t["entry"] * (1 - SLIPPAGE_PCT)
         exit_fill  = t["exit_price"] * (1 - SLIPPAGE_PCT) if t["signal"] == "BUY" else t["exit_price"] * (1 + SLIPPAGE_PCT)
 
         stop_dist_pct = abs(t["entry"] - t["stop"]) / t["entry"]
-        risk_dollars  = equity * RISK_PER_TRADE
-        notional      = risk_dollars / stop_dist_pct if stop_dist_pct > 0 else 0
+        risk_dollars_target = equity * RISK_PER_TRADE
+        raw_notional  = risk_dollars_target / stop_dist_pct if stop_dist_pct > 0 else 0
+
+        # FIX: cap implied leverage. Without this, a tight-stop trade (small
+        # stop_dist_pct) can imply absurd notional — e.g. a 0.1% stop with 1%
+        # target risk implies 10x leverage; a 0.02% stop implies 50x. Nothing
+        # was capping this, so a handful of tight-stop trades produced huge PnL
+        # swings that then compounded exponentially (this is exactly how a
+        # 19.5-day run turned $100k into $4.66M — not a real edge, a sizing bug).
+        # MAX_LEVERAGE mirrors the reality that real exchanges enforce hard
+        # position/margin ceilings (see: Deribit's non_pme_max_future_position_size
+        # limit we hit live in trade_executor.py).
+        max_notional = equity * MAX_LEVERAGE
+        notional = min(raw_notional, max_notional)
+        if raw_notional > max_notional:
+            capped_count += 1
+        # Actual dollar risk taken is whatever the (possibly capped) notional
+        # implies — NOT the target risk_dollars, since capping means the account
+        # is risking LESS than 1% on these trades, same as a real leveraged
+        # account would if it hit its own margin ceiling.
+        risk_dollars = notional * stop_dist_pct
 
         raw_pnl_pct = ((exit_fill - entry_fill) / entry_fill) if t["signal"] == "BUY" else ((entry_fill - exit_fill) / entry_fill)
         pnl_dollars = notional * raw_pnl_pct
@@ -210,6 +234,7 @@ def run_portfolio_simulation(all_trades: list) -> dict:
         "total_signals_generated": len(all_trades),
         "trades_taken_after_cap": n,
         "skipped_due_to_max_open": len(all_trades) - n,
+        "trades_leverage_capped": capped_count,
         "win_rate": round(win_rate * 100, 1),
         "wins": wins, "losses": losses,
         "profit_factor": round(profit_factor, 2) if profit_factor != float("inf") else "inf (no losses)",
@@ -338,4 +363,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+        
