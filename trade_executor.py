@@ -203,6 +203,20 @@ def _get_safe_close_qty(deribit: DeribitClient, symbol: str, trade: dict) -> flo
     recorded = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
     return recorded
 
+def _verify_actually_closed(deribit: DeribitClient, symbol: str, tolerance: float = 0.01) -> bool:
+    """After ANY emergency/force close attempt, check the real exchange position
+    before trusting that it worked. An order can fail for many reasons (thin book,
+    Code:10057 size limit, Code:10009 insufficient funds, network hiccup) — the
+    caller should never assume success just because it didn't raise an exception
+    it happened to catch. tolerance allows for tiny dust remainders."""
+    try:
+        remaining = abs(deribit.get_position_size(symbol))
+        return remaining <= tolerance
+    except Exception as e:
+        log.warning(f"  _verify_actually_closed {symbol}: could not check ({e}) — "
+                    f"assuming NOT closed, safer to over-alert than silently lose track")
+        return False
+
 def save_balance(deribit: DeribitClient) -> float:
     try:
         bals  = deribit.get_all_balances()
@@ -772,15 +786,21 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
                         deribit.place_market_order(symbol, close_side, close_qty)
                     live = deribit.get_live_price(symbol)
                     pnl  = _pnl(trade, live if live > 0 else stop, "sl")
-                    _close_record(trade, live if live > 0 else stop, pnl,
-                                  "SL missed — market close")
-                    _send(f"🚨 *SL MISSED — {symbol}*\n"
-                          f"Trigger passed. Closed @ `{live:.{dec}f}` | PnL≈`{pnl:+.4f}`")
-                    if pnl < 0:
-                        _add_cooldown(symbol, f"SL missed market close pnl={pnl:+.4f}")
-                        _record_outcome(symbol, won=False)
-                    trade["closed"] = True
-                    changed = True
+                    if _verify_actually_closed(deribit, symbol):
+                        _close_record(trade, live if live > 0 else stop, pnl, "SL missed — market close")
+                        _send(f"🚨 *SL MISSED — {symbol}*\n"
+                              f"Trigger passed. Closed @ `{live:.{dec}f}` | PnL≈`{pnl:+.4f}`")
+                        if pnl < 0:
+                            _add_cooldown(symbol, f"SL missed market close pnl={pnl:+.4f}")
+                            _record_outcome(symbol, won=False)
+                        trade["closed"] = True
+                        changed = True
+                    else:
+                        log.error(f"  🚨🚨 {symbol}: close attempt did NOT verify flat — "
+                                  f"KEEPING in trades.json for retry next cycle, NOT applying cooldown")
+                        _send(f"🚨🚨 *CLOSE FAILED TO VERIFY — {symbol}*\n"
+                              f"Emergency close attempted but position still open on exchange.\n"
+                              f"Will retry next scan. Check manually if this persists.")
                 except Exception as me:
                     log.error(f"  Emergency SL close {symbol}: {me}")
 
@@ -867,16 +887,23 @@ def check_open_trades(deribit: DeribitClient):
                         if oids.get(k) and not trade.get(f"{k}_hit"):
                             try: deribit.cancel_order(oids[k])
                             except Exception: pass
-                    lbl = "Max adverse excursion ❌"
-                    _close_record(trade, live, mae_pnl, lbl)
-                    _send(f"🚨 *FORCE CLOSE — {symbol}*\nLoss `{mae_pnl:+.4f}` exceeded 3× risk\nLive @ `{live:.{dec}f}`")
-                    
-                    if mae_pnl < 0:
-                        _add_cooldown(symbol, f"MAE close pnl={mae_pnl:+.4f}")
-                        _record_outcome(symbol, won=False)
+                    if _verify_actually_closed(deribit, symbol):
+                        lbl = "Max adverse excursion ❌"
+                        _close_record(trade, live, mae_pnl, lbl)
+                        _send(f"🚨 *FORCE CLOSE — {symbol}*\nLoss `{mae_pnl:+.4f}` exceeded 3× risk\nLive @ `{live:.{dec}f}`")
                         
-                    trade["closed"] = True
-                    to_remove.append(symbol)
+                        if mae_pnl < 0:
+                            _add_cooldown(symbol, f"MAE close pnl={mae_pnl:+.4f}")
+                            _record_outcome(symbol, won=False)
+                            
+                        trade["closed"] = True
+                        to_remove.append(symbol)
+                    else:
+                        log.error(f"  🚨🚨 {symbol}: close attempt did NOT verify flat — "
+                                  f"KEEPING in trades.json for retry next cycle, NOT applying cooldown")
+                        _send(f"🚨🚨 *CLOSE FAILED TO VERIFY — {symbol}*\n"
+                              f"Emergency close attempted but position still open on exchange.\n"
+                              f"Will retry next scan. Check manually if this persists.")
                     continue
                 except Exception as e:
                     log.error(f"  MAE force-close {symbol}: {e}")
@@ -1056,32 +1083,39 @@ def check_open_trades(deribit: DeribitClient):
                         log.error(f"  Scenario-B close {symbol}: {e}")
 
                 if sl_hit:
-                    trade["closed"] = True
-                    fill = fp(sl_o, stop)
-                    if fill == 0 or fill == stop or fill == float(trade.get("stop", 0)):
-                        fill = live if live > 0 else stop
+                    if _verify_actually_closed(deribit, symbol):
+                        trade["closed"] = True
+                        fill = fp(sl_o, stop)
+                        if fill == 0 or fill == stop or fill == float(trade.get("stop", 0)):
+                            fill = live if live > 0 else stop
 
-                    slippage_pct = abs(fill - stop) / stop * 100
-                    if slippage_pct > 0.5:
-                        log.warning(f"  ⚠️ {symbol}: SL slippage {slippage_pct:.2f}% (expected {stop:.{dec}f}, got {fill:.{dec}f})")
+                        slippage_pct = abs(fill - stop) / stop * 100
+                        if slippage_pct > 0.5:
+                            log.warning(f"  ⚠️ {symbol}: SL slippage {slippage_pct:.2f}% (expected {stop:.{dec}f}, got {fill:.{dec}f})")
 
-                    pnl = _pnl(trade, fill, "sl")
-                    lbl = ("BREAK-EVEN ⚖️" if abs(fill - entry) < entry * 0.002 else "STOPPED OUT ❌")
-                    log.info(f"  ❌ SL {symbol} @ {fill:.{dec}f}  pnl≈{pnl:+.4f}  [state={sl_state}]")
-                    _send(f"{'⚖️' if 'BREAK' in lbl else '❌'} *{lbl} — {symbol}*\n@ `{fill:.{dec}f}` | PnL ≈ `{pnl:+.4f}`" + (f"\n⚠️ Slippage: {slippage_pct:.2f}%" if slippage_pct > 0.5 else ""))
-                    _close_record(trade, fill, pnl, lbl)
-                    
-                    if pnl < 0:
-                        _add_cooldown(symbol, f"SL hit pnl={pnl:+.4f}")
-                        _record_outcome(symbol, won=False)
+                        pnl = _pnl(trade, fill, "sl")
+                        lbl = ("BREAK-EVEN ⚖️" if abs(fill - entry) < entry * 0.002 else "STOPPED OUT ❌")
+                        log.info(f"  ❌ SL {symbol} @ {fill:.{dec}f}  pnl≈{pnl:+.4f}  [state={sl_state}]")
+                        _send(f"{'⚖️' if 'BREAK' in lbl else '❌'} *{lbl} — {symbol}*\n@ `{fill:.{dec}f}` | PnL ≈ `{pnl:+.4f}`" + (f"\n⚠️ Slippage: {slippage_pct:.2f}%" if slippage_pct > 0.5 else ""))
+                        _close_record(trade, fill, pnl, lbl)
+                        
+                        if pnl < 0:
+                            _add_cooldown(symbol, f"SL hit pnl={pnl:+.4f}")
+                            _record_outcome(symbol, won=False)
+                        else:
+                            _record_outcome(symbol, won=True)
+
+                        for k in ("tp1", "tp2"):
+                            if oids.get(k) and not trade.get(f"{k}_hit"):
+                                try: deribit.cancel_order(oids[k])
+                                except Exception: pass
+                        to_remove.append(symbol)
                     else:
-                        _record_outcome(symbol, won=True)
-
-                    for k in ("tp1", "tp2"):
-                        if oids.get(k) and not trade.get(f"{k}_hit"):
-                            try: deribit.cancel_order(oids[k])
-                            except Exception: pass
-                    to_remove.append(symbol)
+                        log.error(f"  🚨🚨 {symbol}: close attempt did NOT verify flat — "
+                                  f"KEEPING in trades.json for retry next cycle, NOT applying cooldown")
+                        _send(f"🚨🚨 *CLOSE FAILED TO VERIFY — {symbol}*\n"
+                              f"Emergency close attempted but position still open on exchange.\n"
+                              f"Will retry next scan. Check manually if this persists.")
 
         except Exception as e:
             log.error(f"  Monitor {symbol}: {e}")
@@ -1118,12 +1152,19 @@ def check_stale_trades(deribit: DeribitClient):
                 try: deribit.place_market_order(symbol, close_side, close_qty)
                 except Exception as me: log.warning(f"  Time-exit market order {symbol}: {me}")
 
-            close_price = live if live > 0 else float(trade["entry"])
-            pnl         = _pnl(trade, close_price, "sl")
-            reason      = f"Time exit ({age_h:.0f}h)"
-            _close_record(trade, close_price, pnl, reason)
-            _send(f"⏰ *TIME EXIT — {symbol}*\n{age_h:.0f}h | PnL≈`{pnl:+.4f}` | @ `{close_price:.4f}`")
-            to_remove.append(symbol)
+            if _verify_actually_closed(deribit, symbol):
+                close_price = live if live > 0 else float(trade["entry"])
+                pnl         = _pnl(trade, close_price, "sl")
+                reason      = f"Time exit ({age_h:.0f}h)"
+                _close_record(trade, close_price, pnl, reason)
+                _send(f"⏰ *TIME EXIT — {symbol}*\n{age_h:.0f}h | PnL≈`{pnl:+.4f}` | @ `{close_price:.4f}`")
+                to_remove.append(symbol)
+            else:
+                log.error(f"  🚨🚨 {symbol}: close attempt did NOT verify flat — "
+                          f"KEEPING in trades.json for retry next cycle, NOT applying cooldown")
+                _send(f"🚨🚨 *CLOSE FAILED TO VERIFY — {symbol}*\n"
+                      f"Emergency close attempted but position still open on exchange.\n"
+                      f"Will retry next scan. Check manually if this persists.")
         except Exception as e: log.error(f"  Time exit {symbol}: {e}")
 
     if to_remove:
