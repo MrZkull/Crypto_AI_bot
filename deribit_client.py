@@ -346,10 +346,21 @@ class DeribitClient:
         just failed outright, leaving a breached-stop position with zero protection."""
         return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
 
-    def place_market_order(self, symbol: str, side: str, amount) -> dict:
+    def place_market_order(self, symbol: str, side: str, amount, reduce_only: bool = False) -> dict:
         """Entry order with slippage protection (IoC limit). Reduce-and-retry on a
         non-PME position-size rejection (Code:10057) rather than failing outright —
-        critical for emergency/SL-missed closes, where partial closure beats none."""
+        critical for emergency/SL-missed closes, where partial closure beats none.
+
+        FIXED: reduce_only was never settable at all — this function is used for
+        BOTH entries (should stay reduce_only=False) AND every emergency-close call
+        site in trade_executor.py (MUST be reduce_only=True). Without it, an
+        emergency close requires FULL initial margin as if opening a brand-new
+        position, which is exactly why closes were failing with
+        'not_enough_funds' (Code:10009) while the account was already stretched
+        thin by other large unrealized losses — the close itself would have freed
+        margin once executed, but couldn't get through the initial margin check
+        to execute at all. Callers doing an emergency/forced close MUST now pass
+        reduce_only=True explicitly."""
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         label      = f"bot_entry_{int(time.time())}"
@@ -385,6 +396,7 @@ class DeribitClient:
                             "price":           worst_price,
                             "time_in_force":   "immediate_or_cancel",
                             "label":           label,
+                            "reduce_only":     reduce_only,
                         })
                         order = result.get("order", result)
                         state = order.get("order_state", "")
@@ -418,6 +430,7 @@ class DeribitClient:
                     "amount":          cur_amount,
                     "type":            "market",
                     "label":           label,
+                    "reduce_only":     reduce_only,
                 })
                 order = result.get("order", result)
                 log.info(f"  ✅ MARKET {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
