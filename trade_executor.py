@@ -783,7 +783,7 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
                     close_side = "SELL" if signal == "BUY" else "BUY"
                     close_qty  = _get_safe_close_qty(deribit, symbol, trade)
                     if close_qty > 0:
-                        deribit.place_market_order(symbol, close_side, close_qty)
+                        deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
                     live = deribit.get_live_price(symbol)
                     pnl  = _pnl(trade, live if live > 0 else stop, "sl")
                     if _verify_actually_closed(deribit, symbol):
@@ -882,7 +882,7 @@ def check_open_trades(deribit: DeribitClient):
                 try:
                     close_side = "SELL" if signal == "BUY" else "BUY"
                     if mae_qty > 0:
-                        deribit.place_market_order(symbol, close_side, mae_qty)
+                        deribit.place_market_order(symbol, close_side, mae_qty, reduce_only=True)
                     for k in ("tp1", "tp2"):
                         if oids.get(k) and not trade.get(f"{k}_hit"):
                             try: deribit.cancel_order(oids[k])
@@ -1057,7 +1057,7 @@ def check_open_trades(deribit: DeribitClient):
                         close_side = "SELL" if signal == "BUY" else "BUY"
                         close_qty  = _get_safe_close_qty(deribit, symbol, trade)
                         if close_qty > 0:
-                            deribit.place_market_order(symbol, close_side, close_qty)
+                            deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
                         for k in ("tp1", "tp2"):
                             if oids.get(k) and not trade.get(f"{k}_hit"):
                                 try: deribit.cancel_order(oids[k])
@@ -1073,7 +1073,7 @@ def check_open_trades(deribit: DeribitClient):
                         close_side = "SELL" if signal == "BUY" else "BUY"
                         close_qty  = _get_safe_close_qty(deribit, symbol, trade)
                         if close_qty > 0:
-                            deribit.place_market_order(symbol, close_side, close_qty)
+                            deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
                         for k in ("tp1", "tp2"):
                             if oids.get(k) and not trade.get(f"{k}_hit"):
                                 try: deribit.cancel_order(oids[k])
@@ -1149,7 +1149,7 @@ def check_stale_trades(deribit: DeribitClient):
             close_qty = _get_safe_close_qty(deribit, symbol, trade)
             if close_qty > 0:
                 close_side = "SELL" if trade["signal"] == "BUY" else "BUY"
-                try: deribit.place_market_order(symbol, close_side, close_qty)
+                try: deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
                 except Exception as me: log.warning(f"  Time-exit market order {symbol}: {me}")
 
             if _verify_actually_closed(deribit, symbol):
@@ -1200,7 +1200,7 @@ def clean_ghost_trades(deribit: DeribitClient):
                             f"(size={actual}) — closing before removing record")
                 try:
                     close_side = "SELL" if actual > 0 else "BUY"
-                    deribit.place_market_order(symbol, close_side, abs(actual))
+                    deribit.place_market_order(symbol, close_side, abs(actual), reduce_only=True)
                 except Exception as e:
                     log.error(f"  Ghost-cleanup close {symbol} failed: {e} — "
                               f"will resurface via [3c] untracked-position check")
