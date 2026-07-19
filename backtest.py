@@ -20,10 +20,15 @@
 #   python backtest.py --days 30 --threshold 0.45
 #   python backtest.py --symbols BTCUSDT ETHUSDT
 
-import argparse, json, logging, time
+import argparse, json, logging, time, warnings
 import numpy as np
 import pandas as pd
 import joblib
+
+# Harmless — meta_ensemble's RandomForest component was fit on a plain array but
+# predicted on a DataFrame with column names. Doesn't affect correctness, just
+# spammed once per symbol per run and made the logs hard to read.
+warnings.filterwarnings("ignore", message="X has feature names, but RandomForestClassifier")
 
 from train_model import (
     fetch_klines, _process_segment, FULL_FEATURES, MODEL_FILE, SYMBOLS,
@@ -318,6 +323,11 @@ def main():
             df1h = fetch_klines(symbol, "1h", candles // 4)
             df4h = fetch_klines(symbol, "4h", candles // 16)
 
+            if df15.empty or "open_time" not in df15.columns:
+                log.warning(f"  [{symbol}] no data available at all — skipping "
+                            f"(expected for HYPEUSDT: no Binance spot listing)")
+                continue
+
             if trained_at_ms is not None:
                 before = len(df15)
                 df15 = df15[df15["open_time"] > trained_at_ms].reset_index(drop=True)
@@ -408,4 +418,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
