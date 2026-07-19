@@ -264,7 +264,6 @@ def main():
     pipeline = joblib.load(MODEL_FILE)
     threshold = args.threshold if args.threshold is not None else pipeline.get("recommended_threshold", 0.45)
     symbols = args.symbols if args.symbols else SYMBOLS
-    candles = args.days * 96  # 96 15m candles/day
 
     meta_pipeline, meta_threshold = None, None
     if args.use_meta:
@@ -273,10 +272,44 @@ def main():
         log.info(f"META FILTER ACTIVE — meta_threshold={meta_threshold} "
                  f"(meta model trained_at={meta_pipeline.get('trained_at', 'unknown')})")
 
-    log.info(f"Backtesting {len(symbols)} symbols, last {args.days} days (~{candles} candles each), threshold={threshold}")
-    log.info(f"Model trained_at: {pipeline.get('trained_at', 'unknown')} — make sure this window is genuinely AFTER that")
+    # FIX: previously this only LOGGED a reminder to make sure the backtest window
+    # was after training — never enforced it. train_model.py's "recent" segment
+    # pulls the latest ~52 days of candles AS OF WHENEVER TRAINING RAN, so a
+    # same-day (or even same-week) backtest using "last N days as of now" mostly
+    # overlaps data the model was already fit on. That's exactly how a 20-day
+    # backtest showed a fake 65.3% win rate and 2,546% return — not a sizing bug,
+    # the model was graded on data it had already partially seen. Now this is a
+    # hard cutoff: only candles with open_time strictly AFTER trained_at are used.
+    trained_at_str = pipeline.get("trained_at")
+    trained_at_ms = None
+    if trained_at_str and trained_at_str != "unknown":
+        try:
+            trained_at_ms = int(pd.Timestamp(trained_at_str).timestamp() * 1000)
+        except Exception as e:
+            log.warning(f"Could not parse trained_at ({trained_at_str}): {e} — cannot enforce leak-free cutoff!")
 
+    hours_since_training = None
+    if trained_at_ms is not None:
+        hours_since_training = (pd.Timestamp.now("UTC").timestamp() * 1000 - trained_at_ms) / (1000 * 3600)
+        log.info(f"Model trained_at: {trained_at_str} ({hours_since_training:.1f}h ago) — "
+                 f"ONLY candles after this timestamp will be used, regardless of --days requested")
+        if hours_since_training < 24:
+            log.warning(f"⚠️ Only {hours_since_training:.1f}h have passed since training — there is "
+                        f"very little genuinely fresh data to test on yet. Results below will be "
+                        f"based on a small, statistically weak sample. Consider waiting longer after "
+                        f"training before trusting a backtest.")
+    else:
+        log.error("🚨 No trained_at timestamp on this model — CANNOT enforce leak-free cutoff. "
+                  "Results may be contaminated by training-window overlap. Proceed with caution.")
+
+    log.info(f"Backtesting {len(symbols)} symbols, requested {args.days} days, threshold={threshold}")
+
+    # Fetch generously (requested days + enough padding to survive the post-cutoff
+    # filter) since we don't know in advance how much gets filtered out.
+    candles = max(args.days, 5) * 96 + 500
     btc_df15 = fetch_klines("BTCUSDT", "15m", candles)
+    if trained_at_ms is not None:
+        btc_df15 = btc_df15[btc_df15["open_time"] > trained_at_ms].reset_index(drop=True)
     all_trades = []
 
     for symbol in symbols:
@@ -284,8 +317,19 @@ def main():
             df15 = fetch_klines(symbol, "15m", candles)
             df1h = fetch_klines(symbol, "1h", candles // 4)
             df4h = fetch_klines(symbol, "4h", candles // 16)
+
+            if trained_at_ms is not None:
+                before = len(df15)
+                df15 = df15[df15["open_time"] > trained_at_ms].reset_index(drop=True)
+                if before > 0 and len(df15) == 0:
+                    log.warning(f"  [{symbol}] ALL fetched candles are pre-training — "
+                                f"no genuinely fresh data available yet, skipping")
+                    continue
+
             if df15.empty or len(df15) < 100:
-                log.warning(f"  [{symbol}] insufficient data — skipping")
+                log.warning(f"  [{symbol}] insufficient POST-TRAINING data ({len(df15)} candles) — skipping "
+                            f"(this is expected if training just ran recently — wait longer, don't lower "
+                            f"the minimum to force a result)")
                 continue
             processed = _process_segment(df15, df1h, df4h, regime="backtest", btc_df15=btc_df15)
             if processed.empty:
@@ -330,6 +374,7 @@ def main():
         "run_at": pd.Timestamp.now("UTC").isoformat(),
         "tag": args.tag,
         "model_trained_at": pipeline.get("trained_at", "unknown"),
+        "hours_since_training": round(hours_since_training, 1) if hours_since_training is not None else None,
         "meta_used": bool(args.use_meta),
         "meta_trained_at": meta_pipeline.get("trained_at", "unknown") if meta_pipeline else None,
         "primary_threshold": threshold,
