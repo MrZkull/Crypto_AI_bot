@@ -58,12 +58,12 @@ SYMBOL_MAP = {
     # AI & Momentum
     "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
-   # "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
-                 # "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
+    "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
     "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
-    #"HYPEUSDT":    {"instrument": "HYPE_USDC-PERPETUAL", "currency": "USDC",
-                 # "min_amount": 0.1,      "max_amount": 10000,     "tick_size": 0.001},
+    "HYPEUSDT":    {"instrument": "HYPE_USDC-PERPETUAL", "currency": "USDC",
+                    "min_amount": 0.1,      "max_amount": 10000,     "tick_size": 0.001},
     "DOGEUSDT":    {"instrument": "DOGE_USDC-PERPETUAL", "currency": "USDC",
                     "min_amount": 100,      "max_amount": 1000000,   "tick_size": 0.00001},
 }
@@ -360,7 +360,18 @@ class DeribitClient:
         thin by other large unrealized losses — the close itself would have freed
         margin once executed, but couldn't get through the initial margin check
         to execute at all. Callers doing an emergency/forced close MUST now pass
-        reduce_only=True explicitly."""
+        reduce_only=True explicitly.
+
+        FIXED AGAIN 2026-07-20: the first version of this fix passed reduce_only
+        as a raw Python bool. _post() sends requests via session.get(params=body)
+        — i.e. as URL query parameters, not a JSON body — and `requests` 
+        serializes a Python bool to "True"/"False" (capitalized), not the
+        lowercase "true"/"false" Deribit's API requires. This broke EVERY order,
+        entries included, with 'value must be true or false' (Code:-32602) —
+        worse than the original bug, since it blocked all trading, not just
+        closes. Now sends the lowercase string explicitly, matching the
+        pre-existing pattern in place_limit_order() below (body["reduce_only"] =
+        "true"), which got this right from the start."""
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         label      = f"bot_entry_{int(time.time())}"
@@ -370,7 +381,7 @@ class DeribitClient:
             best_bid = spread["best_bid"]
             best_ask = spread["best_ask"]
 
-            # NEW: hard abort — a 5%+ spread means the book is too thin to fill safely,
+                        # NEW: hard abort — a 5%+ spread means the book is too thin to fill safely,
             # not just "wide". Proceeding here is how a 54,370-contract order fills 3,592
             # (6.6%) at an unknown, likely terrible price. Skip the trade entirely.
             if spread["spread_pct"] > MAX_TRADEABLE_SPREAD_PCT:
@@ -396,7 +407,7 @@ class DeribitClient:
                             "price":           worst_price,
                             "time_in_force":   "immediate_or_cancel",
                             "label":           label,
-                            "reduce_only":     reduce_only,
+                            "reduce_only":     "true" if reduce_only else "false",
                         })
                         order = result.get("order", result)
                         state = order.get("order_state", "")
@@ -430,7 +441,7 @@ class DeribitClient:
                     "amount":          cur_amount,
                     "type":            "market",
                     "label":           label,
-                    "reduce_only":     reduce_only,
+                    "reduce_only":     "true" if reduce_only else "false",
                 })
                 order = result.get("order", result)
                 log.info(f"  ✅ MARKET {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
