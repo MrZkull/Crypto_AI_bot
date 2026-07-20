@@ -381,12 +381,19 @@ class DeribitClient:
             best_bid = spread["best_bid"]
             best_ask = spread["best_ask"]
 
-                        # NEW: hard abort — a 5%+ spread means the book is too thin to fill safely,
-            # not just "wide". Proceeding here is how a 54,370-contract order fills 3,592
-            # (6.6%) at an unknown, likely terrible price. Skip the trade entirely.
-            if spread["spread_pct"] > MAX_TRADEABLE_SPREAD_PCT:
+            # The 5% ceiling protects ENTRIES — don't get into a trade in a book too
+            # thin to fill safely. But an EXIT (reduce_only=True) needs to happen
+            # regardless of price; refusing to exit because the book is thin just
+            # leaves the position exposed even longer, which is worse, not safer.
+            # Use a much higher ceiling for exits — still a sanity check against a
+            # totally dead book (e.g. spread_pct=999 fallback), but won't block a
+            # necessary close over an ordinary wide-but-real spread.
+                        effective_ceiling = 0.50 if reduce_only else MAX_TRADEABLE_SPREAD_PCT
+            if spread["spread_pct"] > effective_ceiling:
                 log.warning(f"  🚫 {symbol}: spread {spread['spread_pct']*100:.1f}% exceeds "
-                            f"{MAX_TRADEABLE_SPREAD_PCT*100:.0f}% ceiling — book too thin, skipping entry")
+                            f"{effective_ceiling*100:.0f}% ceiling "
+                            f"({'exit' if reduce_only else 'entry'}) — book too thin, "
+                            f"{'this needs manual intervention — could not exit even at relaxed threshold' if reduce_only else 'skipping entry'}")
                 return {}
 
             if best_bid > 0 and best_ask > 0:
