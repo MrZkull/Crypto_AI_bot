@@ -58,12 +58,12 @@ SYMBOL_MAP = {
     # AI & Momentum
     "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
-    "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
-                   "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
+#    "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+                 #  "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
     "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
-    "HYPEUSDT":    {"instrument": "HYPE_USDC-PERPETUAL", "currency": "USDC",
-                    "min_amount": 0.1,      "max_amount": 10000,     "tick_size": 0.001},
+   # "HYPEUSDT":    {"instrument": "HYPE_USDC-PERPETUAL", "currency": "USDC",
+           #         "min_amount": 0.1,      "max_amount": 10000,     "tick_size": 0.001},
     "DOGEUSDT":    {"instrument": "DOGE_USDC-PERPETUAL", "currency": "USDC",
                     "min_amount": 100,      "max_amount": 1000000,   "tick_size": 0.00001},
 }
@@ -346,32 +346,10 @@ class DeribitClient:
         just failed outright, leaving a breached-stop position with zero protection."""
         return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
 
-    def place_market_order(self, symbol: str, side: str, amount, reduce_only: bool = False) -> dict:
+        def place_market_order(self, symbol: str, side: str, amount, reduce_only: bool = False) -> dict:
         """Entry order with slippage protection (IoC limit). Reduce-and-retry on a
         non-PME position-size rejection (Code:10057) rather than failing outright —
-        critical for emergency/SL-missed closes, where partial closure beats none.
-
-        FIXED: reduce_only was never settable at all — this function is used for
-        BOTH entries (should stay reduce_only=False) AND every emergency-close call
-        site in trade_executor.py (MUST be reduce_only=True). Without it, an
-        emergency close requires FULL initial margin as if opening a brand-new
-        position, which is exactly why closes were failing with
-        'not_enough_funds' (Code:10009) while the account was already stretched
-        thin by other large unrealized losses — the close itself would have freed
-        margin once executed, but couldn't get through the initial margin check
-        to execute at all. Callers doing an emergency/forced close MUST now pass
-        reduce_only=True explicitly.
-
-        FIXED AGAIN 2026-07-20: the first version of this fix passed reduce_only
-        as a raw Python bool. _post() sends requests via session.get(params=body)
-        — i.e. as URL query parameters, not a JSON body — and `requests` 
-        serializes a Python bool to "True"/"False" (capitalized), not the
-        lowercase "true"/"false" Deribit's API requires. This broke EVERY order,
-        entries included, with 'value must be true or false' (Code:-32602) —
-        worse than the original bug, since it blocked all trading, not just
-        closes. Now sends the lowercase string explicitly, matching the
-        pre-existing pattern in place_limit_order() below (body["reduce_only"] =
-        "true"), which got this right from the start."""
+        critical for emergency/SL-missed closes, where partial closure beats none."""
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         label      = f"bot_entry_{int(time.time())}"
@@ -385,10 +363,7 @@ class DeribitClient:
             # thin to fill safely. But an EXIT (reduce_only=True) needs to happen
             # regardless of price; refusing to exit because the book is thin just
             # leaves the position exposed even longer, which is worse, not safer.
-            # Use a much higher ceiling for exits — still a sanity check against a
-            # totally dead book (e.g. spread_pct=999 fallback), but won't block a
-            # necessary close over an ordinary wide-but-real spread.
-                        effective_ceiling = 0.50 if reduce_only else MAX_TRADEABLE_SPREAD_PCT
+            effective_ceiling = 0.50 if reduce_only else MAX_TRADEABLE_SPREAD_PCT
             if spread["spread_pct"] > effective_ceiling:
                 log.warning(f"  🚫 {symbol}: spread {spread['spread_pct']*100:.1f}% exceeds "
                             f"{effective_ceiling*100:.0f}% ceiling "
@@ -470,6 +445,7 @@ class DeribitClient:
         log.error(f"  🚨 {symbol}: could not fill even at minimum size after repeated position-size "
                   f"rejections — order NOT placed, manual intervention required")
         return {}
+
 
     # ── Fill price + positions ────────────────────────────────────────
 
