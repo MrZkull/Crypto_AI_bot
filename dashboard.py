@@ -202,7 +202,18 @@ def api_open_trades():
                 symbol    = f"{base}USDT"
                 entry     = float(p.get("average_price", 0) or 0)
                 live      = float(p.get("mark_price", 0) or 0)
-                signal    = "BUY" if size > 0 else "SELL"
+
+                # FIXED: trust trades.json's own recorded signal first — it was
+                # set once at trade-open time by the bot itself and is never
+                # subject to any ambiguity in how Deribit's position size sign
+                # is interpreted. Only fall back to inferring from live position
+                # size for symbols with no local record at all (orphaned/
+                # untracked positions, where there's nothing else to go on).
+                # This is what was causing SELL trades to display as BUY with
+                # SL/TP visually backwards — the direction label and the SL/TP
+                # values were coming from two different, inconsistent sources.
+                recorded_signal = ai_data.get(symbol, {}).get("signal")
+                signal = recorded_signal if recorded_signal else ("BUY" if size > 0 else "SELL")
 
                 # Unrealised PnL — prefer exchange value, fallback to calculation
                 upnl = float(p.get("floating_profit_loss_usd") or
