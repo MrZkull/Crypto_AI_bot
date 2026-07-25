@@ -58,12 +58,12 @@ SYMBOL_MAP = {
     # AI & Momentum
     "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
-#    "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
-                #   "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
+    "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+                   "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
     "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
- #   "HYPEUSDT":    {"instrument": "HYPE_USDC-PERPETUAL", "currency": "USDC",
-               #     "min_amount": 0.1,      "max_amount": 10000,     "tick_size": 0.001},
+    "HYPEUSDT":    {"instrument": "HYPE_USDC-PERPETUAL", "currency": "USDC",
+                    "min_amount": 0.1,      "max_amount": 10000,     "tick_size": 0.001},
     "DOGEUSDT":    {"instrument": "DOGE_USDC-PERPETUAL", "currency": "USDC",
                     "min_amount": 100,      "max_amount": 1000000,   "tick_size": 0.00001},
 }
@@ -337,8 +337,41 @@ class DeribitClient:
 
     # ── Order execution ───────────────────────────────────────────────
 
-    def place_market_order(self, symbol: str, side: str, amount) -> dict:
-        """Entry order with slippage protection (IoC limit)."""
+    @staticmethod
+    def _is_position_size_limit_error(e) -> bool:
+        """Code:10057 — non-PME accounts have a max position size per instrument that's
+        SEPARATE from the instrument's general max_trade_amount (which calc_contracts()
+        already checks). This can reject an order calc_contracts() thought was fine —
+        worst case, on a closing/emergency order, which previously had no fallback and
+        just failed outright, leaving a breached-stop position with zero protection."""
+        return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
+
+    def place_market_order(self, symbol: str, side: str, amount, reduce_only: bool = False) -> dict:
+        """Entry order with slippage protection (IoC limit). Reduce-and-retry on a
+        non-PME position-size rejection (Code:10057) rather than failing outright —
+        critical for emergency/SL-missed closes, where partial closure beats none.
+
+        FIXED: reduce_only was never settable at all — this function is used for
+        BOTH entries (should stay reduce_only=False) AND every emergency-close call
+        site in trade_executor.py (MUST be reduce_only=True). Without it, an
+        emergency close requires FULL initial margin as if opening a brand-new
+        position, which is exactly why closes were failing with
+        'not_enough_funds' (Code:10009) while the account was already stretched
+        thin by other large unrealized losses — the close itself would have freed
+        margin once executed, but couldn't get through the initial margin check
+        to execute at all. Callers doing an emergency/forced close MUST now pass
+        reduce_only=True explicitly.
+
+        FIXED AGAIN 2026-07-20: the first version of this fix passed reduce_only
+        as a raw Python bool. _post() sends requests via session.get(params=body)
+        — i.e. as URL query parameters, not a JSON body — and `requests` 
+        serializes a Python bool to "True"/"False" (capitalized), not the
+        lowercase "true"/"false" Deribit's API requires. This broke EVERY order,
+        entries included, with 'value must be true or false' (Code:-32602) —
+        worse than the original bug, since it blocked all trading, not just
+        closes. Now sends the lowercase string explicitly, matching the
+        pre-existing pattern in place_limit_order() below (body["reduce_only"] =
+        "true"), which got this right from the start."""
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         label      = f"bot_entry_{int(time.time())}"
@@ -348,12 +381,19 @@ class DeribitClient:
             best_bid = spread["best_bid"]
             best_ask = spread["best_ask"]
 
-            # NEW: hard abort — a 5%+ spread means the book is too thin to fill safely,
-            # not just "wide". Proceeding here is how a 54,370-contract order fills 3,592
-            # (6.6%) at an unknown, likely terrible price. Skip the trade entirely.
-            if spread["spread_pct"] > MAX_TRADEABLE_SPREAD_PCT:
+            # The 5% ceiling protects ENTRIES — don't get into a trade in a book too
+            # thin to fill safely. But an EXIT (reduce_only=True) needs to happen
+            # regardless of price; refusing to exit because the book is thin just
+            # leaves the position exposed even longer, which is worse, not safer.
+            # Use a much higher ceiling for exits — still a sanity check against a
+            # totally dead book (e.g. spread_pct=999 fallback), but won't block a
+            # necessary close over an ordinary wide-but-real spread.
+            effective_ceiling = 0.50 if reduce_only else MAX_TRADEABLE_SPREAD_PCT
+            if spread["spread_pct"] > effective_ceiling:
                 log.warning(f"  🚫 {symbol}: spread {spread['spread_pct']*100:.1f}% exceeds "
-                            f"{MAX_TRADEABLE_SPREAD_PCT*100:.0f}% ceiling — book too thin, skipping entry")
+                            f"{effective_ceiling*100:.0f}% ceiling "
+                            f"({'exit' if reduce_only else 'entry'}) — book too thin, "
+                            f"{'this needs manual intervention — could not exit even at relaxed threshold' if reduce_only else 'skipping entry'}")
                 return {}
 
             if best_bid > 0 and best_ask > 0:
@@ -364,37 +404,72 @@ class DeribitClient:
 
                 log.info(f"  IoC limit {side} {amount} {instrument} @ max {worst_price} (spread {spread['spread_pct']*100:.3f}%)")
 
-                result = self._post(method, {
-                    "instrument_name": instrument,
-                    "amount":          amount,
-                    "type":            "limit",
-                    "price":           worst_price,
-                    "time_in_force":   "immediate_or_cancel",
-                    "label":           label,
-                })
-                order = result.get("order", result)
-                state = order.get("order_state", "")
+                cur_amount = amount
+                for attempt in range(4):
+                    try:
+                        result = self._post(method, {
+                            "instrument_name": instrument,
+                            "amount":          cur_amount,
+                            "type":            "limit",
+                            "price":           worst_price,
+                            "time_in_force":   "immediate_or_cancel",
+                            "label":           label,
+                            "reduce_only":     "true" if reduce_only else "false",
+                        })
+                        order = result.get("order", result)
+                        state = order.get("order_state", "")
 
-                if state == "cancelled":
-                    log.warning(f"  ⚠️ IoC CANCELLED — market moved >{MAX_SLIPPAGE_PCT*100:.1f}%. Skipping entry.")
-                    return {} 
+                        if state == "cancelled":
+                            log.warning(f"  ⚠️ IoC CANCELLED — market moved >{MAX_SLIPPAGE_PCT*100:.1f}%. Skipping entry.")
+                            return {}
 
-                log.info(f"  ✅ IoC {side.upper()} {amount} {instrument} id={order.get('order_id','')} state={state}")
-                return result
+                        log.info(f"  ✅ IoC {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={state}")
+                        return result
+                    except Exception as e:
+                        if self._is_position_size_limit_error(e) and attempt < 3:
+                            cur_amount = self.round_amount(symbol, cur_amount * 0.5)
+                            if cur_amount <= 0:
+                                log.error(f"  {symbol}: position-size limit — reduced to 0, giving up on IoC")
+                                break
+                            log.warning(f"  ⚠️ {symbol}: position-size limit (Code:10057) — "
+                                        f"retrying IoC at reduced size {cur_amount}")
+                            continue
+                        raise
 
         except Exception as e:
             log.warning(f"  IoC order failed ({e}) — falling back to market order")
 
-        # Fallback pure market order
-        result = self._post(method, {
-            "instrument_name": instrument,
-            "amount":          amount,
-            "type":            "market",
-            "label":           label,
-        })
-        order = result.get("order", result)
-        log.info(f"  ✅ MARKET {side.upper()} {amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
-        return result
+        # Fallback pure market order — same reduce-and-retry protection
+        cur_amount = amount
+        for attempt in range(4):
+            try:
+                result = self._post(method, {
+                    "instrument_name": instrument,
+                    "amount":          cur_amount,
+                    "type":            "market",
+                    "label":           label,
+                    "reduce_only":     "true" if reduce_only else "false",
+                })
+                order = result.get("order", result)
+                log.info(f"  ✅ MARKET {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
+                if cur_amount != amount:
+                    log.warning(f"  ⚠️ {symbol}: only filled {cur_amount}/{amount} due to position-size "
+                                f"limit — position may be PARTIALLY closed, verify manually")
+                return result
+            except Exception as e:
+                if self._is_position_size_limit_error(e) and attempt < 3:
+                    cur_amount = self.round_amount(symbol, cur_amount * 0.5)
+                    if cur_amount <= 0:
+                        break
+                    log.warning(f"  ⚠️ {symbol}: position-size limit (Code:10057) on market fallback — "
+                                f"retrying at reduced size {cur_amount}")
+                    continue
+                log.error(f"  Market order failed permanently for {symbol}: {e}")
+                return {}
+
+        log.error(f"  🚨 {symbol}: could not fill even at minimum size after repeated position-size "
+                  f"rejections — order NOT placed, manual intervention required")
+        return {}
 
     # ── Fill price + positions ────────────────────────────────────────
 
