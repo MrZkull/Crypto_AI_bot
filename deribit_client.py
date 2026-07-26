@@ -346,6 +346,18 @@ class DeribitClient:
         just failed outright, leaving a breached-stop position with zero protection."""
         return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
 
+    def _is_reduce_only_rejection(e) -> bool:
+        """Code:11030 'other_reject invalid_reduce_only_order'. Confirmed by direct
+        observation (repeated failures across multiple symbols, clean order books,
+        and no conflicting resting orders) that Deribit's reduce_only validation
+        appears to require the submitted amount to exactly match its own internal
+        live position figure at the instant of submission — the same brittleness
+        already documented and worked around for TP orders in place_limit_order()
+        ("reduce_only requires exact position-size match... never reduce_only to
+        avoid Code:11030"). Emergency closes in place_market_order() were still
+        using reduce_only=True unconditionally and had no such fallback."""
+        return "11030" in str(e) or "invalid_reduce_only_order" in str(e)
+
     def place_market_order(self, symbol: str, side: str, amount, reduce_only: bool = False) -> dict:
         """Entry order with slippage protection (IoC limit). Reduce-and-retry on a
         non-PME position-size rejection (Code:10057) rather than failing outright —
@@ -380,7 +392,7 @@ class DeribitClient:
             spread = self.get_order_book_spread(symbol)
             best_bid = spread["best_bid"]
             best_ask = spread["best_ask"]
-
+ 
             # The 5% ceiling protects ENTRIES — don't get into a trade in a book too
             # thin to fill safely. But an EXIT (reduce_only=True) needs to happen
             # regardless of price; refusing to exit because the book is thin just
@@ -395,15 +407,15 @@ class DeribitClient:
                             f"({'exit' if reduce_only else 'entry'}) — book too thin, "
                             f"{'this needs manual intervention — could not exit even at relaxed threshold' if reduce_only else 'skipping entry'}")
                 return {}
-
+ 
             if best_bid > 0 and best_ask > 0:
                 if side.upper() == "BUY":
                     worst_price = self.round_price(symbol, best_ask * (1 + MAX_SLIPPAGE_PCT))
                 else:
                     worst_price = self.round_price(symbol, best_bid * (1 - MAX_SLIPPAGE_PCT))
-
+ 
                 log.info(f"  IoC limit {side} {amount} {instrument} @ max {worst_price} (spread {spread['spread_pct']*100:.3f}%)")
-
+ 
                 cur_amount = amount
                 for attempt in range(4):
                     try:
@@ -418,11 +430,11 @@ class DeribitClient:
                         })
                         order = result.get("order", result)
                         state = order.get("order_state", "")
-
+ 
                         if state == "cancelled":
                             log.warning(f"  ⚠️ IoC CANCELLED — market moved >{MAX_SLIPPAGE_PCT*100:.1f}%. Skipping entry.")
                             return {}
-
+ 
                         log.info(f"  ✅ IoC {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={state}")
                         return result
                     except Exception as e:
@@ -435,10 +447,10 @@ class DeribitClient:
                                         f"retrying IoC at reduced size {cur_amount}")
                             continue
                         raise
-
+ 
         except Exception as e:
             log.warning(f"  IoC order failed ({e}) — falling back to market order")
-
+ 
         # Fallback pure market order — same reduce-and-retry protection
         cur_amount = amount
         for attempt in range(4):
@@ -464,15 +476,47 @@ class DeribitClient:
                     log.warning(f"  ⚠️ {symbol}: position-size limit (Code:10057) on market fallback — "
                                 f"retrying at reduced size {cur_amount}")
                     continue
+ 
+                # FIX: reduce_only's exact-position-size-match requirement (already
+                # documented and worked around for TP orders — see place_limit_order's
+                # docstring) was making EVERY emergency close fail with Code:11030,
+                # even with a clean order book, no conflicting resting SL, and a
+                # verified-correct amount. Confirmed by repeated observation across
+                # multiple symbols (BNBUSDT, ATOMUSDT) that this isn't a resting-order
+                # conflict — it's the reduce_only flag itself being too strict here.
+                # `cur_amount` at this point is already sourced from a live position
+                # query and floor-rounded to a valid lot size (never larger than the
+                # real position), so retrying WITHOUT reduce_only carries the same
+                # low over-fill risk already accepted for TP orders in this file.
+                if reduce_only and self._is_reduce_only_rejection(e):
+                    log.warning(f"  ⚠️ {symbol}: reduce_only rejected (Code:11030) — "
+                                f"retrying as a plain market order (side-direction close, "
+                                f"amount already capped to the live position size)")
+                    try:
+                        result = self._post(method, {
+                            "instrument_name": instrument,
+                            "amount":          cur_amount,
+                            "type":            "market",
+                            "label":           label,
+                            "reduce_only":     "false",
+                        })
+                        order = result.get("order", result)
+                        log.info(f"  ✅ MARKET (no reduce_only) {side.upper()} {cur_amount} {instrument} "
+                                 f"id={order.get('order_id','')} state={order.get('order_state','')}")
+                        return result
+                    except Exception as e2:
+                        log.error(f"  Market order (no reduce_only) failed permanently for {symbol}: {e2}")
+                        return {}
+ 
                 log.error(f"  Market order failed permanently for {symbol}: {e}")
                 return {}
-
+ 
         log.error(f"  🚨 {symbol}: could not fill even at minimum size after repeated position-size "
                   f"rejections — order NOT placed, manual intervention required")
         return {}
-
+ 
     # ── Fill price + positions ────────────────────────────────────────
-
+ 
     def get_fill_price(self, market_result: dict, fallback: float) -> float:
         try:
             trades = market_result.get("trades", [])
@@ -485,7 +529,7 @@ class DeribitClient:
             return float(avg) if avg else fallback
         except Exception:
             return fallback
-
+ 
     def get_position_size(self, symbol: str) -> float:
         try:
             instrument = self.get_instrument_name(symbol)
@@ -495,7 +539,7 @@ class DeribitClient:
             return 0.0
         except Exception as e:
             log.warning(f"  get_position_size {symbol}: {e}"); return 0.0
-
+ 
     def get_all_balances(self) -> dict:
         balances = {}
         for cur in ["BTC", "ETH", "USDC", "USDT"]:
@@ -508,10 +552,10 @@ class DeribitClient:
             except Exception as e:
                 log.debug(f"  Balance {cur}: {e}")
         return balances
-
+ 
     def get_total_equity_usd(self) -> float:
         return round(sum(v["equity_usd"] for v in self.get_all_balances().values()), 2)
-
+ 
     def get_positions(self) -> list:
         try:
             positions = []
@@ -522,12 +566,12 @@ class DeribitClient:
             return positions
         except Exception as e:
             log.warning(f"  get_positions: {e}"); return []
-
+ 
     def place_limit_order(self, symbol: str, side: str, amount, price: float,
                           stop_price: float = None, use_reduce_only: bool = False) -> dict:
         """
         Place a limit or stop-limit order.
-
+ 
         use_reduce_only default changed to False to prevent Code:11030:
           - SL (stop_limit): caller passes use_reduce_only=True explicitly
           - TP (limit):      use_reduce_only=False — TP closing a position is
@@ -538,7 +582,7 @@ class DeribitClient:
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
-
+ 
         if stop_price is not None:
             # Stop-limit (SL order)
             body = {
@@ -562,16 +606,16 @@ class DeribitClient:
                 "label":           f"bot_tp_{int(time.time())}",
             }
             # reduce_only intentionally omitted for TP orders
-
+ 
         result = self._post(method, body)
         order  = result.get("order", result)
         kind   = "SL" if stop_price else "TP"
         log.info(f"  ✅ {kind} {side.upper()} {amount} {instrument} @ {safe_price} "
                  f"id={order.get('order_id','')} state={order.get('order_state','')}")
         return result
-
+ 
     # ── V7 CRITICAL METHODS RESTORED BELOW THIS LINE ──
-
+ 
     def get_order(self, order_id: str) -> dict:
         try:
             return self._get("/private/get_order_state", {"order_id": str(order_id)})
@@ -580,7 +624,7 @@ class DeribitClient:
                 return {"order_state": "not_found"}
             log.warning(f"  get_order {order_id}: {e}")
             return {}
-
+ 
     def is_order_filled(self, order: dict) -> bool:
         state       = order.get("order_state", "").lower()
         filled_amt  = float(order.get("filled_amount", 0) or 0)
@@ -590,26 +634,26 @@ class DeribitClient:
             log.info(f"  Triggered order detected: state={state} filled={filled_amt} avg={avg_price}")
             return True
         return False
-
+ 
     def is_sl_triggered(self, order: dict) -> bool:
         state      = order.get("order_state", "").lower()
         filled_amt = float(order.get("filled_amount", 0) or 0)
         avg_price  = float(order.get("average_price", 0) or 0)
-
+ 
         if state in ("filled", "triggered"):
             return True
         if state == "cancelled" and filled_amt > 0 and avg_price > 0:
             log.info(f"  SL cancelled-but-filled: amt={filled_amt} avg={avg_price}")
             return True
         return False
-
+ 
     def get_order_fill_price(self, order: dict, fallback: float) -> float:
         avg = order.get("average_price")
         if avg and float(avg) > 0: return float(avg)
         lp = order.get("last_price") or order.get("price")
         if lp and float(lp) > 0: return float(lp)
         return fallback
-
+ 
     def get_trade_history_for_instrument(self, symbol: str, count: int = 10) -> list:
         try:
             instrument = self.get_instrument_name(symbol)
@@ -621,19 +665,19 @@ class DeribitClient:
             return result if isinstance(result, list) else result.get("trades", [])
         except Exception as e:
             log.warning(f"  Trade history {symbol}: {e}"); return []
-
+ 
     def cancel_order(self, order_id: str) -> dict:
         try:
             return self._post("/private/cancel", {"order_id": str(order_id)})
         except Exception as e:
             log.warning(f"  cancel {order_id}: {e}"); return {}
-
+ 
     def get_open_orders(self, symbol: str) -> list:
         try:
             return self._get("/private/get_open_orders_by_instrument", {"instrument_name": self.get_instrument_name(symbol)}) or []
         except Exception as e:
             log.warning(f"  open_orders {symbol}: {e}"); return []
-
+ 
     def set_leverage(self, symbol: str, leverage: int = DEFAULT_LEVERAGE) -> bool:
         try:
             self._ensure_auth()
@@ -648,7 +692,7 @@ class DeribitClient:
         except Exception as e:
             log.warning(f"  set_leverage {symbol}: {e} — proceeding at default margin")
             return False
-
+ 
     def test_connection(self) -> bool:
         try:
             total = self.get_total_equity_usd()
@@ -656,3 +700,4 @@ class DeribitClient:
             return True
         except Exception as e:
             log.error(f"✗ Deribit: {e}"); raise
+ 
