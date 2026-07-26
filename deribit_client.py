@@ -393,7 +393,7 @@ class DeribitClient:
             spread = self.get_order_book_spread(symbol)
             best_bid = spread["best_bid"]
             best_ask = spread["best_ask"]
-
+ 
             # The 5% ceiling protects ENTRIES — don't get into a trade in a book too
             # thin to fill safely. But an EXIT (reduce_only=True) needs to happen
             # regardless of price; refusing to exit because the book is thin just
@@ -408,15 +408,15 @@ class DeribitClient:
                             f"({'exit' if reduce_only else 'entry'}) — book too thin, "
                             f"{'this needs manual intervention — could not exit even at relaxed threshold' if reduce_only else 'skipping entry'}")
                 return {}
-
+ 
             if best_bid > 0 and best_ask > 0:
                 if side.upper() == "BUY":
                     worst_price = self.round_price(symbol, best_ask * (1 + MAX_SLIPPAGE_PCT))
                 else:
                     worst_price = self.round_price(symbol, best_bid * (1 - MAX_SLIPPAGE_PCT))
-
+ 
                 log.info(f"  IoC limit {side} {amount} {instrument} @ max {worst_price} (spread {spread['spread_pct']*100:.3f}%)")
-
+ 
                 cur_amount = amount
                 for attempt in range(4):
                     try:
@@ -431,11 +431,11 @@ class DeribitClient:
                         })
                         order = result.get("order", result)
                         state = order.get("order_state", "")
-
+ 
                         if state == "cancelled":
                             log.warning(f"  ⚠️ IoC CANCELLED — market moved >{MAX_SLIPPAGE_PCT*100:.1f}%. Skipping entry.")
                             return {}
-
+ 
                         log.info(f"  ✅ IoC {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={state}")
                         return result
                     except Exception as e:
@@ -448,10 +448,10 @@ class DeribitClient:
                                         f"retrying IoC at reduced size {cur_amount}")
                             continue
                         raise
-
+ 
         except Exception as e:
             log.warning(f"  IoC order failed ({e}) — falling back to market order")
-
+ 
         # Fallback pure market order — same reduce-and-retry protection
         cur_amount = amount
         for attempt in range(4):
@@ -477,7 +477,7 @@ class DeribitClient:
                     log.warning(f"  ⚠️ {symbol}: position-size limit (Code:10057) on market fallback — "
                                 f"retrying at reduced size {cur_amount}")
                     continue
-
+ 
                 # FIX: reduce_only's exact-position-size-match requirement (already
                 # documented and worked around for TP orders — see place_limit_order's
                 # docstring) was making EVERY emergency close fail with Code:11030,
@@ -508,16 +508,16 @@ class DeribitClient:
                     except Exception as e2:
                         log.error(f"  Market order (no reduce_only) failed permanently for {symbol}: {e2}")
                         return {}
-
+ 
                 log.error(f"  Market order failed permanently for {symbol}: {e}")
                 return {}
-
+ 
         log.error(f"  🚨 {symbol}: could not fill even at minimum size after repeated position-size "
                   f"rejections — order NOT placed, manual intervention required")
         return {}
-
+ 
     # ── Fill price + positions ────────────────────────────────────────
-
+ 
     def get_fill_price(self, market_result: dict, fallback: float) -> float:
         try:
             trades = market_result.get("trades", [])
@@ -530,17 +530,40 @@ class DeribitClient:
             return float(avg) if avg else fallback
         except Exception:
             return fallback
-
+ 
     def get_position_size(self, symbol: str) -> float:
         try:
             instrument = self.get_instrument_name(symbol)
             for p in self.get_positions():
                 if p.get("instrument_name") == instrument:
-                    return float(p.get("size", 0) or 0)
+                    size = float(p.get("size", 0) or 0)
+ 
+                    # BUG FIX: confirmed live via Deribit's own UI — a real 17.30 BNB
+                    # position was being read back here as ~9,965, matching the position's
+                    # USDC notional VALUE (17.30 * mark_price), not its coin AMOUNT. For
+                    # USDC-margined "linear" instruments, Deribit's raw "size" field can be
+                    # denominated in the settlement currency rather than the base coin —
+                    # size_currency tells you which. If it doesn't match the instrument's
+                    # base asset, convert back to coin units via the position's own
+                    # mark_price (same object, no extra API call needed).
+                    base_ccy = instrument.split("_")[0].upper()
+                    size_ccy = str(p.get("size_currency", "") or "").upper()
+                    if size_ccy and base_ccy and size_ccy != base_ccy:
+                        mark = float(p.get("mark_price", 0) or 0)
+                        if mark > 0:
+                            converted = size / mark
+                            log.info(f"  🔧 get_position_size {symbol}: size={size} {size_ccy} "
+                                     f"(notional, not coin units) -> {converted:.6f} {base_ccy} "
+                                     f"via mark_price {mark}")
+                            return converted
+                        log.warning(f"  get_position_size {symbol}: size_currency={size_ccy} != "
+                                    f"base={base_ccy} but mark_price unavailable to convert — "
+                                    f"returning raw size, units may be wrong")
+                    return size
             return 0.0
         except Exception as e:
             log.warning(f"  get_position_size {symbol}: {e}"); return 0.0
-
+ 
     def get_all_balances(self) -> dict:
         balances = {}
         for cur in ["BTC", "ETH", "USDC", "USDT"]:
@@ -553,10 +576,10 @@ class DeribitClient:
             except Exception as e:
                 log.debug(f"  Balance {cur}: {e}")
         return balances
-
+ 
     def get_total_equity_usd(self) -> float:
         return round(sum(v["equity_usd"] for v in self.get_all_balances().values()), 2)
-
+ 
     def get_positions(self) -> list:
         try:
             positions = []
@@ -567,12 +590,12 @@ class DeribitClient:
             return positions
         except Exception as e:
             log.warning(f"  get_positions: {e}"); return []
-
+ 
     def place_limit_order(self, symbol: str, side: str, amount, price: float,
                           stop_price: float = None, use_reduce_only: bool = False) -> dict:
         """
         Place a limit or stop-limit order.
-
+ 
         use_reduce_only default changed to False to prevent Code:11030:
           - SL (stop_limit): caller passes use_reduce_only=True explicitly
           - TP (limit):      use_reduce_only=False — TP closing a position is
@@ -583,7 +606,7 @@ class DeribitClient:
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
-
+ 
         if stop_price is not None:
             # Stop-limit (SL order)
             body = {
@@ -607,16 +630,16 @@ class DeribitClient:
                 "label":           f"bot_tp_{int(time.time())}",
             }
             # reduce_only intentionally omitted for TP orders
-
+ 
         result = self._post(method, body)
         order  = result.get("order", result)
         kind   = "SL" if stop_price else "TP"
         log.info(f"  ✅ {kind} {side.upper()} {amount} {instrument} @ {safe_price} "
                  f"id={order.get('order_id','')} state={order.get('order_state','')}")
         return result
-
+ 
     # ── V7 CRITICAL METHODS RESTORED BELOW THIS LINE ──
-
+ 
     def get_order(self, order_id: str) -> dict:
         try:
             return self._get("/private/get_order_state", {"order_id": str(order_id)})
@@ -625,7 +648,7 @@ class DeribitClient:
                 return {"order_state": "not_found"}
             log.warning(f"  get_order {order_id}: {e}")
             return {}
-
+ 
     def is_order_filled(self, order: dict) -> bool:
         state       = order.get("order_state", "").lower()
         filled_amt  = float(order.get("filled_amount", 0) or 0)
@@ -635,26 +658,26 @@ class DeribitClient:
             log.info(f"  Triggered order detected: state={state} filled={filled_amt} avg={avg_price}")
             return True
         return False
-
+ 
     def is_sl_triggered(self, order: dict) -> bool:
         state      = order.get("order_state", "").lower()
         filled_amt = float(order.get("filled_amount", 0) or 0)
         avg_price  = float(order.get("average_price", 0) or 0)
-
+ 
         if state in ("filled", "triggered"):
             return True
         if state == "cancelled" and filled_amt > 0 and avg_price > 0:
             log.info(f"  SL cancelled-but-filled: amt={filled_amt} avg={avg_price}")
             return True
         return False
-
+ 
     def get_order_fill_price(self, order: dict, fallback: float) -> float:
         avg = order.get("average_price")
         if avg and float(avg) > 0: return float(avg)
         lp = order.get("last_price") or order.get("price")
         if lp and float(lp) > 0: return float(lp)
         return fallback
-
+ 
     def get_trade_history_for_instrument(self, symbol: str, count: int = 10) -> list:
         try:
             instrument = self.get_instrument_name(symbol)
@@ -666,19 +689,19 @@ class DeribitClient:
             return result if isinstance(result, list) else result.get("trades", [])
         except Exception as e:
             log.warning(f"  Trade history {symbol}: {e}"); return []
-
+ 
     def cancel_order(self, order_id: str) -> dict:
         try:
             return self._post("/private/cancel", {"order_id": str(order_id)})
         except Exception as e:
             log.warning(f"  cancel {order_id}: {e}"); return {}
-
+ 
     def get_open_orders(self, symbol: str) -> list:
         try:
             return self._get("/private/get_open_orders_by_instrument", {"instrument_name": self.get_instrument_name(symbol)}) or []
         except Exception as e:
             log.warning(f"  open_orders {symbol}: {e}"); return []
-
+ 
     def set_leverage(self, symbol: str, leverage: int = DEFAULT_LEVERAGE) -> bool:
         try:
             self._ensure_auth()
@@ -693,7 +716,7 @@ class DeribitClient:
         except Exception as e:
             log.warning(f"  set_leverage {symbol}: {e} — proceeding at default margin")
             return False
-
+ 
     def test_connection(self) -> bool:
         try:
             total = self.get_total_equity_usd()
@@ -701,3 +724,4 @@ class DeribitClient:
             return True
         except Exception as e:
             log.error(f"✗ Deribit: {e}"); raise
+ 
