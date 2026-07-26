@@ -346,6 +346,7 @@ class DeribitClient:
         just failed outright, leaving a breached-stop position with zero protection."""
         return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
 
+    @staticmethod
     def _is_reduce_only_rejection(e) -> bool:
         """Code:11030 'other_reject invalid_reduce_only_order'. Confirmed by direct
         observation (repeated failures across multiple symbols, clean order books,
@@ -700,4 +701,3 @@ class DeribitClient:
             return True
         except Exception as e:
             log.error(f"✗ Deribit: {e}"); raise
- 
