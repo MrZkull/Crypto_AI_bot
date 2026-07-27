@@ -24,16 +24,16 @@ TRADES_FILE        = "trades.json"
 HISTORY_FILE       = "trade_history.json"
 SIGNALS_FILE       = "signals.json"
 BALANCE_FILE       = "balance.json"
-LOCK_FILE          = "scan_lock.json"   # NEW: prevents two scans from ever running concurrently
-STALE_LOCK_MINUTES = 20                # NEW: auto-clears a lock left behind by a crashed run
-MAX_OPEN_TRADES    = 10  # MAINNET: 4 | TESTNET: 10 — controls max simultaneous positions
+LOCK_FILE          = "scan_lock.json"   # Prevents concurrent execution runs
+STALE_LOCK_MINUTES = 20                # Auto-clears orphaned scan locks
+MAX_OPEN_TRADES    = 10  # MAINNET: 4 | TESTNET: 10
 
 # --- V2 PRO CONSTANTS ---
 COOLDOWN_FILE      = "cooldown.json"
 RELIABILITY_FILE   = "reliability.json"
 COOLDOWN_HOURS     = 2
 GHOST_STRIKE_LIMIT = 3
-MAX_DAILY_TRADES    = 20  # MAINNET: 8 | TESTNET: 40 — hard daily trade cap
+MAX_DAILY_TRADES    = 20  # MAINNET: 8 | TESTNET: 40
 FUNDING_WARN_PCT   = 0.05
 FUNDING_SKIP_PCT   = 0.10
 # ------------------------
@@ -80,13 +80,6 @@ def load_reliability() -> dict: return load_json(RELIABILITY_FILE, {})
 def save_reliability(d: dict): save_json(RELIABILITY_FILE, d)
 
 # ════════════ SCAN CONCURRENCY LOCK ═══════════════════════════════════
-# NEW: without this, two overlapping runs (e.g. a slow scan still finishing when the next
-# 15-min GitHub Actions trigger fires) can both load trades.json, both see a symbol as
-# flat, and both open a full entry on it — silently stacking positions the bot never
-# intended. This is the most likely explanation for the oversized "Max adverse excursion"
-# losses found in trade_history.json. This is an advisory lock (best-effort, not a true
-# distributed lock) — pair it with a `concurrency:` group in the GitHub Actions workflow
-# for a real guarantee; see the note at the bottom of this file.
 
 def _acquire_scan_lock() -> bool:
     lock = load_json(LOCK_FILE, {})
@@ -193,14 +186,13 @@ def _wait_for_position(deribit, symbol: str, side: str, entry_oid: str, timeout:
     return False
 
 def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, label: str, trade: dict, key: str, dec: int) -> str:
-    # Cap qty at actual position size to prevent over-sizing
     try:
         actual_pos = abs(deribit.get_position_size(symbol))
         if actual_pos > 0:
             qty = min(qty, actual_pos)
             qty = deribit.round_amount(symbol, qty)
     except Exception:
-        pass  # proceed with recorded qty if position check fails
+        pass
 
     if qty <= 0:
         log.warning(f"  {label} {symbol}: qty=0 after position check — skip")
@@ -217,79 +209,50 @@ def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, 
         log.warning(f"  {label} re-place {symbol}: {e}")
     return ""
 
-SANITY_NOTIONAL_MULT = 5  # a queried position implying more than 5x total account equity is treated as a probable units/data bug, not a real position
-
-def _get_safe_close_qty(deribit: DeribitClient, symbol: str, trade: dict) -> float:
-    """Always close against the REAL live position size, not the recorded qty.
-    A mismatch here (partial fills, earlier position-size-limit retries, etc.)
-    is exactly how emergency closes leave residual untracked positions behind
-    while the local trade record gets deleted as if fully closed."""
+def _cancel_all_open_orders_for_symbol(deribit: DeribitClient, symbol: str):
+    """Cancels ALL active open orders for this symbol directly on Deribit.
+    Prevents resting orders from consuming reduce_only allowance."""
     try:
-        actual = abs(deribit.get_position_size(symbol))
+        orders = deribit.get_open_orders(symbol)
+        if orders:
+            log.info(f"  🧹 Found {len(orders)} active open order(s) on Deribit for {symbol} — cancelling all...")
+            for o in orders:
+                oid = str(o.get("order_id", ""))
+                if oid:
+                    try:
+                        deribit.cancel_order(oid)
+                        log.info(f"    ✓ Cancelled exchange order {oid}")
+                    except Exception as ce:
+                        log.debug(f"    Failed to cancel {oid}: {ce}")
     except Exception as e:
-        log.debug(f"  _get_safe_close_qty {symbol}: position check failed ({e}) — falling back to recorded qty")
-        return float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
+        log.warning(f"  _cancel_all_open_orders_for_symbol {symbol}: {e}")
 
-    # BUG FIX: `actual` here is a value the exchange actually returned — trust it even
-    # when it's exactly 0. The old code treated actual==0 the same as "the check
-    # raised an exception" and silently substituted the stale recorded qty instead.
-    # That meant: real SL fires normally -> position genuinely flat -> this function
-    # ignored that and returned the ORIGINAL full qty -> the emergency-close paths then
-    # tried to reduce_only-close an amount larger than what's left (nothing) -> Deribit
-    # rejects with Code:11030 -> retry cascade -> "did NOT verify flat" even though the
-    # position was already closed correctly by the real SL the whole time.
-    if actual <= 0:
-        return 0.0
-
-    # NEW: sanity-check the queried size against account equity before trusting it for
-    # an order. Observed live: right after a successful close, the very next cycle's
-    # query briefly returned ~9,959 "BNB" for what should have been a ~17 BNB position
-    # (9959.82 / BNB's price that cycle ≈ 17.27 almost exactly) — a strong sign of a
-    # units mix-up (USD-notional vs coin) somewhere in this data path, not a real
-    # position. It only failed to place because Deribit's OWN margin check
-    # (not_enough_funds) happened to block it — that's the exchange saving us, not
-    # this code. Don't depend on that; refuse to act on an implausible size ourselves.
+def _get_safe_close_info(deribit: DeribitClient, symbol: str, trade: dict) -> tuple:
+    """Returns (close_side, close_qty) calculated directly from exchange position state.
+    Exchange position sign determines direction: LONG (>0) -> SELL, SHORT (<0) -> BUY."""
     try:
-        price  = deribit.get_live_price(symbol) or deribit.get_mark_price(symbol)
-        equity = deribit.get_total_equity_usd()
-        if price > 0 and equity > 0:
-            notional = actual * price
-            if notional > equity * SANITY_NOTIONAL_MULT:
-                log.error(f"  🚨🚨 {symbol}: queried position size {actual} implies ~${notional:,.0f} "
-                          f"notional against ${equity:,.0f} total equity ({notional/equity:.1f}x) — "
-                          f"almost certainly a units/data bug, not a real position. REFUSING to "
-                          f"act on this size; leaving trade record for manual review instead.")
-                return 0.0
+        actual_pos = deribit.get_position_size(symbol)
+        if abs(actual_pos) > 0:
+            close_side = "SELL" if actual_pos > 0 else "BUY"
+            close_qty = deribit.round_amount(symbol, abs(actual_pos))
+            return close_side, close_qty
     except Exception as e:
-        log.debug(f"  {symbol}: sanity check skipped ({e})")
+        log.debug(f"  _get_safe_close_info {symbol}: position check failed ({e}) — fallback to local record")
 
-    return deribit.round_amount(symbol, actual)
+    # Fallback to local record if exchange check fails
+    signal = trade.get("signal", "BUY")
+    close_side = "SELL" if signal == "BUY" else "BUY"
+    recorded_qty = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
+    return close_side, recorded_qty
 
 def _verify_actually_closed(deribit: DeribitClient, symbol: str, tolerance: float = 0.01) -> bool:
-    """After ANY emergency/force close attempt, check the real exchange position
-    before trusting that it worked. An order can fail for many reasons (thin book,
-    Code:10057 size limit, Code:10009 insufficient funds, network hiccup) — the
-    caller should never assume success just because it didn't raise an exception
-    it happened to catch. tolerance allows for tiny dust remainders.
-
-    NEW: retries with a short delay before giving up. Observed live: a successful
-    fallback close can come back with order_state='speed_bumped' (Deribit's
-    anti-latency-arbitrage delay mechanism) — the order was accepted but hadn't
-    actually settled yet at the instant this was first checked, making a genuinely
-    successful close look like a failure. A couple of seconds of patience avoids
-    that false negative without meaningfully delaying the scan."""
-    for attempt in range(3):
-        try:
-            remaining = abs(deribit.get_position_size(symbol))
-            if remaining <= tolerance:
-                return True
-            if attempt < 2:
-                time.sleep(2)
-        except Exception as e:
-            log.warning(f"  _verify_actually_closed {symbol}: could not check ({e}) — "
-                        f"assuming NOT closed, safer to over-alert than silently lose track")
-            return False
-    return False
+    """Verifies that the live exchange position is flat."""
+    try:
+        remaining = abs(deribit.get_position_size(symbol))
+        return remaining <= tolerance
+    except Exception as e:
+        log.warning(f"  _verify_actually_closed {symbol}: could not check ({e}) — assuming NOT closed")
+        return False
 
 def save_balance(deribit: DeribitClient) -> float:
     try:
@@ -331,15 +294,6 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame) -> pd.DataFrame:
-    """Mirrors train_model.py's _add_extra_features/_align_btc_to_15m.
-    MUST stay in sync with train_model.py if you change either file.
-    
-    Geoblocked funding rate parameters removed cleanly for Phase 3.4 parity.
-
-    NOTE: taker_buy_ratio + hour/dow cyclical features are NOT computed here — they now
-    live inside feature_engineering.add_indicators() itself, so they're already present
-    in df15 by the time this function runs, as long as get_data() supplies
-    taker_buy_base_vol."""
     df = df15.copy()
 
     if btc_df15 is not None and not btc_df15.empty and "close" not in btc_df15.columns:
@@ -541,8 +495,6 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
 
         entry = float(row["close"]); atr = float(row["atr"])
 
-        # DIAGNOSTIC: catch corrupted entry/atr at the source, before they poison
-        # every downstream SL/TP/entry-price calculation.
         import math
         if not math.isfinite(entry) or entry <= 0:
             log.error(f"    🚨 {symbol}: bad entry price from model row: {entry!r} — aborting signal")
@@ -582,14 +534,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     if symbol in trades and not trades[symbol].get("closed",False):
         log.info(f"  {symbol}: already open — skip"); return False
 
-    # BUG FIX / hardening: trades.json is not the source of truth — the exchange is. If a
-    # previous run crashed or failed to save state after an entry actually filled (network
-    # blip, an exception between the fill and save_trades(), etc.), trades.json can say
-    # "not open" while Deribit shows a real position. Without this check, execute_trade
-    # would open ANOTHER full-size entry on top of it every cycle it stays desynced —
-    # this is the most likely explanation for the ~75-200x oversized positions found in
-    # trade_history.json (e.g. the BNBUSDT/BCHUSDT "Max adverse excursion" losses). Check
-    # the exchange directly, independent of the local file.
     try:
         real_pos = abs(deribit.get_position_size(symbol))
     except Exception as e:
@@ -597,9 +541,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         log.debug(f"  {symbol}: real position check failed ({e}) — proceeding on trades.json only")
     if real_pos > 0:
         log.warning(f"  🚫 {symbol}: real exchange position ({real_pos}) already exists but "
-                    f"isn't in trades.json — SKIPPING new entry. This means local state is "
-                    f"out of sync with Deribit; the untracked-position monitor ([3c]) will "
-                    f"reconcile or flatten it — do not open on top of it.")
+                    f"isn't in trades.json — SKIPPING new entry.")
         return False
 
     if not deribit.is_supported(symbol):
@@ -618,17 +560,15 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         log.info(f"  🛑 Risk multiplier is {risk_mult} (Drawdown Halt or Saturday block) — skip {symbol}")
         return False
 
-    # ── Signal Expiry / Drift Gate ──
     live_price = deribit.get_live_price(symbol)
     if live_price > 0:
         drift = abs(live_price - entry) / entry * 100
         if drift > 0.5:
             log.warning(f"  [EXPIRED] {symbol} price drifted {drift:.2f}% from signal — skip")
             return False
-        entry = live_price  # Calibrate sizing to actual live price
+        entry = live_price  
         sig["entry"] = entry
 
-    # ── Dynamic ATR Target Sizing ──
     dyn_tp1 = ATR_TARGET1_MULT
     dyn_tp2 = ATR_TARGET2_MULT
     
@@ -636,7 +576,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         dyn_tp1 *= 1.5
         dyn_tp2 *= 1.5
     elif vol_state in ("DEAD", "UNKNOWN"):
-        dyn_tp1 *= 0.8  # Contract targets in low volatility
+        dyn_tp1 *= 0.8  
         dyn_tp2 *= 0.8
 
     dec=4 if entry<10 else 2
@@ -653,9 +593,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         tp1  = round(entry - atr * dyn_tp1, dec)
         tp2  = round(entry - atr * dyn_tp2, dec)
 
-    # DIAGNOSTIC: log every input to this calculation, and hard-abort on anything
-    # non-finite/non-positive, so the NEXT occurrence pinpoints the exact bad value
-    # instead of surfacing as Deribit's generic "positive float required".
     import math
     log.info(f"  [PRICE CALC] {symbol} entry={entry} atr={atr} dyn_tp1={dyn_tp1} "
              f"dyn_tp2={dyn_tp2} -> stop={stop} tp1={tp1} tp2={tp2}")
@@ -669,22 +606,12 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     sig["tp1"]  = tp1
     sig["tp2"]  = tp2
 
-    # ── High-Conviction Institutional Risk Boost ──
     risk_boost = 1.5 if sig.get("conf_tier") == "high" else 1.0
 
-    # ── NEW: Volatility-targeted sizing ──
-    # Normalize against BTC's current ATR% so every trade contributes roughly the
-    # same volatility to the portfolio, not just the same "risk_mult". A coin at
-    # 3x BTC's current volatility gets sized down to ~1/3, not treated identically
-    # to a calm one. Clamped to [0.4x, 2.0x] so one extreme coin can't dominate or
-    # vanish entirely — a raw uncapped ratio is too aggressive at either extreme.
     vol_scalar = 1.0
     try:
         atr_pct_this   = (atr / entry) if entry > 0 else 0
         btc_live       = deribit.get_live_price("BTCUSDT")
-        # crude BTC ATR% proxy: reuse the same ATR the signal carried for BTC if
-        # this trade IS BTC, otherwise fall back to a fixed reference of 0.3%
-        # (roughly BTC's typical calm-market ATR% seen across this project's logs).
         btc_ref_atr_pct = 0.003
         if atr_pct_this > 0:
             vol_scalar = btc_ref_atr_pct / atr_pct_this
@@ -709,7 +636,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     order_ids = {}; actual_entry = entry
     try:
         from deribit_client import DEFAULT_LEVERAGE
-        # Only set leverage if no existing position — Code:13021 if position open
         existing_pos = abs(deribit.get_position_size(symbol))
         if existing_pos == 0:
             deribit.set_leverage(symbol, DEFAULT_LEVERAGE)
@@ -755,7 +681,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         tick = deribit.get_tick_size(symbol)
         sl_limit = deribit.round_price(symbol, stop - (tick * 3) if signal=="BUY" else stop + (tick * 3))
 
-        # Cap TP quantities against actual confirmed position size
         try:
             actual_pos_size = abs(deribit.get_position_size(symbol))
             if actual_pos_size > 0 and actual_pos_size < total_q:
@@ -774,13 +699,11 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         ]:
             if qty <= 0: continue
             try:
-                # SL uses stop_limit with reduce_only
-                # TP uses plain limit WITHOUT reduce_only (prevents Code:11030)
                 res = deribit.place_limit_order(
                     symbol, sl_side if label=="SL" else tp_side,
                     qty, price,
                     stop_price=sl_p,
-                    use_reduce_only=(label == "SL")   # only SL uses reduce_only
+                    use_reduce_only=(label == "SL")
                 )
                 o   = res.get("order", res)
                 oid = str(o.get("order_id",""))
@@ -811,8 +734,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                      actual_entry, stop, tp1, tp2, total_q, qty_tp1, qty_tp2, risk_usd, balance)
     log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal}")
     return True
-
-
 # ════════════ MONITOR OPEN TRADES ════════════════════════════════════
 
 def _safe_get_order(deribit, oid_str):
@@ -875,8 +796,8 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
                                        "10035", "10036")):
                 log.warning(f"  🚨 {symbol}: SL trigger already passed — MARKET CLOSE")
                 try:
-                    close_side = "SELL" if signal == "BUY" else "BUY"
-                    close_qty  = _get_safe_close_qty(deribit, symbol, trade)
+                    _cancel_all_open_orders_for_symbol(deribit, symbol)
+                    close_side, close_qty = _get_safe_close_info(deribit, symbol, trade)
                     if close_qty > 0:
                         deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
                     live = deribit.get_live_price(symbol)
@@ -968,42 +889,25 @@ def check_open_trades(deribit: DeribitClient):
 
         risk_usd = float(trade.get("risk_usd", 0))
         if risk_usd > 0:
-            mae_qty  = _get_safe_close_qty(deribit, symbol, trade)
+            close_side, mae_qty = _get_safe_close_info(deribit, symbol, trade)
             mae_diff = (live - entry) if signal == "BUY" else (entry - live)
             mae_pnl  = round(mae_diff * mae_qty, 4)
 
             if mae_pnl < -(risk_usd * 3):
                 log.warning(f"  🚨 {symbol}: MAE ${mae_pnl:.2f} > 3× risk ${risk_usd:.2f} — FORCE CLOSE")
 
-                # BUG FIX: the resting stop_loss reduce-only order was never cancelled before
-                # this reduce-only close — Deribit rejects the close with Code:11030
-                # (invalid_reduce_only_order) because two live reduce-only orders on the same
-                # position could double-reduce past the actual size. Cancel it first, same as
-                # the TP1/TP2 cancels just below.
-                if oids.get("stop_loss"):
-                    try: deribit.cancel_order(oids["stop_loss"])
-                    except Exception: pass
+                # Cancel ALL live open orders on exchange first
+                _cancel_all_open_orders_for_symbol(deribit, symbol)
 
-                # DIAGNOSTIC: the real exchange position (mae_qty, from _get_safe_close_qty)
-                # should never be far from what THIS trade recorded — if it is, that's not a
-                # normal loss, it's a sign the local record and the exchange went out of sync
-                # (e.g. a duplicate/stacked entry from an earlier failed run). Tag it distinctly
-                # so it doesn't blend into ordinary MAE rows in trade_history.json.
                 recorded_qty = float(trade.get("qty", 0))
                 size_mismatch = recorded_qty > 0 and abs(mae_qty - recorded_qty) > max(recorded_qty * 0.2, 0.0)
                 if size_mismatch:
                     log.error(f"  🚨🚨 {symbol}: SIZE MISMATCH — recorded qty={recorded_qty}, "
-                              f"real exchange position={mae_qty}. Closing the REAL size now, but "
-                              f"this indicates a stale/duplicated entry, not a normal adverse move.")
+                              f"real exchange position={mae_qty}. Closing the REAL size now.")
 
                 try:
-                    close_side = "SELL" if signal == "BUY" else "BUY"
                     if mae_qty > 0:
                         deribit.place_market_order(symbol, close_side, mae_qty, reduce_only=True)
-                    for k in ("tp1", "tp2"):
-                        if oids.get(k) and not trade.get(f"{k}_hit"):
-                            try: deribit.cancel_order(oids[k])
-                            except Exception: pass
                     if _verify_actually_closed(deribit, symbol):
                         lbl = "Max adverse excursion ❌" + (" [SIZE MISMATCH]" if size_mismatch else "")
                         _close_record(trade, live, mae_pnl, lbl)
@@ -1048,7 +952,6 @@ def check_open_trades(deribit: DeribitClient):
                     log.info(f"  🎯 TP1 {symbol} @ {fill:.{dec}f}  pnl≈{pnl:+.4f}  [{method}]")
                     _send(f"🎯 *TP1 HIT — {symbol}*\n@ `{fill:.{dec}f}` | PnL ≈ `{pnl:+.4f}` | [{method}]")
                     
-                    # V2 FIX: Record TP1
                     append_history({
                         **trade,
                         "close_price": fill,
@@ -1155,27 +1058,18 @@ def check_open_trades(deribit: DeribitClient):
 
                 sl_hit = deribit.is_sl_triggered(sl_o)
 
-                # BUG FIX: an SL order can transition to "not_found" once it's fully
-                # processed (Deribit's order lookup doesn't always keep triggered/filled
-                # stop orders queryable by id indefinitely) — is_sl_triggered() doesn't
-                # recognize "not_found" as a trigger signal, so this used to fall through
-                # into the mark-price-breach / Scenario-B emergency paths even when the SL
-                # had already done its job normally. Check the real position directly: if
-                # it's already flat, this WAS a normal SL fill — record it as one and skip
-                # the emergency logic (and its Code:11030 retry cascade) entirely.
                 if not sl_hit and sl_state == "not_found":
                     try:
                         already_flat = abs(deribit.get_position_size(symbol)) <= 0.01
                     except Exception:
                         already_flat = False
                     if already_flat:
-                        log.info(f"  ✅ {symbol}: SL order not_found but position already flat — normal SL fill, not an emergency")
+                        log.info(f"  ✅ {symbol}: SL order not_found but position already flat — normal SL fill")
                         sl_hit = True
 
                 sl_breached = stop > 0 and ((signal == "BUY" and live <= stop * 0.999) or (signal == "SELL" and live >= stop * 1.001))
                 sl_not_waiting = sl_state not in ("untriggered", "open") or not sl_state
 
-                # V2 BUG 1 FIX: Mark-price breach
                 mark_price = deribit.get_mark_price(symbol)
                 mark_breached = stop > 0 and mark_price > 0 and (
                     (signal == "BUY"  and mark_price <= stop * 0.998) or
@@ -1184,28 +1078,15 @@ def check_open_trades(deribit: DeribitClient):
 
                 if mark_breached and sl_not_waiting and not sl_hit:
                     log.warning(
-
                         f"  ⚠️ {symbol}: MARK PRICE {mark_price:.{dec}f} past SL {stop:.{dec}f}"
                         f" (last_price lag) — MARK-PRICE BREACH close"
                     )
                     try:
-                        # BUG FIX: cancel the still-resting SL order first — placing a second
-                        # reduce_only order while it's still live gets rejected by Deribit with
-                        # Code:11030 (invalid_reduce_only_order), which was causing this close to
-                        # fail every time and fall through to "did NOT verify flat — KEEPING for
-                        # retry", leaving the position exposed with no working stop.
-                        if oids.get("stop_loss"):
-                            try: deribit.cancel_order(oids["stop_loss"])
-                            except Exception: pass
+                        _cancel_all_open_orders_for_symbol(deribit, symbol)
 
-                        close_side = "SELL" if signal == "BUY" else "BUY"
-                        close_qty  = _get_safe_close_qty(deribit, symbol, trade)
+                        close_side, close_qty = _get_safe_close_info(deribit, symbol, trade)
                         if close_qty > 0:
                             deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
-                        for k in ("tp1", "tp2"):
-                            if oids.get(k) and not trade.get(f"{k}_hit"):
-                                try: deribit.cancel_order(oids[k])
-                                except Exception: pass
                         sl_hit = True
                         log.warning(f"  Mark-price emergency close executed for {symbol}")
                     except Exception as e:
@@ -1214,20 +1095,11 @@ def check_open_trades(deribit: DeribitClient):
                 if not sl_hit and sl_breached and sl_not_waiting:
                     log.warning(f"  ⚠️ {symbol}: price {live:.{dec}f} past SL {stop:.{dec}f} (state='{sl_state}') — SCENARIO B market close")
                     try:
-                        # BUG FIX: same Code:11030 issue as the mark-price-breach block above —
-                        # cancel the resting SL order before placing another reduce_only close.
-                        if oids.get("stop_loss"):
-                            try: deribit.cancel_order(oids["stop_loss"])
-                            except Exception: pass
+                        _cancel_all_open_orders_for_symbol(deribit, symbol)
 
-                        close_side = "SELL" if signal == "BUY" else "BUY"
-                        close_qty  = _get_safe_close_qty(deribit, symbol, trade)
+                        close_side, close_qty = _get_safe_close_info(deribit, symbol, trade)
                         if close_qty > 0:
                             deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
-                        for k in ("tp1", "tp2"):
-                            if oids.get(k) and not trade.get(f"{k}_hit"):
-                                try: deribit.cancel_order(oids[k])
-                                except Exception: pass
                         sl_hit = True
                     except Exception as e:
                         log.error(f"  Scenario-B close {symbol}: {e}")
@@ -1290,15 +1162,11 @@ def check_stale_trades(deribit: DeribitClient):
 
         log.warning(f"  ⏰ {symbol}: {age_h:.0f}h — time-based exit")
         try:
-            for k, oid in trade.get("order_ids", {}).items():
-                if k != "entry" and oid and str(oid) not in ("", "None"):
-                    try: deribit.cancel_order(oid)
-                    except Exception: pass
+            _cancel_all_open_orders_for_symbol(deribit, symbol)
 
             live      = deribit.get_live_price(symbol)
-            close_qty = _get_safe_close_qty(deribit, symbol, trade)
+            close_side, close_qty = _get_safe_close_info(deribit, symbol, trade)
             if close_qty > 0:
-                close_side = "SELL" if trade["signal"] == "BUY" else "BUY"
                 try: deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
                 except Exception as me: log.warning(f"  Time-exit market order {symbol}: {me}")
 
@@ -1338,8 +1206,7 @@ def clean_ghost_trades(deribit: DeribitClient):
             log.warning(f"  🗑️ {symbol}: broken state — remove")
             to_remove.append(symbol); continue
             
-        # ZOMBIE CLEANER: Purge corrupted score:0 / confidence:0 records —
-        # but check for and close a real position FIRST, don't just forget about it.
+        # ZOMBIE CLEANER: Purge corrupted score:0 / confidence:0 records
         if float(trade.get("score", 1)) == 0 and float(trade.get("confidence", 1)) == 0:
             try:
                 actual = deribit.get_position_size(symbol)
@@ -1349,6 +1216,7 @@ def clean_ghost_trades(deribit: DeribitClient):
                 log.warning(f"  🗑️ {symbol}: broken record BUT real position exists "
                             f"(size={actual}) — closing before removing record")
                 try:
+                    _cancel_all_open_orders_for_symbol(deribit, symbol)
                     close_side = "SELL" if actual > 0 else "BUY"
                     deribit.place_market_order(symbol, close_side, abs(actual), reduce_only=True)
                 except Exception as e:
@@ -1450,7 +1318,6 @@ def _send_open_alert(sym,sig,conf,score,entry,stop,tp1,tp2,qty,q1,q2,risk,bal):
 def run_execution_scan():
     log.info(f"\n{'═'*56}\nSCAN — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n{'═'*56}")
 
-    # NEW: concurrency guard — see _acquire_scan_lock() above for why this exists.
     if not _acquire_scan_lock():
         return
     try:
@@ -1491,27 +1358,21 @@ def _run_execution_scan_locked():
         upnl  = float(p.get("floating_profit_loss_usd", 0) or 0)
         size  = float(p.get("size", 0))
         if sym not in tracked:
-            log.warning(f"  ⚠️ UNTRACKED POSITION: {sym} size={size} uPnL=${upnl:+.2f} — flattening (no bot-managed SL/TP protects it)")
-            _send(f"⚠️ *UNTRACKED POSITION — {sym}*\nSize: `{size}` | uPnL: `${upnl:+.2f}`\nNot in trades.json — this has NO stop-loss protecting it, flattening now.")
-            # FIX: previously this only alerted and left the position open — since it has no
-            # bot-managed SL/TP, every scan cycle it survives is pure unmanaged risk. Flatten
-            # it immediately rather than waiting for a human to see the alert and act.
+            log.warning(f"  ⚠️ UNTRACKED POSITION: {sym} size={size} uPnL=${upnl:+.2f} — flattening")
+            _send(f"⚠️ *UNTRACKED POSITION — {sym}*\nSize: `{size}` | uPnL: `${upnl:+.2f}`\nNot in trades.json — flattening now.")
             try:
+                _cancel_all_open_orders_for_symbol(deribit, sym)
+
                 close_side = "SELL" if size > 0 else "BUY"
-                # BUG FIX (introduced last round, caught in log): the raw exchange-reported
-                # `size` isn't guaranteed to already be a clean multiple of the instrument's
-                # lot size — round it the same way every other order in this file does, or
-                # Deribit rejects it outright (Code:-32602 'must be a multiple of contract
-                # size'), which is exactly what happened to ATOMUSDT/SUIUSDT here.
                 flatten_qty = deribit.round_amount(sym, abs(size))
                 if flatten_qty <= 0:
-                    log.error(f"  {sym}: rounded flatten qty is 0 (raw size={size}) — cannot flatten, manual check required")
+                    log.error(f"  {sym}: rounded flatten qty is 0 (raw size={size}) — manual check required")
                     _send(f"🚨🚨 *{sym}: could not compute a valid close size for `{size}` — check Deribit manually!*")
                 else:
                     dust = round(abs(size) - flatten_qty, 8)
                     if dust > 0:
-                        log.warning(f"  {sym}: raw size {size} isn't a clean multiple of the lot size — "
-                                    f"closing {flatten_qty}, ~{dust} dust may remain (exchange lot-size limitation)")
+                        log.warning(f"  {sym}: raw size {size} isn't a clean multiple of lot size — "
+                                    f"closing {flatten_qty}, ~{dust} dust may remain")
                     deribit.place_market_order(symbol=sym, side=close_side, amount=flatten_qty, reduce_only=True)
                 if _verify_actually_closed(deribit, sym):
                     log.info(f"  ✅ {sym}: untracked position flattened")
@@ -1530,7 +1391,6 @@ def _run_execution_scan_locked():
 
     found = 0
 
-    # ── Macro Bias Checks (Run once per cycle) ────
     btc_momentum = check_btc_momentum()
     log.info(f"\n  BTC momentum: {btc_momentum['message']}")
     
@@ -1542,7 +1402,7 @@ def _run_execution_scan_locked():
     
     vol_state = vol.get("status", "NORMAL")
 
-    btc_df15_live = get_data("BTCUSDT", TIMEFRAME_ENTRY)  # fetched once per scan, reused for all coins
+    btc_df15_live = get_data("BTCUSDT", TIMEFRAME_ENTRY)
 
     for symbol in SYMBOLS:
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
