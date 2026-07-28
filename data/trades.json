@@ -69,34 +69,38 @@
     "tier": "\ud83d\udc51 Big Three",
     "exchange": "deribit_testnet"
   },
-  "TRXUSDT": {
-    "symbol": "TRXUSDT",
+  "NEARUSDT": {
+    "symbol": "NEARUSDT",
     "signal": "SELL",
-    "entry": 0.324095,
-    "stop": 0.0,
-    "tp1": 0.0,
-    "tp2": 0.0,
-    "qty": 16600,
-    "qty_tp1": 2000,
-    "qty_tp2": 0.0,
-    "risk_usd": 1077.37,
-    "balance_at_open": 107737.49,
-    "risk_mult": 1.0,
+    "entry": 1.65264249,
+    "stop": 1.6699,
+    "tp1": 1.6285,
+    "tp2": 1.6009,
+    "qty": 2330,
+    "qty_tp1": 1160,
+    "qty_tp2": 1170,
+    "risk_usd": 387.47,
+    "balance_at_open": 107718.68,
+    "risk_mult": 0.3597067882538451,
     "order_ids": {
-      "entry": "USDC-229110517504"
+      "entry": "USDC-229127226062",
+      "stop_loss": "USDC-SLTB-30112",
+      "tp1": "USDC-229127229845",
+      "tp2": "USDC-229127230333"
     },
-    "opened_at": "2026-07-28T20:54:27.377458+00:00",
+    "opened_at": "2026-07-28T22:13:55.065795+00:00",
     "tp1_hit": false,
     "tp2_hit": false,
     "closed": false,
-    "confidence": 50.5,
-    "score": 5,
+    "confidence": 53.6,
+    "score": 6,
     "reasons": [
-      "ADX 20",
-      "RSI not oversold (41)",
+      "Strong ADX 44",
+      "RSI not oversold (57)",
       "EMA bearish",
       "1h confirms",
-      "4h trend aligns (RSI 31)"
+      "4h trend aligns (RSI 27)",
+      "4h trend established (20h)"
     ],
     "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
