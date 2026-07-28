@@ -1045,5 +1045,46 @@
     "pnl": 37.0194,
     "closed_at": "2026-07-28T07:21:03.585679+00:00",
     "close_reason": "TP2 hit"
+  },
+  {
+    "symbol": "SOLUSDT",
+    "signal": "SELL",
+    "entry": 73.134,
+    "stop": 73.538,
+    "tp1": 72.568,
+    "tp2": 71.921,
+    "qty": 36.7,
+    "qty_tp1": 36.7,
+    "qty_tp2": 36.9,
+    "risk_usd": 1754.57,
+    "balance_at_open": 107769.48,
+    "risk_mult": 1.6280774441145602,
+    "order_ids": {
+      "entry": "USDC-228976207373",
+      "stop_loss": "USDC-SLTB-30016",
+      "tp1": "USDC-228976211423",
+      "tp2": "USDC-228976211657"
+    },
+    "opened_at": "2026-07-28T10:12:40.279674+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 53.5,
+    "score": 6,
+    "reasons": [
+      "ADX 20",
+      "RSI not oversold (37)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 35)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet",
+    "close_price": 72.568,
+    "pnl": 20.7722,
+    "closed_at": "2026-07-28T14:45:17.748566+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
   }
 ]
