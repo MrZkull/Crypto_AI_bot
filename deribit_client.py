@@ -1,4 +1,4 @@
-# deribit_client.py — V11: Hardened Execution Engine & Precision Safeguards
+# deribit_client.py — V11.1: Micro-Tick Decimal Precision Fix & Safe Execution Engine
 
 import math, time, logging, requests
 log = logging.getLogger(__name__)
@@ -58,17 +58,29 @@ SYMBOL_MAP = {
     # AI & Momentum
     "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
-   # "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
-               #    "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
+#    "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+             #      "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
     "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
- #   "HYPEUSDT":   {"instrument": "HYPE_USDC-PERPETUAL",  "currency": "USDC",
+  #  "HYPEUSDT":   {"instrument": "HYPE_USDC-PERPETUAL",  "currency": "USDC",
                #    "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
     "DOGEUSDT":   {"instrument": "DOGE_USDC-PERPETUAL",  "currency": "USDC",
                    "min_amount": 100,    "max_amount": 1000000,   "tick_size": 0.00001},
 }
 
 TRADEABLE_SYMBOLS: list = []
+
+
+def _calc_decimals(val: float) -> int:
+    """Calculates decimal precision without scientific notation formatting bugs."""
+    if val <= 0:
+        return 4
+    s = f"{val:.10f}".rstrip("0")
+    if "." in s:
+        parts = s.split(".")
+        return len(parts[1]) if len(parts) > 1 else 0
+    return 0
+
 
 class DeribitClient:
 
@@ -203,16 +215,12 @@ class DeribitClient:
         )
 
     def round_price(self, symbol: str, price: float) -> float:
-        """
-        Round price to exchange tick size.
-        SAFETY: Clamp result so positive input prices never evaluate to 0.0.
-        """
+        """Round price to exchange tick size cleanly without scientific notation bugs."""
         if price <= 0:
             return 0.0
             
         tick = self.get_tick_size(symbol)
         
-        # Sanity check against oversized API tick sizes
         if tick <= 0 or tick > price / 2:
             tick = float(SYMBOL_MAP.get(symbol, {}).get("tick_size", 0.0001))
             log.debug(f"  round_price: API tick invalid for {symbol}@{price:.6f} — using SYMBOL_MAP tick={tick}")
@@ -220,24 +228,25 @@ class DeribitClient:
         if tick <= 0:
             tick = 0.0001
             
-        rounded  = round(round(price / tick) * tick, 10)
-        decimals = len(str(tick).rstrip("0").split(".")[-1]) if "." in str(tick) else 0
-        final_price = round(rounded, decimals)
+        decimals = _calc_decimals(tick)
+        steps    = round(price / tick)
+        rounded  = round(steps * tick, decimals)
 
-        # Clamping guard: positive input price must never evaluate to 0.0
-        if final_price <= 0 and price > 0:
-            final_price = round(max(price, tick), decimals)
-            log.warning(f"  round_price({symbol}, {price:.6f}) evaluated to 0.0 — clamped to {final_price}")
+        if rounded <= 0 and price > 0:
+            rounded = round(max(price, tick), decimals)
+            if rounded <= 0:
+                rounded = tick
+            log.warning(f"  round_price({symbol}, {price:.6f}) evaluated to 0.0 — clamped to {rounded}")
 
-        return final_price
+        return rounded
 
     def round_amount(self, symbol: str, raw: float) -> float:
         if raw <= 0: return 0.0
         step     = self.get_min_trade_amount(symbol)
         steps    = math.floor(raw / step)
         result   = max(step, steps * step)
-        decimals = len(str(step).rstrip("0").split(".")[-1]) if "." in str(step) else 0
-        return round(result, decimals) if decimals else int(result)
+        decimals = _calc_decimals(step)
+        return round(result, decimals) if decimals else int(round(result))
 
     def split_amount(self, symbol: str, total) -> tuple:
         if total <= 0: return 0, 0
@@ -245,8 +254,8 @@ class DeribitClient:
         tp1   = max(step, math.floor(total / 2.0 / step) * step)
         tp2   = total - tp1
         if tp2 < step: tp1 = total; tp2 = 0
-        decimals = len(str(step).rstrip("0").split(".")[-1]) if "." in str(step) else 0
-        return (round(tp1, decimals), round(tp2, decimals)) if decimals else (int(tp1), int(tp2))
+        decimals = _calc_decimals(step)
+        return (round(tp1, decimals), round(tp2, decimals)) if decimals else (int(round(tp1)), int(round(tp2)))
 
     # ── Market data ───────────────────────────────────────────────────
 
@@ -272,7 +281,6 @@ class DeribitClient:
             log.warning(f"  funding_rate {symbol}: {e}"); return 0.0
 
     def get_order_book_spread(self, symbol: str) -> dict:
-        """Fetch best bid/ask and compute spread percentage."""
         try:
             book = self._get("/public/get_order_book", {
                 "instrument_name": self.get_instrument_name(symbol),
@@ -343,7 +351,6 @@ class DeribitClient:
         return "11030" in str(e) or "invalid_reduce_only_order" in str(e)
 
     def place_market_order(self, symbol: str, side: str, amount, reduce_only: bool = False) -> dict:
-        """Entry or exit market order. NO NON-REDUCE-ONLY RETRY ON EXITS."""
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         label      = f"bot_entry_{int(time.time())}"
