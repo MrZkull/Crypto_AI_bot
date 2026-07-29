@@ -1285,5 +1285,81 @@
     "pnl": -56.4536,
     "closed_at": "2026-07-29T08:49:49.296417+00:00",
     "close_reason": "SL hit"
+  },
+  {
+    "symbol": "NEARUSDT",
+    "signal": "SELL",
+    "entry": 1.60727948,
+    "stop": 1.6299,
+    "tp1": 1.5757,
+    "tp2": 1.5395,
+    "qty": 1340.0,
+    "qty_tp1": 1340,
+    "qty_tp2": 1330,
+    "risk_usd": 432.51,
+    "balance_at_open": 107789.18,
+    "risk_mult": 0.40125361233036094,
+    "order_ids": {
+      "entry": "USDC-229230814345",
+      "stop_loss": "USDC-SLTB-30207",
+      "tp1": "USDC-229230819169",
+      "tp2": "USDC-229230819625"
+    },
+    "opened_at": "2026-07-29T06:21:01.884333+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 64.4,
+    "score": 7,
+    "reasons": [
+      "Conf (64%)",
+      "Strong ADX 38",
+      "RSI not oversold (40)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 23)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet",
+    "close_price": 1.5757,
+    "pnl": 42.3165,
+    "closed_at": "2026-07-29T11:47:53.701253+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
+  },
+  {
+    "symbol": "TRXUSDT",
+    "signal": "SELL",
+    "entry": 0.325543,
+    "stop": 0.32609,
+    "tp1": 0.32478,
+    "tp2": 0.3239,
+    "qty": 400,
+    "qty_tp1": 200,
+    "qty_tp2": 200,
+    "risk_usd": 0.22,
+    "balance_at_open": 107941.66,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLTB-30245",
+      "tp1": "USDC-229266661717",
+      "tp2": "USDC-229266661964"
+    },
+    "opened_at": "2026-07-29T09:25:13.632568+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet",
+    "close_price": 0.327268,
+    "pnl": -0.69,
+    "closed_at": "2026-07-29T11:47:59.555181+00:00",
+    "close_reason": "Max adverse excursion \u274c"
   }
 ]
