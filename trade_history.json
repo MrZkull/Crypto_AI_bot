@@ -1361,5 +1361,45 @@
     "pnl": -0.69,
     "closed_at": "2026-07-29T11:47:59.555181+00:00",
     "close_reason": "Max adverse excursion \u274c"
+  },
+  {
+    "symbol": "SOLUSDT",
+    "signal": "SELL",
+    "entry": 74.03271703,
+    "stop": 74.662,
+    "tp1": 73.152,
+    "tp2": 72.145,
+    "qty": 36.3,
+    "qty_tp1": 36.3,
+    "qty_tp2": 36.5,
+    "risk_usd": 951.83,
+    "balance_at_open": 107847.76,
+    "risk_mult": 0.8825690597990242,
+    "order_ids": {
+      "entry": "USDC-229260368231",
+      "stop_loss": "USDC-SLTB-30214",
+      "tp1": "USDC-229260371949",
+      "tp2": "USDC-229260372198"
+    },
+    "opened_at": "2026-07-29T08:50:14.740357+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 52.2,
+    "score": 5,
+    "reasons": [
+      "ADX 24",
+      "RSI not oversold (57)",
+      "1h confirms",
+      "4h trend aligns (RSI 46)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet",
+    "close_price": 73.152,
+    "pnl": 31.97,
+    "closed_at": "2026-07-29T15:32:38.676502+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
   }
 ]
