@@ -1,39 +1,4 @@
 {
-  "BNBUSDT": {
-    "symbol": "BNBUSDT",
-    "signal": "SELL",
-    "entry": 565.35,
-    "stop": 567.45,
-    "tp1": 562.4,
-    "tp2": 559.04,
-    "qty": 9.52,
-    "qty_tp1": 4.75,
-    "qty_tp2": 4.77,
-    "risk_usd": 2586.47,
-    "balance_at_open": 107769.48,
-    "risk_mult": 2.4,
-    "order_ids": {
-      "entry": "USDC-228976185661",
-      "stop_loss": "USDC-SLTB-30015",
-      "tp1": "USDC-228976189513",
-      "tp2": "USDC-228976189824"
-    },
-    "opened_at": "2026-07-28T10:12:33.129438+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 51.7,
-    "score": 5,
-    "reasons": [
-      "ADX 21",
-      "RSI not oversold (47)",
-      "EMA bearish",
-      "1h confirms",
-      "4h trend aligns (RSI 43)"
-    ],
-    "tier": "\ud83d\udc51 Big Three",
-    "exchange": "deribit_testnet"
-  },
   "NEARUSDT": {
     "symbol": "NEARUSDT",
     "signal": "SELL",
@@ -105,6 +70,41 @@
       "Volume surge 1.8\u00d7"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "SOLUSDT": {
+    "symbol": "SOLUSDT",
+    "signal": "SELL",
+    "entry": 74.03271703,
+    "stop": 74.662,
+    "tp1": 73.152,
+    "tp2": 72.145,
+    "qty": 72.8,
+    "qty_tp1": 36.3,
+    "qty_tp2": 36.5,
+    "risk_usd": 951.83,
+    "balance_at_open": 107847.76,
+    "risk_mult": 0.8825690597990242,
+    "order_ids": {
+      "entry": "USDC-229260368231",
+      "stop_loss": "USDC-SLTB-30214",
+      "tp1": "USDC-229260371949",
+      "tp2": "USDC-229260372198"
+    },
+    "opened_at": "2026-07-29T08:50:14.740357+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 52.2,
+    "score": 5,
+    "reasons": [
+      "ADX 24",
+      "RSI not oversold (57)",
+      "1h confirms",
+      "4h trend aligns (RSI 46)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
   }
 }
