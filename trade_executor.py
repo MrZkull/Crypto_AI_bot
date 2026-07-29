@@ -734,6 +734,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal}")
     return True
 
+
 # ════════════ MONITOR OPEN TRADES ════════════════════════════════════
 
 def _safe_get_order(deribit, oid_str):
@@ -1363,7 +1364,6 @@ def _run_execution_scan_locked():
         base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
         sym  = f"{base}USDT"
 
-        # Query get_position_size(sym) directly to ensure converted coin units!
         size = deribit.get_position_size(sym)
         if abs(size) <= 0.001:
             continue
@@ -1372,7 +1372,6 @@ def _run_execution_scan_locked():
             upnl = float(p.get("floating_profit_loss_usd", 0) or p.get("floating_profit_loss", 0) or 0)
             log.warning(f"  ⚠️ UNTRACKED POSITION: {sym} size={size:.4f} uPnL=${upnl:+.2f}")
 
-            # Check order book spread to determine liquid vs illiquid
             spread_info = deribit.get_order_book_spread(sym)
             spread_pct  = spread_info.get("spread_pct", 999)
 
@@ -1389,13 +1388,12 @@ def _run_execution_scan_locked():
                     if entry <= 0:
                         entry = deribit.get_live_price(sym)
 
-                    # Fetch ATR from 15m klines if available
                     raw15 = get_data(sym, TIMEFRAME_ENTRY)
                     df15  = add_indicators(raw15) if not raw15.empty else pd.DataFrame()
                     if not df15.empty and "atr" in df15.columns and len(df15) > 0:
                         atr = float(df15.iloc[-1]["atr"])
                     else:
-                        atr = entry * 0.01  # 1% fallback ATR
+                        atr = entry * 0.01
 
                     dec = 4 if entry < 10 else 2
                     if signal == "BUY":
@@ -1407,12 +1405,20 @@ def _run_execution_scan_locked():
                         tp1  = deribit.round_price(sym, entry - atr * ATR_TARGET1_MULT)
                         tp2  = deribit.round_price(sym, entry - atr * ATR_TARGET2_MULT)
 
+                    # Clamp SL stop price against live market price to prevent Code:10034
+                    live_p = deribit.get_live_price(sym)
+                    tick   = deribit.get_tick_size(sym)
+                    if live_p > 0:
+                        if signal == "BUY":
+                            stop = min(stop, deribit.round_price(sym, live_p - tick * 2))
+                        else:
+                            stop = max(stop, deribit.round_price(sym, live_p + tick * 2))
+
                     total_q = deribit.round_amount(sym, abs(size))
                     qty_tp1, qty_tp2 = deribit.split_amount(sym, total_q)
                     sl_side = "SELL" if signal == "BUY" else "BUY"
                     tp_side = "SELL" if signal == "BUY" else "BUY"
 
-                    tick = deribit.get_tick_size(sym)
                     sl_limit = deribit.round_price(sym, stop - (tick * 3) if signal == "BUY" else stop + (tick * 3))
 
                     order_ids = {}
