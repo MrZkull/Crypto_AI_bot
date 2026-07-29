@@ -40,7 +40,7 @@
     "symbol": "LTCUSDT",
     "signal": "SELL",
     "entry": 45.35290162,
-    "stop": 45.86,
+    "stop": 45.35290162,
     "tp1": 44.65,
     "tp2": 43.84,
     "qty": 80.3,
@@ -51,12 +51,12 @@
     "risk_mult": 0.3386393965472865,
     "order_ids": {
       "entry": "USDC-229230920712",
-      "stop_loss": "USDC-SLTB-30208",
+      "stop_loss": "USDC-SLTB-30281",
       "tp1": "USDC-229230924797",
       "tp2": "USDC-229230924949"
     },
     "opened_at": "2026-07-29T06:21:31.487429+00:00",
-    "tp1_hit": false,
+    "tp1_hit": true,
     "tp2_hit": false,
     "closed": false,
     "confidence": 56.0,
@@ -106,6 +106,36 @@
       "4h trend established (20h)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "SOLUSDT": {
+    "symbol": "SOLUSDT",
+    "signal": "SELL",
+    "entry": 73.1269,
+    "stop": 74.383,
+    "tp1": 71.369,
+    "tp2": 69.359,
+    "qty": 43.8,
+    "qty_tp1": 21.8,
+    "qty_tp2": 22.0,
+    "risk_usd": 55.02,
+    "balance_at_open": 108067.89,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLTB-30282",
+      "tp1": "USDC-229387735509",
+      "tp2": "USDC-229387735958"
+    },
+    "opened_at": "2026-07-29T20:40:41.569557+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
   }
 }
