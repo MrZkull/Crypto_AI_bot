@@ -1,4 +1,4 @@
-# deribit_client.py — V11.1: Micro-Tick Decimal Precision Fix & Safe Execution Engine
+# deribit_client.py — V11.2: Mark-Price Trigger Synthesis & Precision Safeguards
 
 import math, time, logging, requests
 log = logging.getLogger(__name__)
@@ -58,12 +58,12 @@ SYMBOL_MAP = {
     # AI & Momentum
     "FETUSDT":    {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 1,      "max_amount": 100000,    "tick_size": 0.0001},
-#    "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
-             #      "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
+ #   "RENDERUSDT": {"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+              #     "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
     "ADAUSDT":    {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
                    "min_amount": 10,     "max_amount": 500000,    "tick_size": 0.0001},
-  #  "HYPEUSDT":   {"instrument": "HYPE_USDC-PERPETUAL",  "currency": "USDC",
-               #    "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
+#    "HYPEUSDT":   {"instrument": "HYPE_USDC-PERPETUAL",  "currency": "USDC",
+                #   "min_amount": 0.1,    "max_amount": 10000,     "tick_size": 0.001},
     "DOGEUSDT":   {"instrument": "DOGE_USDC-PERPETUAL",  "currency": "USDC",
                    "min_amount": 100,    "max_amount": 1000000,   "tick_size": 0.00001},
 }
@@ -407,7 +407,7 @@ class DeribitClient:
         except Exception as e:
             log.warning(f"  IoC order failed ({e}) — falling back to market order")
 
-        # Fallback pure market order
+        # Fallback pure market order (NO non-reduce-only retry on exits)
         cur_amount = amount
         for attempt in range(4):
             try:
@@ -500,6 +500,13 @@ class DeribitClient:
 
     def place_limit_order(self, symbol: str, side: str, amount, price: float,
                           stop_price: float = None, use_reduce_only: bool = False) -> dict:
+        """
+        Place a limit or stop-limit order.
+        
+        SYNTHESIS: Stop-Loss uses type='stop_limit' with trigger='mark_price'.
+        This guarantees native, 24/7 triggering on index price changes without 'last_price'
+        stagnation, while capping worst-case slippage at the limit price.
+        """
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
@@ -511,7 +518,7 @@ class DeribitClient:
                 "type":            "stop_limit",
                 "price":           safe_price,
                 "trigger_price":   self.round_price(symbol, stop_price),
-                "trigger":         "last_price",
+                "trigger":         "mark_price",    # Changed from last_price -> mark_price
                 "label":           f"bot_sl_{int(time.time())}",
             }
             if use_reduce_only:
@@ -528,7 +535,7 @@ class DeribitClient:
         result = self._post(method, body)
         order  = result.get("order", result)
         kind   = "SL" if stop_price else "TP"
-        log.info(f"  ✅ {kind} {side.upper()} {amount} {instrument} @ {safe_price} "
+        log.info(f"  ✅ {kind} {side.upper()} {amount} {instrument} @ trigger:{stop_price} "
                  f"id={order.get('order_id','')} state={order.get('order_state','')}")
         return result
 
