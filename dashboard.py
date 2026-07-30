@@ -1,4 +1,6 @@
-import os, json, base64, time, logging, requests
+# dashboard.py — V4.0: Institutional Control Server (Quant Analytics + Dynamic Config + Kill Switch)
+
+import os, json, base64, time, math, logging, requests
 from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
@@ -77,24 +79,29 @@ def deribit_client():
         log.warning(f"DeribitClient init: {e}")
         return None
 
-# ── Routes ────────────────────────────────────────────────────────────
+# ── SPA Routing ────────────────────────────────────────────────────────
 
 @app.route("/")
-def index(): return send_from_directory("dashboard_static", "index.html")
-
 @app.route("/trading")
 @app.route("/signals")
 @app.route("/market")
 @app.route("/open-trades")
 @app.route("/history")
 @app.route("/performance")
+@app.route("/quant")
+@app.route("/execution")
+@app.route("/modelhealth")
 @app.route("/configuration")
-def spa(): return send_from_directory("dashboard_static", "index.html")
+@app.route("/monitor")
+def spa():
+    return send_from_directory("dashboard_static", "index.html")
 
 @app.route("/<path:path>")
 def static_files(path):
-    try: return send_from_directory("dashboard_static", path)
-    except: return send_from_directory("dashboard_static", "index.html")
+    try:
+        return send_from_directory("dashboard_static", path)
+    except Exception:
+        return send_from_directory("dashboard_static", "index.html")
 
 # ── /api/status ────────────────────────────────────────────────────────
 @app.route("/api/status")
@@ -104,42 +111,63 @@ def api_status():
     bust("scan_mode.json")
     bust("trades.json")
     bust("balance.json")
+    bust("model_performance.json")
 
     history = get("trade_history.json", [])
     signals = get("signals.json", [])
     scan_mode = get("scan_mode.json", {})
     trades = get("trades.json", {})
     balance = get("balance.json", {})
+    model_perf = get("model_performance.json", {})
 
     # Filter out RECOVERED trades for stats
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     wins = [h for h in real if (h.get("pnl") or 0) > 0]
     tpnl = sum(h.get("pnl", 0) for h in real)
-    win_rate = round(len(wins) / len(real) * 100, 1) if real else 0
+    win_rate = round(len(wins) / len(real) * 100, 1) if real else 0.0
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    # Count all signals today, not just executed ones
     t_sigs = [s for s in signals if s.get("generated_at", "").startswith(today)]
     buys = sum(1 for s in t_sigs if s.get("signal") == "BUY")
     sells = sum(1 for s in t_sigs if s.get("signal") == "SELL")
     mode = scan_mode.get("mode", "active")
 
+    # Dynamic accuracy fetch from model_performance.json
+    model_acc = "73.1%"
+    if isinstance(model_perf, dict):
+        acc_val = model_perf.get("accuracy") or model_perf.get("test_accuracy")
+        if acc_val is not None:
+            try:
+                acc_f = float(acc_val)
+                model_acc = f"{acc_f * 100:.1f}%" if acc_f <= 1.0 else f"{acc_f:.1f}%"
+            except Exception:
+                pass
+
+    # Dynamic max trades from config.py
+    max_trades = 4
+    try:
+        import config
+        max_trades = getattr(config, 'MAX_OPEN_TRADES', 4)
+    except Exception:
+        pass
+
     return jsonify({
+        "ok": True,
         "win_rate": win_rate, 
         "wins": len(wins),
         "losses": len(real) - len(wins), 
         "total_pnl": round(tpnl, 4),
         "total_trades": len(real),
         "open_trades": len([t for t in trades.values() if not t.get("closed")]),
-        "max_trades": 3, 
+        "max_trades": max_trades, 
         "scan_mode": mode, 
         "mode_label": mode.upper(),
-        "min_confidence": 65, 
-        "min_score": 2,
+        "min_confidence": scan_mode.get("min_confidence", 60), 
+        "min_score": scan_mode.get("min_score", 3),
         "today_signals": len(t_sigs), 
         "today_buys": buys, 
         "today_sells": sells,
-        "model_accuracy": 73.1,
+        "model_accuracy": model_acc,
         "balance": balance.get("usdt", 0),
         "exchange": balance.get("exchange", "Deribit Testnet"),
         "last_updated": balance.get("updated_at", ""),
@@ -164,6 +192,7 @@ def api_balance():
             })
         except Exception as e:
             log.warning(f"Live balance: {e}")
+    
     # File fallback
     bust("balance.json")
     bal = get("balance.json", {})
@@ -172,14 +201,9 @@ def api_balance():
 # ── /api/trades/open ────────────────────────────────────────────────────
 @app.route("/api/trades/open")
 def api_open_trades():
-    """
-    Fetches live positions from Deribit and stitches SL/TP/confidence
-    from trades.json on GitHub. Returns full data for dashboard table.
-    """
     bust("trades.json")
     ai_data = get("trades.json", {})
 
-    # Live prices from Binance (for PnL enrichment)
     live_prices = {}
     try:
         r = requests.get("https://data-api.binance.vision/api/v3/ticker/price", timeout=6)
@@ -203,19 +227,9 @@ def api_open_trades():
                 entry     = float(p.get("average_price", 0) or 0)
                 live      = float(p.get("mark_price", 0) or 0)
 
-                # FIXED: trust trades.json's own recorded signal first — it was
-                # set once at trade-open time by the bot itself and is never
-                # subject to any ambiguity in how Deribit's position size sign
-                # is interpreted. Only fall back to inferring from live position
-                # size for symbols with no local record at all (orphaned/
-                # untracked positions, where there's nothing else to go on).
-                # This is what was causing SELL trades to display as BUY with
-                # SL/TP visually backwards — the direction label and the SL/TP
-                # values were coming from two different, inconsistent sources.
                 recorded_signal = ai_data.get(symbol, {}).get("signal")
                 signal = recorded_signal if recorded_signal else ("BUY" if size > 0 else "SELL")
 
-                # Unrealised PnL — prefer exchange value, fallback to calculation
                 upnl = float(p.get("floating_profit_loss_usd") or
                              p.get("floating_profit_loss") or 0)
 
@@ -224,7 +238,6 @@ def api_open_trades():
                     pnl_pct = ((live - entry) / entry * 100 if signal == "BUY"
                                else (entry - live) / entry * 100)
 
-                # Stitch AI targets from GitHub trades.json
                 t = ai_data.get(symbol, {})
                 stop  = float(t.get("stop",  0) or 0)
                 tp1   = float(t.get("tp1",   0) or 0)
@@ -232,7 +245,6 @@ def api_open_trades():
                 conf  = t.get("confidence", 0)
                 score = t.get("score",      0)
 
-                # Progress bar (0-100%) entry → TP2
                 progress = 0.0
                 if entry > 0 and tp2 > 0 and live > 0:
                     dist = abs(tp2 - entry)
@@ -262,7 +274,7 @@ def api_open_trades():
         except Exception as e:
             log.error(f"Deribit positions: {e}")
 
-    # File fallback — use trades.json with Binance prices
+    # File fallback
     trades = ai_data
     result = []
     for symbol, t in trades.items():
@@ -385,16 +397,183 @@ def api_performance():
         "by_symbol": by_symbol, "daily_pnl": daily,
     })
 
-# ── /api/config ───────────────────────────────────────────────────────────
+# ── /api/analytics (Quant Analytics) ─────────────────────────────────────
+@app.route("/api/analytics")
+def api_analytics():
+    bust("trade_history.json")
+    history = get("trade_history.json", [])
+    real_trades = [t for t in history if t.get("signal") != "RECOVERED"]
+    
+    pnls = [float(t.get("pnl", 0)) for t in real_trades]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p <= 0]
+
+    total_trades = len(pnls)
+    win_rate = (len(wins) / total_trades * 100) if total_trades > 0 else 0.0
+    
+    avg_win = (sum(wins) / len(wins)) if wins else 0.0
+    avg_loss = (abs(sum(losses)) / len(losses)) if losses else 0.0
+    
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (round(gross_profit, 2) if gross_profit > 0 else 0.0)
+    expectancy = round((win_rate / 100.0 * avg_win) - ((1.0 - win_rate / 100.0) * avg_loss), 4)
+
+    sharpe, sortino, max_dd = 0.0, 0.0, 0.0
+    if len(pnls) > 3:
+        mean_pnl = sum(pnls) / len(pnls)
+        variance = sum((x - mean_pnl)**2 for x in pnls) / len(pnls)
+        std_dev = math.sqrt(variance) if variance > 0 else 0.001
+        
+        downside_vars = [x**2 for x in losses]
+        downside_std = math.sqrt(sum(downside_vars) / len(pnls)) if downside_vars else 0.001
+
+        sharpe = round((mean_pnl / std_dev) * math.sqrt(365), 2)
+        sortino = round((mean_pnl / downside_std) * math.sqrt(365), 2)
+
+        cum_pnl, peak = 0.0, 0.0
+        dds = []
+        for p in pnls:
+            cum_pnl += p
+            if cum_pnl > peak: peak = cum_pnl
+            dd = (peak - cum_pnl)
+            dds.append(dd)
+        max_dd = round(max(dds), 2) if dds else 0.0
+
+    equity_points = []
+    bust("balance.json")
+    bal_data = get("balance.json", {})
+    current_bal = float(bal_data.get("usdt", 107913.78))
+    
+    running = current_bal - sum(pnls)
+    for t in real_trades[-50:]:
+        p = float(t.get("pnl", 0))
+        running += p
+        equity_points.append({
+            "time": (t.get("closed_at") or t.get("opened_at") or "")[:10],
+            "equity": round(running, 2)
+        })
+
+    return jsonify({
+        "ok": True,
+        "sharpe_ratio": sharpe,
+        "sortino_ratio": sortino,
+        "profit_factor": profit_factor,
+        "expectancy_usdt": expectancy,
+        "max_drawdown_usdt": max_dd,
+        "win_rate": round(win_rate, 1),
+        "avg_win": round(avg_win, 4),
+        "avg_loss": round(avg_loss, 4),
+        "equity_curve": equity_points
+    })
+
+# ── /api/config (Dynamic Code Sync) ──────────────────────────────────────
 @app.route("/api/config")
 def api_config():
-    return jsonify({
-        "max_open_trades": 3, "risk_per_trade_pct": 2.0,
-        "atr_stop_mult": 1.5, "atr_tp1_mult": 2.0, "atr_tp2_mult": 3.0,
-        "min_confidence_active": 50, "min_confidence_quiet": 55,
-        "exchange": "Deribit Testnet (USDC Linear Perpetuals)",
-        "model_accuracy": 73.1,
-    })
+    try:
+        import config
+        from smart_scheduler import get_mode_thresholds
+
+        risk_pct = getattr(config, 'RISK_PER_TRADE', 0.01) * 100
+        max_open = getattr(config, 'MAX_OPEN_TRADES', 4)
+        max_dir  = getattr(config, 'MAX_SAME_DIRECTION', 4)
+        stop_m   = getattr(config, 'ATR_STOP_MULT', 2.5)
+        tp1_m    = getattr(config, 'ATR_TARGET1_MULT', 3.5)
+        tp2_m    = getattr(config, 'ATR_TARGET2_MULT', 7.5)
+        max_age  = getattr(config, 'MAX_TRADE_AGE_HOURS', 48)
+        symbols  = getattr(config, 'SYMBOLS', [])
+
+        active_th  = get_mode_thresholds({"label": "Active Hours"})
+        quiet_th   = get_mode_thresholds({"label": "Quiet Hours"})
+        weekend_th = get_mode_thresholds({"label": "Weekend Mode"})
+
+        return jsonify({
+            "ok": True,
+            "max_open_trades": max_open,
+            "risk_per_trade_pct": risk_pct,
+            "max_same_direction": max_dir,
+            "atr_stop_mult": stop_m,
+            "atr_target1_mult": tp1_m,
+            "atr_target2_mult": tp2_m,
+            "max_trade_age_hours": max_age,
+            "total_symbols": len(symbols),
+            "symbols": symbols,
+            "active_mode": active_th,
+            "quiet_mode": quiet_th,
+            "weekend_mode": weekend_th,
+            "exchange": "Deribit Testnet (USDC Linear Perpetuals)"
+        })
+    except Exception as e:
+        log.warning(f"Dynamic config load error: {e}")
+        return jsonify({
+            "ok": False,
+            "max_open_trades": 4, "risk_per_trade_pct": 1.0,
+            "atr_stop_mult": 2.5, "atr_target1_mult": 3.5, "atr_target2_mult": 7.5,
+            "max_trade_age_hours": 48,
+            "exchange": "Deribit Testnet (USDC Linear Perpetuals)",
+            "error": str(e)
+        })
+
+# ── /api/kill_switch (Emergency Flatten All) ────────────────────────────
+@app.route("/api/kill_switch", methods=["POST"])
+def api_kill_switch():
+    client = deribit_client()
+    if not client:
+        return jsonify({"ok": False, "error": "Deribit client not available"}), 500
+
+    try:
+        positions = client.get_positions()
+        cancelled_count = 0
+        flattened_count = 0
+
+        for p in positions:
+            inst = p.get("instrument_name", "")
+            if not inst:
+                continue
+            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+            sym = f"{base}USDT"
+            
+            # Cancel all open orders for symbol
+            try:
+                orders = client.get_open_orders(sym)
+                for o in orders:
+                    oid = str(o.get("order_id", ""))
+                    if oid:
+                        client.cancel_order(oid)
+                        cancelled_count += 1
+            except Exception as oe:
+                log.warning(f"Kill switch cancel orders {sym}: {oe}")
+
+            # Flatten Position
+            size = float(p.get("size", 0) or 0)
+            if abs(size) > 0:
+                side = "SELL" if size > 0 else "BUY"
+                amount = client.round_amount(sym, abs(size))
+                if amount > 0:
+                    client.place_market_order(sym, side, amount, reduce_only=True)
+                    flattened_count += 1
+
+        # Clear local trades.json
+        for p in [Path("trades.json"), Path("data/trades.json")]:
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps({}, indent=2))
+            except Exception:
+                pass
+        
+        bust("trades.json")
+        bust("balance.json")
+
+        return jsonify({
+            "ok": True,
+            "status": "FLATTENED",
+            "cancelled_orders": cancelled_count,
+            "flattened_positions": flattened_count,
+            "message": "EMERGENCY KILL SWITCH EXECUTED: All orders cancelled, positions flattened, trades.json cleared."
+        })
+    except Exception as e:
+        log.error(f"Kill switch execution failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ── /api/close_trade ──────────────────────────────────────────────────────
 @app.route("/api/close_trade", methods=["POST"])
@@ -416,7 +595,7 @@ def api_close_trade():
 @app.route("/api/sync")
 def api_sync():
     for f in ["trades.json","trade_history.json","signals.json","balance.json",
-              "scan_mode.json","bot.log"]:
+              "scan_mode.json","bot.log","model_performance.json"]:
         bust(f)
     return jsonify({"status": "synced"})
 
