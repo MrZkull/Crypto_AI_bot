@@ -1,6 +1,12 @@
-# dashboard.py — V4.0: Institutional Control Server (Quant Analytics + Dynamic Config + Kill Switch)
+# dashboard.py — V4.2: Full Institutional Server (Complete & Uncompressed)
 
-import os, json, base64, time, math, logging, requests
+import os
+import json
+import base64
+import time
+import math
+import logging
+import requests
 from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
@@ -10,65 +16,75 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__, static_folder="dashboard_static")
 CORS(app)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
 GH_REPO   = os.getenv("GITHUB_REPO",  "Elliot14R/Crypto_AI_bot")
 GH_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 
-_cache, _cache_ts = {}, {}
-CACHE_TTL = 60
+_cache = {}
+_cache_ts = {}
+CACHE_TTL = 30  # 30 second cache TTL for fresh GitHub state sync
 
 # ── GitHub fetch (base64 decode, two-path fallback) ───────────────────
 
 def gh_fetch(filename: str):
-    """Fetch JSON/text from GitHub repo. Returns parsed object or None."""
+    """Fetch JSON or raw text file content from GitHub repository with multi-path fallback."""
     if not GH_TOKEN or not GH_REPO:
         return None
-    headers = {"Authorization": f"token {GH_TOKEN}",
-                "Accept": "application/vnd.github.v3+json"}
+    headers = {
+        "Authorization": f"token {GH_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
     for path in [f"data/{filename}", filename]:
         try:
-            r = requests.get(
-                f"https://api.github.com/repos/{GH_REPO}/contents/{path}",
-                headers=headers, timeout=8
-            )
+            url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}"
+            r = requests.get(url, headers=headers, timeout=8)
             if r.status_code == 200:
-                raw = base64.b64decode(r.json()["content"]).decode("utf-8")
-                return json.loads(raw) if filename.endswith(".json") else raw
+                raw_content = base64.b64decode(r.json()["content"]).decode("utf-8")
+                if filename.endswith(".json"):
+                    return json.loads(raw_content)
+                return raw_content
         except Exception as e:
-            log.debug(f"gh_fetch {path}: {e}")
+            log.debug(f"gh_fetch error for path {path}: {e}")
     return None
 
+
 def get(filename: str, default):
-    """Cache-backed getter: GitHub first, local disk fallback."""
+    """Cache-backed getter for state files: GitHub repository first, local disk as fallback."""
     now = time.time()
-    if filename in _cache and now - _cache_ts.get(filename, 0) < CACHE_TTL:
+    if filename in _cache and (now - _cache_ts.get(filename, 0) < CACHE_TTL):
         return _cache[filename]
+    
     data = gh_fetch(filename)
     if data is None:
         for p in [Path(filename), Path("data") / filename]:
             try:
                 if p.exists():
-                    txt = p.read_text()
+                    txt = p.read_text(encoding="utf-8")
                     data = json.loads(txt) if filename.endswith(".json") else txt
                     break
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug(f"Local file fallback read error for {p}: {e}")
+    
     if data is not None:
         _cache[filename] = data
         _cache_ts[filename] = now
         return data
     return default
 
+
 def bust(filename: str):
+    """Bust local cache entry to force fresh read from GitHub/disk."""
     _cache_ts[filename] = 0
 
-# ── Deribit live fetch ─────────────────────────────────────────────────
+
+# ── Deribit Live Client Helper ─────────────────────────────────────────
 
 def deribit_client():
-    cid    = os.getenv("DERIBIT_CLIENT_ID", "")
+    """Initialize and return an authenticated Deribit API Client instance."""
+    cid = os.getenv("DERIBIT_CLIENT_ID", "")
     secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
     if not cid or not secret:
         return None
@@ -76,12 +92,17 @@ def deribit_client():
         from deribit_client import DeribitClient
         return DeribitClient(cid, secret)
     except Exception as e:
-        log.warning(f"DeribitClient init: {e}")
+        log.warning(f"DeribitClient initialization failed: {e}")
         return None
 
-# ── SPA Routing ────────────────────────────────────────────────────────
+
+# ── SPA Routing (Single Page Application Routes) ──────────────────────
 
 @app.route("/")
+def index():
+    return send_from_directory("dashboard_static", "index.html")
+
+
 @app.route("/trading")
 @app.route("/signals")
 @app.route("/market")
@@ -96,6 +117,7 @@ def deribit_client():
 def spa():
     return send_from_directory("dashboard_static", "index.html")
 
+
 @app.route("/<path:path>")
 def static_files(path):
     try:
@@ -103,7 +125,9 @@ def static_files(path):
     except Exception:
         return send_from_directory("dashboard_static", "index.html")
 
+
 # ── /api/status ────────────────────────────────────────────────────────
+
 @app.route("/api/status")
 def api_status():
     bust("trade_history.json")
@@ -120,14 +144,14 @@ def api_status():
     balance = get("balance.json", {})
     model_perf = get("model_performance.json", {})
 
-    # Filter out RECOVERED trades for stats
+    # Filter out RECOVERED trades for stats calculation
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     wins = [h for h in real if (h.get("pnl") or 0) > 0]
     tpnl = sum(h.get("pnl", 0) for h in real)
     win_rate = round(len(wins) / len(real) * 100, 1) if real else 0.0
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    t_sigs = [s for s in signals if s.get("generated_at", "").startswith(today)]
+    t_sigs = [s for s in signals if str(s.get("generated_at", "")).startswith(today)]
     buys = sum(1 for s in t_sigs if s.get("signal") == "BUY")
     sells = sum(1 for s in t_sigs if s.get("signal") == "SELL")
     mode = scan_mode.get("mode", "active")
@@ -173,7 +197,9 @@ def api_status():
         "last_updated": balance.get("updated_at", ""),
     })
 
+
 # ── /api/balance ────────────────────────────────────────────────────────
+
 @app.route("/api/balance")
 def api_balance():
     client = deribit_client()
@@ -191,26 +217,33 @@ def api_balance():
                 "exchange": "Deribit(by Coinbase) Testnet",
             })
         except Exception as e:
-            log.warning(f"Live balance: {e}")
+            log.warning(f"Live balance error: {e}")
     
     # File fallback
     bust("balance.json")
     bal = get("balance.json", {})
     return jsonify({**bal, "ok": True})
 
+
 # ── /api/trades/open ────────────────────────────────────────────────────
+
 @app.route("/api/trades/open")
 def api_open_trades():
+    """
+    Fetches live positions from Deribit and stitches SL/TP/confidence
+    from trades.json on GitHub. Returns full data for dashboard table.
+    """
     bust("trades.json")
     ai_data = get("trades.json", {})
 
+    # Live prices from Binance (for PnL enrichment fallback)
     live_prices = {}
     try:
         r = requests.get("https://data-api.binance.vision/api/v3/ticker/price", timeout=6)
         if r.ok:
             live_prices = {i["symbol"]: float(i["price"]) for i in r.json()}
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"Binance price proxy fallback error: {e}")
 
     client = deribit_client()
     if client:
@@ -227,9 +260,11 @@ def api_open_trades():
                 entry     = float(p.get("average_price", 0) or 0)
                 live      = float(p.get("mark_price", 0) or 0)
 
+                # Trust trades.json recorded signal first — set at trade-open time
                 recorded_signal = ai_data.get(symbol, {}).get("signal")
                 signal = recorded_signal if recorded_signal else ("BUY" if size > 0 else "SELL")
 
+                # Unrealised PnL — prefer exchange value, fallback to calculation
                 upnl = float(p.get("floating_profit_loss_usd") or
                              p.get("floating_profit_loss") or 0)
 
@@ -238,6 +273,7 @@ def api_open_trades():
                     pnl_pct = ((live - entry) / entry * 100 if signal == "BUY"
                                else (entry - live) / entry * 100)
 
+                # Stitch AI targets from GitHub trades.json
                 t = ai_data.get(symbol, {})
                 stop  = float(t.get("stop",  0) or 0)
                 tp1   = float(t.get("tp1",   0) or 0)
@@ -272,9 +308,9 @@ def api_open_trades():
                 })
             return jsonify(result)
         except Exception as e:
-            log.error(f"Deribit positions: {e}")
+            log.error(f"Deribit positions fetch error: {e}")
 
-    # File fallback
+    # File fallback — use trades.json with Binance prices
     trades = ai_data
     result = []
     for symbol, t in trades.items():
@@ -290,7 +326,9 @@ def api_open_trades():
                        "unrealised": round(upnl, 4), "pnl_pct": round(pct, 2), "progress": 0})
     return jsonify(result)
 
+
 # ── /api/trades/history ─────────────────────────────────────────────────
+
 @app.route("/api/trades/history")
 def api_trade_history():
     bust("trade_history.json")
@@ -298,59 +336,112 @@ def api_trade_history():
     real = [x for x in h if x.get("signal") != "RECOVERED"]
     return jsonify(list(reversed(real[-100:])))
 
+
 # ── /api/signals ────────────────────────────────────────────────────────
+
 @app.route("/api/signals")
 def api_signals():
     bust("signals.json")
     sigs     = get("signals.json", [])
+    if isinstance(sigs, dict):
+        sigs = sigs.get("signals", [])
+    
     symbol   = request.args.get("symbol")
     sig_type = request.args.get("type")
     limit    = int(request.args.get("limit", 100))
+    
     if symbol:   sigs = [s for s in sigs if s.get("symbol") == symbol]
     if sig_type: sigs = [s for s in sigs if s.get("signal") == sig_type.upper()]
     return jsonify(list(reversed(sigs[-limit:])))
 
+
 # ── /api/log ─────────────────────────────────────────────────────────────
+
 @app.route("/api/log")
 def api_log():
     bust("bot.log")
     content = get("bot.log", "")
     if not content:
-        return jsonify({"log": "No log entries. Bot runs via GitHub Actions.", "lines": 0})
+        return jsonify({"log": "✓ Bot standby — waiting for next scheduled run or manual scan.", "lines": 1})
     lines = content.splitlines(keepends=True)[-200:]
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
-# ── /api/market ──────────────────────────────────────────────────────────
+
+# ── PROXIED MARKET DATA ENDPOINTS (Fixes Browser CORS & Stagnation) ──────
+
 @app.route("/api/market")
 def api_market():
+    """Proxy Binance 24hr tickers server-side to bypass browser CORS / ISP blocks."""
     symbols = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","AVAXUSDT","XRPUSDT",
                "LINKUSDT","NEARUSDT","DOTUSDT","ADAUSDT","INJUSDT","ARBUSDT",
-               "OPUSDT","UNIUSDT","AAVEUSDT","FETUSDT","RENDERUSDT","SEIUSDT","SUIUSDT","APTUSDT"]
+               "OPUSDT","UNIUSDT","AAVEUSDT","FETUSDT","RENDERUSDT","SEIUSDT",
+               "SUIUSDT","APTUSDT","ATOMUSDT"]
     prices = {}
     try:
-        r = requests.get("https://data-api.binance.vision/api/v3/ticker/24hr", timeout=10)
+        r = requests.get("https://data-api.binance.vision/api/v3/ticker/24hr", timeout=8)
         if r.ok:
             for item in r.json():
                 if item["symbol"] in symbols:
                     prices[item["symbol"]] = {
-                        "price":      float(item.get("lastPrice", 0)),
-                        "change_24h": float(item.get("priceChangePercent", 0)),
-                        "volume_24h": float(item.get("quoteVolume", 0)),
-                        "high_24h":   float(item.get("highPrice", 0)),
-                        "low_24h":    float(item.get("lowPrice", 0)),
+                        "lastPrice":          float(item.get("lastPrice", 0)),
+                        "priceChangePercent": float(item.get("priceChangePercent", 0)),
+                        "quoteVolume":        float(item.get("quoteVolume", 0)),
+                        "highPrice":          float(item.get("highPrice", 0)),
+                        "lowPrice":           float(item.get("lowPrice", 0)),
                     }
     except Exception as e:
-        log.warning(f"Market: {e}")
+        log.warning(f"Market proxy error: {e}")
     return jsonify(prices)
 
+
+@app.route("/api/btc_atr")
+def api_btc_atr():
+    """Proxy Binance BTC klines and 24hr ticker for ATR computation."""
+    try:
+        r  = requests.get("https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=30", timeout=6)
+        r2 = requests.get("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=BTCUSDT", timeout=6)
+        if r.ok and r2.ok:
+            df   = [{"h": float(d[2]), "l": float(d[3]), "c": float(d[4])} for d in r.json()]
+            trs  = [df[i]["h"] - df[i]["l"] if i == 0 else max(df[i]["h"] - df[i]["l"], abs(df[i]["h"] - df[i-1]["c"]), abs(df[i]["l"] - df[i-1]["c"])) for i in range(len(df))]
+            atr  = sum(trs[-14:]) / 14
+            price = df[-1]["c"]
+            pct_v = atr / price * 100
+            chg   = float(r2.json().get("priceChangePercent", 0))
+            return jsonify({
+                "ok": True, 
+                "atr": round(atr, 2), 
+                "pct": round(pct_v, 2), 
+                "price": round(price, 0), 
+                "chg_24h": round(chg, 2)
+            })
+    except Exception as e:
+        log.warning(f"BTC ATR proxy error: {e}")
+    return jsonify({"ok": False})
+
+
+@app.route("/api/fng")
+def api_fng():
+    """Proxy Fear & Greed Index from Alternative.me."""
+    try:
+        r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6)
+        if r.ok:
+            return jsonify(r.json())
+    except Exception as e:
+        log.warning(f"Fear & Greed proxy error: {e}")
+    return jsonify({"data": [{"value": "50", "value_classification": "Neutral"}]})
+
+
 # ── /api/scan ─────────────────────────────────────────────────────────────
+
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
     if not GH_TOKEN or not GH_REPO:
         return jsonify({"error": "GH_PAT_TOKEN not configured"}), 400
-    headers = {"Authorization": f"token {GH_TOKEN}",
-                "Accept": "application/vnd.github.v3+json",
-                "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"token {GH_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json"
+    }
     for wf in ["crypto_bot.yml", "crypto_bot.yaml", "main.yml"]:
         try:
             r = requests.post(
@@ -365,10 +456,12 @@ def api_scan():
                 return jsonify({"status": "triggered",
                                 "message": "Scan started — results appear in ~60s"})
         except Exception as e:
-            log.warning(f"wf {wf}: {e}")
+            log.warning(f"Workflow dispatch {wf} error: {e}")
     return jsonify({"error": "Could not trigger scan — check GH_PAT_TOKEN"}), 500
 
+
 # ── /api/performance ──────────────────────────────────────────────────────
+
 @app.route("/api/performance")
 def api_performance():
     bust("trade_history.json")
@@ -380,12 +473,15 @@ def api_performance():
     by_symbol, daily = {}, {}
     for x in real:
         sym = x.get("symbol", "?")
-        if sym not in by_symbol: by_symbol[sym] = {"trades":0,"wins":0,"pnl":0}
+        if sym not in by_symbol: 
+            by_symbol[sym] = {"trades": 0, "wins": 0, "pnl": 0}
         by_symbol[sym]["trades"] += 1
         by_symbol[sym]["pnl"]    += x.get("pnl", 0)
-        if (x.get("pnl") or 0) > 0: by_symbol[sym]["wins"] += 1
-        day = (x.get("closed_at") or x.get("opened_at",""))[:10]
-        if day: daily[day] = round(daily.get(day, 0) + x.get("pnl", 0), 4)
+        if (x.get("pnl") or 0) > 0: 
+            by_symbol[sym]["wins"] += 1
+        day = (x.get("closed_at") or x.get("opened_at", ""))[:10]
+        if day: 
+            daily[day] = round(daily.get(day, 0) + x.get("pnl", 0), 4)
     lt = sum(x["pnl"] for x in loss)
     return jsonify({
         "total_trades": len(real), "wins": len(wins), "losses": len(loss),
@@ -397,7 +493,9 @@ def api_performance():
         "by_symbol": by_symbol, "daily_pnl": daily,
     })
 
-# ── /api/analytics (Quant Analytics) ─────────────────────────────────────
+
+# ── /api/analytics (Quant Risk Analytics) ─────────────────────────────────
+
 @app.route("/api/analytics")
 def api_analytics():
     bust("trade_history.json")
@@ -467,7 +565,9 @@ def api_analytics():
         "equity_curve": equity_points
     })
 
+
 # ── /api/config (Dynamic Code Sync) ──────────────────────────────────────
+
 @app.route("/api/config")
 def api_config():
     try:
@@ -514,7 +614,9 @@ def api_config():
             "error": str(e)
         })
 
+
 # ── /api/kill_switch (Emergency Flatten All) ────────────────────────────
+
 @app.route("/api/kill_switch", methods=["POST"])
 def api_kill_switch():
     client = deribit_client()
@@ -575,23 +677,38 @@ def api_kill_switch():
         log.error(f"Kill switch execution failed: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
 # ── /api/close_trade ──────────────────────────────────────────────────────
+
 @app.route("/api/close_trade", methods=["POST"])
 def api_close_trade():
     symbol = (request.get_json() or {}).get("symbol")
-    if not symbol: return jsonify({"error": "symbol required"}), 400
+    if not symbol: 
+        return jsonify({"error": "symbol required"}), 400
+    
     bust("trades.json")
     trades = get("trades.json", {})
-    if symbol not in trades: return jsonify({"error": f"{symbol} not found"}), 404
+    if symbol not in trades: 
+        return jsonify({"error": f"{symbol} not found"}), 404
+    
     trade = trades.pop(symbol)
     for p in [Path("trades.json"), Path("data/trades.json")]:
-        try: p.parent.mkdir(exist_ok=True); p.write_text(json.dumps(trades, indent=2))
-        except Exception: pass
+        try: 
+            p.parent.mkdir(exist_ok=True)
+            p.write_text(json.dumps(trades, indent=2))
+        except Exception: 
+            pass
+    
     bust("trades.json")
-    return jsonify({"status": "removed", "symbol": symbol,
-                    "warning": "Also close on Deribit UI!"})
+    return jsonify({
+        "status": "removed", 
+        "symbol": symbol,
+        "warning": "Also close on Deribit UI!"
+    })
+
 
 # ── /api/sync ─────────────────────────────────────────────────────────────
+
 @app.route("/api/sync")
 def api_sync():
     for f in ["trades.json","trade_history.json","signals.json","balance.json",
@@ -599,9 +716,11 @@ def api_sync():
         bust(f)
     return jsonify({"status": "synced"})
 
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
