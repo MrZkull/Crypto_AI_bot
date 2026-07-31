@@ -36,72 +36,6 @@
     "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"
   },
-  "XRPUSDT": {
-    "symbol": "XRPUSDT",
-    "signal": "SELL",
-    "entry": 1.07203141,
-    "stop": 1.0639,
-    "tp1": 1.0639,
-    "tp2": 1.0546,
-    "qty": 5030,
-    "qty_tp1": 2510,
-    "qty_tp2": 2520,
-    "risk_usd": 1793.43,
-    "balance_at_open": 107915.79,
-    "risk_mult": 1.6618833290210346,
-    "order_ids": {
-      "entry": "USDC-229804726856",
-      "stop_loss": "USDC-SLMB-30450",
-      "tp1": "USDC-229804731355",
-      "tp2": "USDC-229804731787"
-    },
-    "opened_at": "2026-07-31T09:52:04.573475+00:00",
-    "tp1_hit": true,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 51.7,
-    "score": 4,
-    "reasons": [
-      "Strong ADX 28",
-      "RSI not oversold (35)",
-      "EMA bearish",
-      "4h trend aligns (RSI 44)",
-      "4h trend established (20h)",
-      "F&G extreme countered (-1)"
-    ],
-    "tier": "\ud83c\udfdb Institutional Alts",
-    "exchange": "deribit_testnet"
-  },
-  "SOLUSDT": {
-    "symbol": "SOLUSDT",
-    "signal": "BUY",
-    "entry": 73.0325,
-    "stop": 72.277,
-    "tp1": 74.091,
-    "tp2": 75.3,
-    "qty": 1.9,
-    "qty_tp1": 0.9,
-    "qty_tp2": 1.0,
-    "risk_usd": 1.44,
-    "balance_at_open": 107946.8,
-    "risk_mult": 1.0,
-    "order_ids": {
-      "stop_loss": "USDC-SLMS-30451",
-      "tp1": "USDC-229851691040",
-      "tp2": "USDC-229851691369"
-    },
-    "opened_at": "2026-07-31T14:41:37.047474+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 60.0,
-    "score": 3,
-    "reasons": [
-      "Adopted untracked position via [3c]"
-    ],
-    "tier": "\u26a1 High-Liquidity L1s",
-    "exchange": "deribit_testnet"
-  },
   "LTCUSDT": {
     "symbol": "LTCUSDT",
     "signal": "SELL",
@@ -137,6 +71,43 @@
       "F&G extreme countered (-1)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "SOLUSDT": {
+    "symbol": "SOLUSDT",
+    "signal": "SELL",
+    "entry": 73.13051018,
+    "stop": 73.82,
+    "tp1": 72.165,
+    "tp2": 71.061,
+    "qty": 73.7,
+    "qty_tp1": 36.8,
+    "qty_tp2": 36.9,
+    "risk_usd": 1029.87,
+    "balance_at_open": 107915.97,
+    "risk_mult": 0.9543274606493244,
+    "order_ids": {
+      "entry": "USDC-229869541158",
+      "stop_loss": "USDC-SLMB-30453",
+      "tp1": "USDC-229869545568",
+      "tp2": "USDC-229869545925"
+    },
+    "opened_at": "2026-07-31T16:28:29.155141+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 46.2,
+    "score": 5,
+    "reasons": [
+      "Strong ADX 36",
+      "RSI not oversold (43)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 42)",
+      "4h trend established (20h)",
+      "F&G extreme countered (-1)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
   }
 }
