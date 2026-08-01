@@ -3,7 +3,7 @@
     "symbol": "LTCUSDT",
     "signal": "SELL",
     "entry": 44.81592346,
-    "stop": 45.33,
+    "stop": 44.81592346,
     "tp1": 44.09,
     "tp2": 43.27,
     "qty": 120.2,
@@ -14,12 +14,12 @@
     "risk_mult": 0.7838592840088725,
     "order_ids": {
       "entry": "USDC-229851801029",
-      "stop_loss": "USDC-SLMB-30452",
+      "stop_loss": "USDC-SLMB-30550",
       "tp1": "USDC-229851805648",
       "tp2": "USDC-229851806201"
     },
     "opened_at": "2026-07-31T14:42:18.904445+00:00",
-    "tp1_hit": false,
+    "tp1_hit": true,
     "tp2_hit": false,
     "closed": false,
     "confidence": 50.9,
@@ -34,6 +34,41 @@
       "F&G extreme countered (-1)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "BTCUSDT": {
+    "symbol": "BTCUSDT",
+    "signal": "SELL",
+    "entry": 62911.5,
+    "stop": 63002.0,
+    "tp1": 62785.0,
+    "tp2": 62640.5,
+    "qty": 0.0857,
+    "qty_tp1": 0.0428,
+    "qty_tp2": 0.0429,
+    "risk_usd": 2200.99,
+    "balance_at_open": 107891.6,
+    "risk_mult": 2.04,
+    "order_ids": {
+      "entry": "USDC-230110260896",
+      "stop_loss": "USDC-SLMB-30551",
+      "tp1": "USDC-230110264242",
+      "tp2": "USDC-230110264319"
+    },
+    "opened_at": "2026-08-01T16:16:41.407499+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 50.1,
+    "score": 5,
+    "reasons": [
+      "Strong ADX 39",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 38)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc51 Big Three",
     "exchange": "deribit_testnet"
   }
 }
