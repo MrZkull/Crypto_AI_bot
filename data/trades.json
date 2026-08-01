@@ -40,7 +40,7 @@
     "symbol": "BTCUSDT",
     "signal": "SELL",
     "entry": 62911.5,
-    "stop": 63002.0,
+    "stop": 62911.5,
     "tp1": 62785.0,
     "tp2": 62640.5,
     "qty": 0.0857,
@@ -51,12 +51,12 @@
     "risk_mult": 2.04,
     "order_ids": {
       "entry": "USDC-230110260896",
-      "stop_loss": "USDC-SLMB-30551",
+      "stop_loss": "USDC-SLMB-30560",
       "tp1": "USDC-230110264242",
       "tp2": "USDC-230110264319"
     },
     "opened_at": "2026-08-01T16:16:41.407499+00:00",
-    "tp1_hit": false,
+    "tp1_hit": true,
     "tp2_hit": false,
     "closed": false,
     "confidence": 50.1,
@@ -69,6 +69,36 @@
       "4h trend established (20h)"
     ],
     "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet"
+  },
+  "SOLUSDT": {
+    "symbol": "SOLUSDT",
+    "signal": "BUY",
+    "entry": 72.1188,
+    "stop": 71.599,
+    "tp1": 72.847,
+    "tp2": 73.679,
+    "qty": 34.8,
+    "qty_tp1": 17.3,
+    "qty_tp2": 17.5,
+    "risk_usd": 18.09,
+    "balance_at_open": 107904.32,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-30561",
+      "tp1": "USDC-230122452778",
+      "tp2": "USDC-230122453195"
+    },
+    "opened_at": "2026-08-01T17:27:56.009422+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
   }
 }
