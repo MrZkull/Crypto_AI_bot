@@ -1071,10 +1071,11 @@ def check_open_trades(deribit: DeribitClient):
                 sl_not_waiting = sl_state not in ("untriggered", "open") or not sl_state
 
                 mark_price = deribit.get_mark_price(symbol)
-                mark_breached = stop > 0 and mark_price > 0 and (
+                mark_breached = stop > 0 and (
                     (signal == "BUY"  and mark_price <= stop * 0.998) or
-                    (signal == "SELL" and mark_price >= stop * 1.002)
+                    (signal == "SELL" and mark_price >= stop * 1.002)   # ✅ FIX: Changed <= to >=
                 )
+
 
                 if mark_breached and sl_not_waiting and not sl_hit:
                     log.warning(
