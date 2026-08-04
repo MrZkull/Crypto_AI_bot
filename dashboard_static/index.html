@@ -1614,9 +1614,19 @@ function downloadCSVReport() {
 function openEmailModal() { document.getElementById('emailModal').classList.add('active'); }
 function closeEmailModal() { document.getElementById('emailModal').classList.remove('active'); }
 
+// Strict Email Regex for Frontend
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
 async function sendEmailReport() {
-  const email = document.getElementById('emailRecipient').value.trim();
-  if (!email || !email.includes('@')) { alert("Please enter a valid email address!"); return; }
+  const emailInput = document.getElementById('emailRecipient');
+  const email = emailInput.value.trim();
+
+  // 🛑 Block Invalid Formats immediately on the client side
+  if (!email || !EMAIL_REGEX.test(email)) {
+    alert("⚠️ Invalid email format!\nPlease enter a complete email address (e.g. name@domain.com).");
+    emailInput.focus();
+    return;
+  }
 
   const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
   let wins = 0, losses = 0, netPnL = 0, maxWin = 0, maxLoss = 0, grossP = 0, grossL = 0;
@@ -1645,6 +1655,7 @@ async function sendEmailReport() {
   };
 
   closeEmailModal();
+
   try {
     const r = await apiFetch('/api/send_report', { ok: false }, {
       method: 'POST',
@@ -1653,14 +1664,14 @@ async function sendEmailReport() {
     });
 
     if (r && r.ok) {
-      alert(`✅ Performance Report successfully shared with ${email}`);
-      fetchEmailTracker();
+      alert(`✅ Performance Report sent successfully to ${email}!`);
     } else {
-      alert(`⚠️ Email dispatch logged/failed: ${r?.message || 'Unknown error'}`);
-      fetchEmailTracker();
+      alert(`🚨 Email Sending Failed:\n${r?.message || 'Server error'}`);
     }
   } catch (e) {
-    alert(`🚨 Request failed: ${e.message}`);
+    alert(`🚨 Connection Error: ${e.message}`);
+  } finally {
+    fetchEmailTracker();
   }
 }
 
