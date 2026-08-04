@@ -281,6 +281,15 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
     </div>
   </div>
 
+  <!-- DERIBIT MAINTENANCE ALERT BANNER -->
+  <div id="deribitAlertBanner" style="display:none; background:var(--amber2); border:1px solid var(--amber); color:var(--amber); padding:12px 20px; border-radius:8px; margin:16px 24px 0; font-weight:600; align-items:center; gap:12px;">
+    <span style="font-size:18px">🚨</span> 
+    <div>
+      <div id="deribitAlertTitle" style="font-size:12px; font-weight:800;">DERIBIT EXCHANGE MAINTENANCE DETECTED</div>
+      <div id="deribitAlertText" style="font-size:11px; opacity:0.9;">Testnet servers are undergoing maintenance or returning 502 Bad Gateway. Bot scanning paused until recovery.</div>
+    </div>
+  </div>
+
   <!-- DASHBOARD PAGE -->
   <div class="page active" id="page-dashboard">
     <div class="stats-row">
@@ -407,7 +416,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
     </div>
     <div class="g2" style="align-items:start">
       <div class="panel">
-        <div class="panel-header"><span class="panel-title">Fear & Greed Index</span><span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">LIVE</span></div>
+        <div class="panel-header"><span class="panel-title">Fear &amp; Greed Index</span><span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">LIVE</span></div>
         <div class="fg-wrap">
           <div class="fg-num" id="fgNum" style="color:var(--red)">—</div>
           <div style="font-size:12px;color:var(--text2);margin-bottom:6px" id="fgLabel">Loading...</div>
@@ -488,8 +497,9 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
         <button class="fbtn buy-btn" onclick="setHistResult('win',this)">✓ Wins</button>
         <button class="fbtn sell-btn" onclick="setHistResult('loss',this)">✕ Losses</button>
 
-        <!-- EXPORT BUTTONS -->
+        <!-- EXPORT & EMAIL BUTTONS -->
         <div style="margin-left:auto;display:flex;gap:6px">
+          <button onclick="openEmailModal()" class="fbtn" style="background:var(--purple2);border-color:var(--purple);color:var(--purple);font-weight:600;">✉️ Send to Email</button>
           <button onclick="downloadCSVReport()" class="fbtn" style="background:var(--green2);border-color:var(--green);color:var(--green);font-weight:600;">📥 Export CSV</button>
           <button onclick="printPDFReport()" class="fbtn" style="background:var(--blue2);border-color:var(--blue);color:var(--blue);font-weight:600;">📄 Export PDF Report</button>
         </div>
@@ -499,6 +509,20 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
         <table class="htable">
           <thead><tr><th>Symbol</th><th>Tier</th><th>Dir</th><th>Entry</th><th>Close</th><th>PnL (USDT)</th><th>Result</th><th>Opened</th><th>Duration</th><th>Reason</th></tr></thead>
           <tbody id="histBody"><tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No closed trades yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SHARE RECIPIENT AUDIT TRACKER TABLE -->
+    <div class="panel" style="margin-top:16px;">
+      <div class="panel-header">
+        <span class="panel-title">Report Sharing Audit Tracker</span>
+        <button onclick="fetchEmailTracker()" class="fbtn">↻ Refresh Log</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="htable">
+          <thead><tr><th>Timestamp (UTC)</th><th>Recipient Email</th><th>Filter Scope</th><th>Total Trades</th><th>Net PnL</th><th>Status</th></tr></thead>
+          <tbody id="emailTrackerBody"><tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text3)">Loading audit log...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -789,6 +813,21 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
   </div>
 </div>
 
+<!-- EMAIL DISPATCH MODAL -->
+<div class="modal-overlay" id="emailModal">
+  <div class="modal-box" style="border-color:var(--purple);box-shadow:0 0 30px rgba(139,92,246,0.3)">
+    <div style="font-size:16px;font-weight:800;color:#fff;margin-bottom:8px;">✉️ Send Performance Report</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:15px;">Enter the recipient email address to send the filtered execution report.</div>
+    
+    <input type="email" id="emailRecipient" placeholder="e.g. investor@fund.com" style="width:100%;padding:10px;background:var(--bg3);border:1px solid var(--border);color:#fff;border-radius:6px;font-size:12px;margin-bottom:15px;outline:none;">
+    
+    <div style="display:flex;justify-content:flex-end;gap:10px;">
+      <button onclick="closeEmailModal()" class="fbtn">Cancel</button>
+      <button onclick="sendEmailReport()" class="fbtn" style="background:var(--purple);border:none;color:#fff;font-weight:700;">SEND REPORT</button>
+    </div>
+  </div>
+</div>
+
 <!-- HIDDEN PRINTABLE INSTITUTIONAL PDF REPORT TEMPLATE -->
 <div id="printableReport" class="printable-report">
   <div class="report-header">
@@ -803,12 +842,23 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
   </div>
 
   <div class="report-kpi-grid">
-    <div class="kpi-card"><div class="title">Total Trades</div><div class="value" id="repTotalTrades">0</div></div>
-    <div class="kpi-card"><div class="title">Win Rate</div><div class="value" id="repWinRate">0.0%</div></div>
+    <div class="kpi-card"><div class="title">Total Trades Taken</div><div class="value" id="repTotalTrades">0</div></div>
+    <div class="kpi-card"><div class="title">Win / Loss Split</div><div class="value" id="repWinLossSplit">0 W / 0 L</div></div>
     <div class="kpi-card"><div class="title">Net Realized PnL</div><div class="value" id="repNetPnL">$0.00</div></div>
     <div class="kpi-card"><div class="title">Profit Factor</div><div class="value" id="repProfitFactor">0.00</div></div>
     <div class="kpi-card"><div class="title">Largest Win</div><div class="value pos" id="repMaxWin">$0.00</div></div>
     <div class="kpi-card"><div class="title">Largest Loss</div><div class="value neg" id="repMaxLoss">$0.00</div></div>
+  </div>
+
+  <div style="display:grid; grid-template-columns: 1fr 2fr; gap:15px; margin-bottom:20px;">
+    <div style="border:1px solid #ccc; padding:10px; border-radius:4px; text-align:center;">
+      <div style="font-size:10px; font-weight:bold; margin-bottom:5px; color:#555;">WIN / LOSS DISTRIBUTION</div>
+      <div style="height:140px; position:relative;"><canvas id="repPieCanvas"></canvas></div>
+    </div>
+    <div style="border:1px solid #ccc; padding:10px; border-radius:4px; text-align:center;">
+      <div style="font-size:10px; font-weight:bold; margin-bottom:5px; color:#555;">CUMULATIVE PNL TRAJECTORY (USDT)</div>
+      <div style="height:140px; position:relative;"><canvas id="repEquityCanvas"></canvas></div>
+    </div>
   </div>
 
   <table class="report-table">
@@ -854,6 +904,7 @@ let allSignals = [], allTrades = {}, allHistory = [];
 let histRange = 'all', histResultFilter = 'all', sigFilter = 'all', confFilter = 0;
 let scanRunning = false, monTimer = null;
 let equityChartInst = null, calibrationChartInst = null;
+let reportPieChartInst = null, reportEquityChartInst = null;
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -867,7 +918,7 @@ function showPage(id) {
 
   if (id === 'quant') fetchAnalytics();
   if (id === 'modelhealth') renderCalibrationChart();
-  if (id === 'history') fetchHistory();
+  if (id === 'history') { fetchHistory(); fetchEmailTracker(); }
   if (id === 'performance') fetchHistory();
   if (id === 'market') fetchMarketData();
   if (id === 'trades') fetchOpenTrades();
@@ -912,6 +963,21 @@ async function fetchStatus() {
   document.getElementById('liveBadge').textContent = 'LIVE';
   document.getElementById('liveBadge').className   = 'live-badge';
   document.getElementById('lastUpd').textContent   = new Date().toLocaleTimeString();
+
+  // 🚨 DERIBIT MAINTENANCE / OUTAGE BANNER AUTO-SHOW
+  if (d.deribit_status && d.deribit_status.status !== 'ONLINE') {
+    const banner = document.getElementById('deribitAlertBanner');
+    const title  = document.getElementById('deribitAlertTitle');
+    const text   = document.getElementById('deribitAlertText');
+    if (banner && text) {
+      banner.style.display = 'flex';
+      title.textContent = `DERIBIT EXCHANGE ${d.deribit_status.status}`;
+      text.textContent  = d.deribit_status.msg;
+    }
+  } else {
+    const banner = document.getElementById('deribitAlertBanner');
+    if (banner) banner.style.display = 'none';
+  }
 
   const wr = d.win_rate || 0;
   document.getElementById('statWR').textContent   = wr ? wr + '%' : '—';
@@ -1417,17 +1483,22 @@ function renderCoinPerformance(realTrades) {
 function renderInstitutionalReport() {
   const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
   
-  let wins = 0, grossProfit = 0, grossLoss = 0, netPnL = 0;
+  let wins = 0, losses = 0, grossProfit = 0, grossLoss = 0, netPnL = 0;
   let maxWin = 0, maxLoss = 0;
+  const equityPoints = [];
+  let cumPnL = 0;
 
   data.forEach(t => {
     const pnl = parseFloat(t.pnl || 0);
     netPnL += pnl;
+    cumPnL += pnl;
+    equityPoints.push(cumPnL);
+
     if (pnl > 0) {
       wins++; grossProfit += pnl;
       if (pnl > maxWin) maxWin = pnl;
     } else if (pnl < 0) {
-      grossLoss += Math.abs(pnl);
+      losses++; grossLoss += Math.abs(pnl);
       if (pnl < maxLoss) maxLoss = pnl;
     }
   });
@@ -1437,7 +1508,7 @@ function renderInstitutionalReport() {
   const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : (grossProfit > 0 ? "99.9" : "0.00");
 
   document.getElementById('repTotalTrades').innerText = total;
-  document.getElementById('repWinRate').innerText = `${winRate}%`;
+  document.getElementById('repWinLossSplit').innerText = `${wins} W / ${losses} L (${winRate}%)`;
   document.getElementById('repNetPnL').innerText = `$${netPnL.toFixed(2)}`;
   document.getElementById('repNetPnL').className = `value ${netPnL >= 0 ? 'pos' : 'neg'}`;
   document.getElementById('repProfitFactor').innerText = profitFactor;
@@ -1449,7 +1520,6 @@ function renderInstitutionalReport() {
 
   const tbody = document.getElementById('reportTableBody');
   tbody.innerHTML = '';
-  
   data.forEach(t => {
     const pnl = parseFloat(t.pnl || 0);
     const row = document.createElement('tr');
@@ -1464,6 +1534,28 @@ function renderInstitutionalReport() {
       <td>${t.close_reason || 'Closed'}</td>
     `;
     tbody.appendChild(row);
+  });
+
+  const ctxPie = document.getElementById('repPieCanvas').getContext('2d');
+  if (reportPieChartInst) reportPieChartInst.destroy();
+  reportPieChartInst = new Chart(ctxPie, {
+    type: 'doughnut',
+    data: {
+      labels: ['Wins', 'Losses'],
+      datasets: [{ data: [wins, losses], backgroundColor: ['#10b981', '#f43f5e'] }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+  });
+
+  const ctxEq = document.getElementById('repEquityCanvas').getContext('2d');
+  if (reportEquityChartInst) reportEquityChartInst.destroy();
+  reportEquityChartInst = new Chart(ctxEq, {
+    type: 'line',
+    data: {
+      labels: data.map((_, i) => `#${i + 1}`),
+      datasets: [{ label: 'PnL (USDT)', data: equityPoints, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.1 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
   });
 }
 
@@ -1487,6 +1579,81 @@ function downloadCSVReport() {
   a.setAttribute('href', url);
   a.setAttribute('download', `CryptoBot_Institutional_Report_${new Date().toISOString().substring(0,10)}.csv`);
   a.click();
+}
+
+function openEmailModal() { document.getElementById('emailModal').classList.add('active'); }
+function closeEmailModal() { document.getElementById('emailModal').classList.remove('active'); }
+
+async function sendEmailReport() {
+  const email = document.getElementById('emailRecipient').value.trim();
+  if (!email || !email.includes('@')) { alert("Please enter a valid email address!"); return; }
+
+  const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
+  let wins = 0, losses = 0, netPnL = 0, maxWin = 0, maxLoss = 0, grossP = 0, grossL = 0;
+
+  data.forEach(t => {
+    const pnl = parseFloat(t.pnl || 0);
+    netPnL += pnl;
+    if (pnl > 0) { wins++; grossP += pnl; if (pnl > maxWin) maxWin = pnl; }
+    else if (pnl < 0) { losses++; grossL += Math.abs(pnl); if (pnl < maxLoss) maxLoss = pnl; }
+  });
+
+  const total = data.length;
+  const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) + '%' : "0.0%";
+  const profitFactor = grossL > 0 ? (grossP / grossL).toFixed(2) : "0.00";
+
+  const summary = {
+    total_trades: total, wins, losses, win_rate: winRate,
+    net_pnl: netPnL.toFixed(2), profit_factor: profitFactor,
+    max_win: maxWin.toFixed(2), max_loss: maxLoss.toFixed(2)
+  };
+
+  const payload = {
+    email,
+    scope: `Range: ${histRange.toUpperCase()} | Result: ${histResultFilter.toUpperCase()}`,
+    summary
+  };
+
+  closeEmailModal();
+  try {
+    const r = await apiFetch('/api/send_report', { ok: false }, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (r && r.ok) {
+      alert(`✅ Performance Report successfully shared with ${email}`);
+      fetchEmailTracker();
+    } else {
+      alert(`⚠️ Email dispatch logged/failed: ${r?.message || 'Unknown error'}`);
+      fetchEmailTracker();
+    }
+  } catch (e) {
+    alert(`🚨 Request failed: ${e.message}`);
+  }
+}
+
+async function fetchEmailTracker() {
+  const logs = await apiFetch('/api/email_tracker', []);
+  const tbody = document.getElementById('emailTrackerBody');
+  if (!tbody) return;
+
+  if (!logs.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text3)">No shared report logs recorded yet</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = logs.map(l => `
+    <tr>
+      <td style="color:var(--text3);">${l.timestamp}</td>
+      <td style="color:#fff; font-weight:600;">${l.recipient}</td>
+      <td style="color:var(--text2); font-size:10px;">${l.scope}</td>
+      <td>${l.total_trades}</td>
+      <td style="color:${parseFloat(l.net_pnl) >= 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">$${l.net_pnl}</td>
+      <td><span class="tag ${l.status.startsWith('SENT') ? 'win' : 'loss'}">${l.status}</span></td>
+    </tr>
+  `).join('');
 }
 
 async function fetchMarketData() {
@@ -1797,14 +1964,13 @@ async function runMonitorChecks() {
     const r = await fetch(API_BASE+'/api/status');
     const d = await r.json();
     sd('d-api','ok'); sv('v-api','Online','var(--green)'); checks.push('ok');
-  } catch(e) { sd('d-api','err'); sv('v-api','OFFLINE','var(--red)'); checks.push('err'); }
 
-  try {
-    const r = await fetch(API_BASE+'/api/balance');
-    const d = await r.json();
-    sd('d-conn', d.ok ? 'ok' : 'err'); sv('v-conn', d.ok ? 'Connected' : 'Error', d.ok ? 'var(--green)' : 'var(--red)');
-    checks.push(d.ok ? 'ok' : 'err');
-  } catch(e) { checks.push('err'); }
+    if (d.deribit_status && d.deribit_status.status === 'ONLINE') {
+      sd('d-conn', 'ok'); sv('v-conn', 'Connected', 'var(--green)'); checks.push('ok');
+    } else {
+      sd('d-conn', 'err'); sv('v-conn', d.deribit_status?.status || 'Error', 'var(--red)'); checks.push('err');
+    }
+  } catch(e) { sd('d-api','err'); sv('v-api','OFFLINE','var(--red)'); checks.push('err'); }
 
   updateOverallHealth(checks);
 }
