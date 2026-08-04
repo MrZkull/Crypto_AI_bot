@@ -191,6 +191,38 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
 .coin-perf-sym{font-family:var(--sans);font-size:12px;font-weight:700;color:#fff}
 .coin-perf-wr{font-size:14px;font-weight:800}
 .coin-perf-sub{font-size:9px;color:var(--text3)}
+
+/* 🏛️ INSTITUTIONAL PRINT TEMPLATE STYLES */
+.printable-report { display: none; }
+@media print {
+  body * { visibility: hidden; }
+  .printable-report, .printable-report * { visibility: visible; }
+  .printable-report {
+    display: block !important;
+    position: absolute; left: 0; top: 0; width: 100%;
+    color: #111; background: #fff !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    padding: 20px;
+  }
+  .report-header {
+    display: flex; justify-content: space-between; border-bottom: 2px solid #111;
+    padding-bottom: 12px; margin-bottom: 20px;
+  }
+  .report-header h1 { font-size: 20px; margin: 0; color: #111; font-weight: 700; }
+  .report-header .subtitle { font-size: 11px; color: #555; margin-top: 4px; }
+  .report-header .header-right { text-align: right; font-size: 10px; color: #333; }
+  .report-kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 20px; }
+  .kpi-card { border: 1px solid #ccc; padding: 10px; border-radius: 4px; text-align: center; background: #f9f9f9; }
+  .kpi-card .title { font-size: 9px; text-transform: uppercase; color: #666; font-weight: 600; }
+  .kpi-card .value { font-size: 13px; font-weight: 700; margin-top: 4px; color: #111; }
+  .kpi-card .value.pos { color: #00873d; }
+  .kpi-card .value.neg { color: #d91424; }
+  .report-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 10px; }
+  .report-table th, .report-table td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  .report-table th { background-color: #f2f2f2; font-weight: 700; text-transform: uppercase; }
+  .report-table tr:nth-child(even) { background-color: #fcfcfc; }
+  .report-footer { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 10px; text-align: center; font-size: 9px; color: #777; }
+}
 </style>
 </head>
 
@@ -248,7 +280,8 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
       <button class="btn-kill" onclick="openKillModal()">🚨 Kill Switch</button>
     </div>
   </div>
-    <!-- DASHBOARD PAGE -->
+
+  <!-- DASHBOARD PAGE -->
   <div class="page active" id="page-dashboard">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Testnet Balance</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub">USDT(Deribit Live Balance)</div></div>
@@ -417,7 +450,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
     </div>
   </div>
 
-  <!-- HISTORY PAGE -->
+  <!-- HISTORY PAGE & INSTITUTIONAL REPORT ENGINE -->
   <div class="page" id="page-history">
     <div class="stats-row" style="grid-template-columns:repeat(5,1fr)">
       <div class="stat-card c-purple"><div class="stat-label">Total Trades</div><div class="stat-value purple" id="h-total">0</div><div class="stat-sub">filtered range</div></div>
@@ -426,12 +459,14 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
       <div class="stat-card c-cyan"><div class="stat-label">Win Rate</div><div class="stat-value cyan" id="h-wr">—</div><div class="stat-sub">closed trades</div></div>
       <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="h-pnl">+0.0000</div><div class="stat-sub">USDT net</div></div>
     </div>
+    
     <div class="panel">
       <div class="panel-header">
-        <span class="panel-title">Trade History</span>
+        <span class="panel-title">Trade History &amp; Institutional Analytics</span>
         <span class="panel-badge" id="histBadge">0 trades</span>
       </div>
-      <!-- DATE & RESULT FILTER BAR -->
+
+      <!-- FILTER & EXPORT TOOLBAR -->
       <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;background:var(--bg3)">
         <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-right:2px">Range:</span>
         <button class="fbtn active" onclick="setHistRange('all',this)">All Time</button>
@@ -452,6 +487,12 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
         <button class="fbtn active" onclick="setHistResult('all',this)">All</button>
         <button class="fbtn buy-btn" onclick="setHistResult('win',this)">✓ Wins</button>
         <button class="fbtn sell-btn" onclick="setHistResult('loss',this)">✕ Losses</button>
+
+        <!-- EXPORT BUTTONS -->
+        <div style="margin-left:auto;display:flex;gap:6px">
+          <button onclick="downloadCSVReport()" class="fbtn" style="background:var(--green2);border-color:var(--green);color:var(--green);font-weight:600;">📥 Export CSV</button>
+          <button onclick="printPDFReport()" class="fbtn" style="background:var(--blue2);border-color:var(--blue);color:var(--blue);font-weight:600;">📄 Export PDF Report</button>
+        </div>
       </div>
 
       <div style="overflow-x:auto">
@@ -462,7 +503,8 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
       </div>
     </div>
   </div>
-    <!-- PERFORMANCE PAGE -->
+
+  <!-- PERFORMANCE PAGE -->
   <div class="page" id="page-performance">
     <div class="stats-row" style="grid-template-columns:repeat(4,1fr)">
       <div class="stat-card c-green"><div class="stat-label">Best Trade</div><div class="stat-value green" id="p-best">—</div><div class="stat-sub" id="p-best-sym">USDT profit</div></div>
@@ -505,7 +547,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
       <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">-$142.50</div><div class="stat-sub">Peak to Trough</div></div>
     </div>
     <div class="panel">
-      <div class="panel-header"><span class="panel-title">Cumulative Equity Curve & Peak Drawdown</span></div>
+      <div class="panel-header"><span class="panel-title">Cumulative Equity Curve &amp; Peak Drawdown</span></div>
       <div class="panel-body">
         <div style="height:260px"><canvas id="equityChart"></canvas></div>
       </div>
@@ -619,7 +661,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
             </div>
           </div>
           <div>
-            <div style="font-size:10px;color:var(--purple);margin-bottom:8px;letter-spacing:1px">🤖 AI & MOMENTUM</div>
+            <div style="font-size:10px;color:var(--purple);margin-bottom:8px;letter-spacing:1px">🤖 AI &amp; MOMENTUM</div>
             <div style="display:flex;flex-direction:column;gap:4px">
               <div class="bal-row">FET</div><div class="bal-row">RENDER</div><div class="bal-row">ADA</div>
             </div>
@@ -746,6 +788,50 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
     </div>
   </div>
 </div>
+
+<!-- HIDDEN PRINTABLE INSTITUTIONAL PDF REPORT TEMPLATE -->
+<div id="printableReport" class="printable-report">
+  <div class="report-header">
+    <div>
+      <h1>CryptoBot AI — Institutional Performance Report</h1>
+      <p class="subtitle">Quantitative Execution &amp; Risk Analytics Audit</p>
+    </div>
+    <div class="header-right">
+      <p><strong>Generated:</strong> <span id="reportGenTime">—</span></p>
+      <p><strong>Scope:</strong> <span id="reportScope">—</span></p>
+    </div>
+  </div>
+
+  <div class="report-kpi-grid">
+    <div class="kpi-card"><div class="title">Total Trades</div><div class="value" id="repTotalTrades">0</div></div>
+    <div class="kpi-card"><div class="title">Win Rate</div><div class="value" id="repWinRate">0.0%</div></div>
+    <div class="kpi-card"><div class="title">Net Realized PnL</div><div class="value" id="repNetPnL">$0.00</div></div>
+    <div class="kpi-card"><div class="title">Profit Factor</div><div class="value" id="repProfitFactor">0.00</div></div>
+    <div class="kpi-card"><div class="title">Largest Win</div><div class="value pos" id="repMaxWin">$0.00</div></div>
+    <div class="kpi-card"><div class="title">Largest Loss</div><div class="value neg" id="repMaxLoss">$0.00</div></div>
+  </div>
+
+  <table class="report-table">
+    <thead>
+      <tr>
+        <th>Date (UTC)</th>
+        <th>Symbol</th>
+        <th>Dir</th>
+        <th>Entry</th>
+        <th>Close</th>
+        <th>Qty</th>
+        <th>PnL (USDT)</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody id="reportTableBody"></tbody>
+  </table>
+
+  <div class="report-footer">
+    <p>Confidential — CryptoBot AI Internal Execution Record. Generated via Client-Side Analytics Engine.</p>
+  </div>
+</div>
+
 <script>
 // ═══════════════════════════════════════════════════════
 // STATE & UTILS
@@ -828,7 +914,7 @@ async function fetchStatus() {
   document.getElementById('lastUpd').textContent   = new Date().toLocaleTimeString();
 
   const wr = d.win_rate || 0;
-  document.getElementById('statWR').textContent  = wr ? wr + '%' : '—';
+  document.getElementById('statWR').textContent   = wr ? wr + '%' : '—';
   document.getElementById('statWR').className    = 'stat-value ' + (wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red');
   document.getElementById('statWRSub').textContent = (d.wins||0) + ' W / ' + (d.losses||0) + ' L';
   document.getElementById('statOpen').textContent  = d.open_trades || 0;
@@ -952,7 +1038,6 @@ function renderTradeCard(t) {
   </div>`;
 }
 
-// ── FIXED PROGRESS BAR: RESTORED WARNING & STAGGERED ZERO-OVERLAP LABELS ──
 function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const entry  = parseFloat(t.entry      || 0);
   const sl     = parseFloat(t.stop       || 0);
@@ -961,7 +1046,6 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const live   = parseFloat(t.live_price || 0);
   const tp1Hit = t.tp1_hit || false;
 
-  // RESTORED: Warn when SL or Targets are missing/zero (ATOM, SUI untracked trades)
   if (!entry || !sl || !tp1 || !tp2 || sl === 0) {
     return `<div style="padding:6px 0">
       <div style="height:6px;background:rgba(255,255,255,0.07);border-radius:3px"></div>
@@ -974,8 +1058,8 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
 
   let rawLow, rawHigh;
   if (isBuy) {
-    rawLow  = sl   - riskDist  * 2;          // 2R below SL
-    rawHigh = tp2  + rewardDist * 0.3;       // small padding above TP2
+    rawLow  = sl   - riskDist  * 2;
+    rawHigh = tp2  + rewardDist * 0.3;
   } else {
     rawLow  = tp2  - rewardDist * 0.3;
     rawHigh = sl   + riskDist  * 2;
@@ -1023,36 +1107,25 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   </div>
 
   <div style="position:relative;height:10px;border-radius:5px;background:rgba(255,255,255,0.05);margin-bottom:6px;overflow:visible">
-
-    <!-- Zone backgrounds -->
     <div style="position:absolute;left:0;top:0;height:100%;width:${slWidth.toFixed(2)}%;background:rgba(244,63,94,0.15);border-radius:5px 0 0 5px"></div>
     <div style="position:absolute;left:${slWidth.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,riskWidth).toFixed(2)}%;background:rgba(245,158,11,0.15)"></div>
     <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,rewardWidth).toFixed(2)}%;background:rgba(59,130,246,0.2)"></div>
     <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,targetWidth).toFixed(2)}%;background:rgba(16,185,129,0.2);border-radius:0 5px 5px 0"></div>
 
-    <!-- Level markers -->
     <div style="position:absolute;left:${slPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(244,63,94,0.7);border-radius:1px"></div>
     <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(148,163,184,0.5);border-radius:1px"></div>
     <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(59,130,246,0.6);border-radius:1px"></div>
     <div style="position:absolute;left:${tp2Pct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:rgba(16,185,129,0.7);border-radius:1px"></div>
 
-    <!-- Live price dot -->
     <div style="
-      position:absolute;
-      top:50%;
-      left:${dotPct.toFixed(2)}%;
-      transform:translate(-50%,-50%);
-      width:14px;height:14px;
-      border-radius:50%;
-      background:${dotColor};
-      border:2px solid var(--bg);
-      box-shadow:0 0 8px ${dotColor}, 0 0 16px ${dotColor}40;
-      z-index:10;
+      position:absolute; top:50%; left:${dotPct.toFixed(2)}%;
+      transform:translate(-50%,-50%); width:14px;height:14px;
+      border-radius:50%; background:${dotColor}; border:2px solid var(--bg);
+      box-shadow:0 0 8px ${dotColor}, 0 0 16px ${dotColor}40; z-index:10;
       transition:left 0.8s ease, background 0.3s ease;
     "></div>
   </div>
 
-  <!-- Level labels (STAGGERED ROWS PREVENT OVERLAP) -->
   <div style="position:relative;height:26px;margin-bottom:2px">
     <span style="position:absolute;left:${slPct.toFixed(2)}%;transform:translateX(-50%);top:0;font-size:9px;color:var(--red);white-space:nowrap">SL</span>
     <span style="position:absolute;left:${entryPct.toFixed(2)}%;transform:translateX(-50%);top:13px;font-size:9px;color:var(--text3);white-space:nowrap">Entry</span>
@@ -1340,7 +1413,82 @@ function renderCoinPerformance(realTrades) {
   }).join('');
 }
 
-// ── BULLETPROOF MARKET DATA FETCH (DIRECT WITH SERVER PROXY FALLBACK) ──
+// ════════════ INSTITUTIONAL REPORT ENGINE (0% RENDER RAM COST) ════════════
+function renderInstitutionalReport() {
+  const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
+  
+  let wins = 0, grossProfit = 0, grossLoss = 0, netPnL = 0;
+  let maxWin = 0, maxLoss = 0;
+
+  data.forEach(t => {
+    const pnl = parseFloat(t.pnl || 0);
+    netPnL += pnl;
+    if (pnl > 0) {
+      wins++; grossProfit += pnl;
+      if (pnl > maxWin) maxWin = pnl;
+    } else if (pnl < 0) {
+      grossLoss += Math.abs(pnl);
+      if (pnl < maxLoss) maxLoss = pnl;
+    }
+  });
+
+  const total = data.length;
+  const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) : "0.0";
+  const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : (grossProfit > 0 ? "99.9" : "0.00");
+
+  document.getElementById('repTotalTrades').innerText = total;
+  document.getElementById('repWinRate').innerText = `${winRate}%`;
+  document.getElementById('repNetPnL').innerText = `$${netPnL.toFixed(2)}`;
+  document.getElementById('repNetPnL').className = `value ${netPnL >= 0 ? 'pos' : 'neg'}`;
+  document.getElementById('repProfitFactor').innerText = profitFactor;
+  document.getElementById('repMaxWin').innerText = `$${maxWin.toFixed(2)}`;
+  document.getElementById('repMaxLoss').innerText = `$${maxLoss.toFixed(2)}`;
+
+  document.getElementById('reportGenTime').innerText = new Date().toUTCString();
+  document.getElementById('reportScope').innerText = `Range: ${histRange.toUpperCase()} | Result: ${histResultFilter.toUpperCase()}`;
+
+  const tbody = document.getElementById('reportTableBody');
+  tbody.innerHTML = '';
+  
+  data.forEach(t => {
+    const pnl = parseFloat(t.pnl || 0);
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${(t.closed_at || t.opened_at || '').substring(0, 16).replace('T', ' ')}</td>
+      <td><strong>${t.symbol}</strong></td>
+      <td style="color:${t.signal === 'BUY' ? '#00873d' : '#d91424'}; font-weight:bold;">${t.signal || '—'}</td>
+      <td>${parseFloat(t.entry || 0).toFixed(4)}</td>
+      <td>${parseFloat(t.close_price || t.entry || 0).toFixed(4)}</td>
+      <td>${t.qty || 0}</td>
+      <td style="color:${pnl >= 0 ? '#00873d' : '#d91424'}; font-weight:bold;">${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)}</td>
+      <td>${t.close_reason || 'Closed'}</td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+function printPDFReport() {
+  renderInstitutionalReport();
+  window.print();
+}
+
+function downloadCSVReport() {
+  const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
+  if (!data.length) { alert("No trades match your active filter!"); return; }
+
+  let csv = 'Date_UTC,Symbol,Signal,Entry,Close,Qty,PnL_USDT,Close_Reason\n';
+  data.forEach(t => {
+    csv += `"${t.closed_at || t.opened_at || ''}","${t.symbol}","${t.signal || ''}",${t.entry || 0},${t.close_price || t.entry || 0},${t.qty || 0},${t.pnl || 0},"${t.close_reason || ''}"\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.setAttribute('href', url);
+  a.setAttribute('download', `CryptoBot_Institutional_Report_${new Date().toISOString().substring(0,10)}.csv`);
+  a.click();
+}
+
 async function fetchMarketData() {
   try {
     let fg = await fetch('https://api.alternative.me/fng/?limit=1').then(r=>r.json()).catch(()=>null);
@@ -1401,7 +1549,6 @@ async function fetchMarketData() {
   } catch(e) { console.warn('Market fetch error:', e); }
 }
 
-// ── BULLETPROOF BTC ATR FETCH (DIRECT WITH SERVER PROXY FALLBACK) ──────
 async function fetchBtcAtr() {
   try {
     let atr, pctV, price, chg;
@@ -1439,13 +1586,13 @@ async function fetchBtcAtr() {
       const volEl  = document.getElementById('volBanner');
       const volTxt = document.getElementById('volText');
       if (pctV > 4) {
-        volEl.className  = 'vol-banner high';
+        volEl.className   = 'vol-banner high';
         volTxt.textContent = `🚨 EXTREME VOLATILITY — BTC ATR ${pctV.toFixed(2)}% — position size reduced to 25%`;
       } else if (pctV > 2) {
-        volEl.className  = 'vol-banner high';
+        volEl.className   = 'vol-banner high';
         volTxt.textContent = `⚠️ HIGH VOLATILITY — BTC ATR ${pctV.toFixed(2)}% — position size reduced to 50%`;
       } else {
-        volEl.className  = 'vol-banner normal';
+        volEl.className   = 'vol-banner normal';
         volTxt.textContent = `✓ Normal volatility — BTC ATR ${pctV.toFixed(2)}%`;
       }
     }
@@ -1595,9 +1742,7 @@ function updateCoinChips() {
   });
 }
 
-// ═══════════════════════════════════════════════════════
-// SYSTEM MONITOR DIAGNOSTICS
-// ═══════════════════════════════════════════════════════
+// ════════════ SYSTEM MONITOR DIAGNOSTICS ════════════
 let monEvents = [];
 function sd(id, s) { const el=document.getElementById(id); if(el) el.className='mon-dot '+(s||'idle'); }
 function sv(id, v, color) { const el=document.getElementById(id); if(el){el.textContent=v;if(color)el.style.color=color;} }
@@ -1639,7 +1784,7 @@ function updateOverallHealth(checks) {
   if (ring) {
     if (err>0)       {ring.className='mon-ring err'; ring.textContent='✗'; sv('monTitle',err+' Critical Issue'+(err>1?'s':'')+' Detected');}
     else if (warn>0) {ring.className='mon-ring warn';ring.textContent='!'; sv('monTitle',warn+' Warning'+(warn>1?'s':''));}
-    else             {ring.className='mon-ring ok';  ring.textContent='✓'; sv('monTitle','All Systems Operational');}
+    else             {ring.className='mon-ring ok';   ring.textContent='✓'; sv('monTitle','All Systems Operational');}
   }
 }
 
