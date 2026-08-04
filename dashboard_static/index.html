@@ -1536,6 +1536,7 @@ function renderInstitutionalReport() {
     tbody.appendChild(row);
   });
 
+  // 🎯 FIX 1: animation: false prevents Chart.js from rendering blank frame 0
   const ctxPie = document.getElementById('repPieCanvas').getContext('2d');
   if (reportPieChartInst) reportPieChartInst.destroy();
   reportPieChartInst = new Chart(ctxPie, {
@@ -1544,7 +1545,12 @@ function renderInstitutionalReport() {
       labels: ['Wins', 'Losses'],
       datasets: [{ data: [wins, losses], backgroundColor: ['#10b981', '#f43f5e'] }]
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+    options: { 
+      animation: false, 
+      responsive: true, 
+      maintainAspectRatio: false, 
+      plugins: { legend: { position: 'bottom' } } 
+    }
   });
 
   const ctxEq = document.getElementById('repEquityCanvas').getContext('2d');
@@ -1555,13 +1561,37 @@ function renderInstitutionalReport() {
       labels: data.map((_, i) => `#${i + 1}`),
       datasets: [{ label: 'PnL (USDT)', data: equityPoints, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.1 }]
     },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    options: { 
+      animation: false, 
+      responsive: true, 
+      maintainAspectRatio: false, 
+      plugins: { legend: { display: false } } 
+    }
   });
 }
 
 function printPDFReport() {
+  const rep = document.getElementById('printableReport');
+  
+  // 🎯 FIX 2: Render off-screen first so Chart.js can measure canvas dimensions
+  rep.style.display = 'block';
+  rep.style.position = 'absolute';
+  rep.style.top = '-9999px';
+  rep.style.left = '-9999px';
+  rep.style.width = '800px';
+
   renderInstitutionalReport();
-  window.print();
+
+  // Short delay to ensure browser canvas buffer is populated
+  setTimeout(() => {
+    rep.style.display = '';
+    rep.style.position = '';
+    rep.style.top = '';
+    rep.style.left = '';
+    rep.style.width = '';
+    
+    window.print();
+  }, 150);
 }
 
 function downloadCSVReport() {
