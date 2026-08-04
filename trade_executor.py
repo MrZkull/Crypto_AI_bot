@@ -31,7 +31,7 @@ MAX_OPEN_TRADES    = 10  # MAINNET: 4 | TESTNET: 10
 # --- V2 PRO CONSTANTS ---
 COOLDOWN_FILE      = "cooldown.json"
 RELIABILITY_FILE   = "reliability.json"
-COOLDOWN_HOURS     = 2
+COOLDOWN_HOURS      = 2
 GHOST_STRIKE_LIMIT = 3
 MAX_DAILY_TRADES    = 20  # MAINNET: 8 | TESTNET: 40
 FUNDING_WARN_PCT   = 0.05
@@ -39,7 +39,7 @@ FUNDING_SKIP_PCT   = 0.10
 # ------------------------
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
-    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()])
+                    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()])
 log = logging.getLogger(__name__)
 
 
@@ -58,7 +58,7 @@ def save_json(path, data):
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = str(dest) + ".tmp"
-            with open(tmp,"w") as f: json.dump(data, f, indent=2, default=str)
+            with open(tmp, "w") as f: json.dump(data, f, indent=2, default=str)
             os.replace(tmp, str(dest))
         except Exception as e: log.error(f"save_json {dest}: {e}")
 
@@ -144,8 +144,8 @@ def _is_unreliable(symbol: str) -> bool:
     return False
 
 def _get_daily_trade_count() -> int:
-    today  = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    hist   = load_history()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    hist  = load_history()
     return sum(1 for h in hist if h.get("opened_at", "")[:10] == today and h.get("close_reason") != "Ghost — PnL unrecoverable")
 
 def _check_funding_rate(deribit, symbol: str, signal: str) -> bool:
@@ -293,7 +293,7 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
 def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame) -> pd.DataFrame:
     df = df15.copy()
 
-    if btc_df15 is not None and not btc_df15.empty and "close" not in btc_df15.columns:
+    if btc_df15 is not None and not btc_df15.empty and "close" in btc_df15.columns:
         btc_slim = (btc_df15[["open_time","close"]].rename(columns={"close":"btc_close"})
                     .assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time"))
         df_work = df.assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time")
@@ -393,7 +393,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                     return None
                 else:
                     score -= 1
-                    reasons.append(f"4h counter-trend (-1)")
+                    reasons.append("4h counter-trend (-1)")
 
             for i in range(1, min(6, len(df4h))):
                 r_prev = df4h.iloc[-(i+1)]
@@ -471,7 +471,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         vol_prev = float(df15["volume"].iloc[-2])
         vol_ma20 = float(df15["volume"].rolling(20).mean().iloc[-2])
         if vol_ma20 <= 0 or vol_prev <= 0:
-            log.info(f"    Volume data missing — skipping volume gate")
+            log.info("    Volume data missing — skipping volume gate")
         else:
             if vol_prev < vol_ma20 * 0.5:
                 log.info(f"    [FILTER:VOL] Low volume ({vol_prev:.0f} < {vol_ma20:.0f}) — skip {symbol}")
@@ -653,11 +653,11 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         filled  = float(eo.get("filled_amount", 0) or 0)
         
         if o_state == "cancelled" and filled == 0:
-            log.warning(f"  Market cancelled (thin book) — skip")
+            log.warning("  Market cancelled (thin book) — skip")
             return False
             
         if o_state == "open" and filled == 0:
-            log.warning(f"  Market order stuck as 'open' (zero liquidity) — cancelling & skipping")
+            log.warning("  Market order stuck as 'open' (zero liquidity) — cancelling & skipping")
             try: deribit.cancel_order(order_ids["entry"])
             except Exception: pass
             return False
@@ -794,7 +794,7 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
             err = str(e).lower()
             log.warning(f"  SL re-place {symbol}: {e}")
             if any(x in err for x in ("trigger_price_too_low", "trigger_price_too_high",
-                                       "10035", "10036")):
+                                      "10035", "10036")):
                 log.warning(f"  🚨 {symbol}: SL trigger already passed — MARKET CLOSE")
                 try:
                     _cancel_all_open_orders_for_symbol(deribit, symbol)
@@ -959,7 +959,7 @@ def check_open_trades(deribit: DeribitClient):
                         "qty":         float(trade.get("qty_tp1", 0)),
                         "closed_at":   datetime.now(timezone.utc).isoformat(),
                         "close_reason": f"TP1 hit [{method}]",
-                        "partial":      True,
+                        "partial":     True,
                     })
 
                     if oids.get("stop_loss") and float(trade.get("qty_tp2", 0)) > 0:
@@ -1060,9 +1060,20 @@ def check_open_trades(deribit: DeribitClient):
 
                 if not sl_hit and sl_state == "not_found":
                     try:
-                        already_flat = abs(deribit.get_position_size(symbol)) <= 0.01
+                        real_pos_size = abs(deribit.get_position_size(symbol))
+                        already_flat  = real_pos_size <= 0.01
+
+                        # 🔄 QUANTITY SYNC FIX: Update local trades record if position size changed on exchange
+                        if not already_flat:
+                            recorded_qty = float(trade.get("qty", 0))
+                            if abs(recorded_qty - real_pos_size) > 0.0001:
+                                log.info(f"  🔄 {symbol}: Quantity desync detected! Updating trades.json ({recorded_qty} -> {real_pos_size})")
+                                trade["qty"]     = real_pos_size
+                                trade["total_q"] = real_pos_size
+                                save_trades(trades)
                     except Exception:
                         already_flat = False
+
                     if already_flat:
                         log.info(f"  ✅ {symbol}: SL order not_found but position already flat — normal SL fill")
                         sl_hit = True
@@ -1070,12 +1081,12 @@ def check_open_trades(deribit: DeribitClient):
                 sl_breached = stop > 0 and ((signal == "BUY" and live <= stop * 0.999) or (signal == "SELL" and live >= stop * 1.001))
                 sl_not_waiting = sl_state not in ("untriggered", "open") or not sl_state
 
+                # 🎯 MARK-PRICE BREACH CALCULATION (>= for SHORT)
                 mark_price = deribit.get_mark_price(symbol)
                 mark_breached = stop > 0 and (
                     (signal == "BUY"  and mark_price <= stop * 0.998) or
-                    (signal == "SELL" and mark_price >= stop * 1.002)   # ✅ FIX: Changed <= to >=
+                    (signal == "SELL" and mark_price >= stop * 1.002)
                 )
-
 
                 if mark_breached and sl_not_waiting and not sl_hit:
                     log.warning(
