@@ -443,24 +443,67 @@ def api_fng():
 
 # ── /api/send_report & /api/email_tracker ────────────────────────────────
 
+import re
+
+EMAIL_REGEX = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+
+def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
+    """Logs email dispatch attempts into email_tracker.json across local and data paths."""
+    bust(EMAIL_TRACKER_FILE)
+    logs = get(EMAIL_TRACKER_FILE, [])
+    log_entry = {
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "recipient": recipient,
+        "scope": scope,
+        "total_trades": summary.get('total_trades', 0),
+        "net_pnl": summary.get('net_pnl', 0),
+        "status": status
+    }
+    logs.append(log_entry)
+
+    for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(logs, indent=2))
+        except Exception as e:
+            log.debug(f"Failed to write email tracker log to {p}: {e}")
+
+# ── /api/send_report & /api/email_tracker
 @app.route("/api/send_report", methods=["POST"])
 def api_send_report():
     data = request.get_json() or {}
     recipient = data.get("email", "").strip()
     scope = data.get("scope", "Range: ALL | Result: ALL")
     summary = data.get("summary", {})
-    
-    if not recipient or "@" not in recipient:
-        return jsonify({"ok": False, "error": "Valid email address required"}), 400
+
+    # 1. Strict Email Format Check
+    if not recipient or not re.match(EMAIL_REGEX, recipient):
+        return jsonify({
+            "ok": False,
+            "error": "INVALID_FORMAT",
+            "message": "Invalid email address format. Please enter a valid email address (e.g., user@domain.com)."
+        }), 400
 
     smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     smtp_port   = int(os.getenv("SMTP_PORT", 587))
-    smtp_user   = os.getenv("SMTP_USER", "")
-    smtp_pass   = os.getenv("SMTP_PASS", "")
+    smtp_user   = os.getenv("SMTP_USER", "").strip()
+    smtp_pass   = os.getenv("SMTP_PASS", "").strip()
 
-    email_sent = False
-    error_msg  = ""
+    # 2. Check Render Environment Variables
+    if not smtp_user or not smtp_pass:
+        error_msg = "SMTP_USER and SMTP_PASS environment variables are not configured in Render."
+        log.warning(f"Email send aborted for {recipient}: {error_msg}")
+        
+        _log_email_attempt(recipient, scope, summary, "FAILED: Missing Render SMTP Credentials")
+        
+        return jsonify({
+            "ok": False,
+            "error": "SMTP_NOT_CONFIGURED",
+            "message": "Email delivery failed: Server SMTP credentials are missing in Render environment settings."
+        }), 500
 
+    # 3. Real SMTP Email Dispatch
     html_content = f"""
     <html>
     <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 20px; color: #333;">
@@ -495,57 +538,41 @@ def api_send_report():
     </html>
     """
 
-    if smtp_user and smtp_pass:
-        try:
-            import smtplib
-            from email.mime.text import MIMEText
-            from email.mime.multipart import MIMEMultipart
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
 
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-            msg["From"]    = smtp_user
-            msg["To"]      = recipient
-            msg.attach(MIMEText(html_content, "html"))
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        msg["From"]    = smtp_user
+        msg["To"]      = recipient
+        msg.attach(MIMEText(html_content, "html"))
 
-            with smtplib.SMTP(smtp_server, smtp_port) as server:
-                server.starttls()
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, recipient, msg.as_string())
-            
-            email_sent = True
-            log.info(f"Report emailed successfully to {recipient}")
-        except Exception as e:
-            error_msg = str(e)
-            log.error(f"Failed to send email to {recipient}: {e}")
-    else:
-        email_sent = True
-        error_msg = "Logged (SMTP_USER / SMTP_PASS not configured in Render env)"
-        log.info(f"Simulated email dispatch to {recipient}")
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, recipient, msg.as_string())
 
-    bust(EMAIL_TRACKER_FILE)
-    logs = get(EMAIL_TRACKER_FILE, [])
-    log_entry = {
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "recipient": recipient,
-        "scope": scope,
-        "total_trades": summary.get('total_trades', 0),
-        "net_pnl": summary.get('net_pnl', 0),
-        "status": "SENT" if email_sent and not error_msg else f"LOGGED: {error_msg}" if email_sent else f"FAILED: {error_msg}"
-    }
-    logs.append(log_entry)
+        log.info(f"Report emailed successfully to {recipient}")
+        _log_email_attempt(recipient, scope, summary, "SENT")
 
-    for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(logs, indent=2))
-        except Exception:
-            pass
+        return jsonify({
+            "ok": True,
+            "recipient": recipient,
+            "message": f"Report successfully dispatched to {recipient}"
+        })
 
-    return jsonify({
-        "ok": email_sent,
-        "recipient": recipient,
-        "message": f"Report shared with {recipient}" if email_sent else f"Failed: {error_msg}"
-    })
+    except Exception as e:
+        error_msg = str(e)
+        log.error(f"Failed to email report to {recipient}: {error_msg}")
+        _log_email_attempt(recipient, scope, summary, f"FAILED: {error_msg}")
+
+        return jsonify({
+            "ok": False,
+            "error": "DISPATCH_FAILED",
+            "message": f"SMTP Dispatch Error: {error_msg}"
+        }), 500
 
 
 @app.route("/api/email_tracker")
