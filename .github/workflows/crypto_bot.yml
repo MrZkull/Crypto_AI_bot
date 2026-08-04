@@ -29,8 +29,10 @@ jobs:
           token: ${{ secrets.GH_PAT_TOKEN }}
 
       - name: Download AI Model
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
         run: |
-          wget -q -O pro_crypto_ai_model.pkl "https://github.com/MrZkull/Crypto_AI_bot/releases/download/v2.0/pro_crypto_ai_model.pkl"
+          gh release download v2.0 -p "pro_crypto_ai_model.pkl" -O pro_crypto_ai_model.pkl
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -123,3 +125,4 @@ jobs:
 
           git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
           git push origin main
+          
