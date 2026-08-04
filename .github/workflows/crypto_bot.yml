@@ -11,9 +11,10 @@ on:
         default: 'scan'
         type: choice
         options: [scan, diagnostic]
-  #workflow_run:
-    #workflows: ["CryptoBot AI — Trading Scanner"]
-    #types: [completed]
+
+# 🔐 Grants full write permissions required for Private Repositories
+permissions:
+  contents: write
 
 jobs:
   run-bot:
@@ -52,21 +53,6 @@ jobs:
           echo "DERIBIT_CLIENT_ID=${{ secrets.DERIBIT_CLIENT_ID }}"           >> .env
           echo "DERIBIT_CLIENT_SECRET=${{ secrets.DERIBIT_CLIENT_SECRET }}"   >> .env
 
-      # REMOVED 2026-07-15: "Restore state files" (actions/cache@v4) step.
-      #
-      # Root cause of trades.json intermittently reverting to {} / positions going
-      # untracked: this step's cache `key` used `github.run_id`, which is unique
-      # per run and therefore NEVER hits on the primary key — it always fell
-      # through to the `restore-keys` prefix match, i.e. a lottery over whatever
-      # old cache entries hadn't been evicted yet (bot runs every 15 min = ~96
-      # cache entries/day, churning fast against GitHub's eviction limits).
-      #
-      # Whatever that lottery restored then OVERWROTE the correct trades.json
-      # that "Checkout repository" had already pulled from git — the git-commit
-      # persistence in "Commit and Push State to Repo" below is already a
-      # complete, reliable mechanism on its own. Running both was pure downside:
-      # git checkout gets it right, then cache-restore randomly clobbers it.
-
       - name: Init state files if missing
         run: |
           [ -f trades.json ]        || echo '{}' > trades.json
@@ -96,10 +82,6 @@ jobs:
             python trade_executor.py
           fi
 
-      # REMOVED 2026-07-15: "Save state to Cache" step — paired with the removed
-      # restore step above. No longer needed; git commit below is the sole,
-      # reliable persistence mechanism.
-
       - name: Commit and Push State to Repo
         if: always()
         run: |
@@ -110,28 +92,28 @@ jobs:
           rm -f .env pro_crypto_ai_model.pkl
           git rm --cached --ignore-unmatch "*.pkl" "*.joblib" 2>/dev/null || true
 
-          # ── CRITICAL: Backup runtime state to /tmp BEFORE any git operation ──
-          # This guarantees our fresh trades.json survives the git pull.
-          # Previous stash approach silently failed (stash pop conflict → empty {}).
+          # ── 1. Backup fresh runtime state to /tmp BEFORE git operation ──
           cp trades.json        /tmp/trades_runtime.json        2>/dev/null || echo '{}' > /tmp/trades_runtime.json
           cp trade_history.json /tmp/trade_history_runtime.json 2>/dev/null || echo '[]' > /tmp/trade_history_runtime.json
           cp signals.json       /tmp/signals_runtime.json       2>/dev/null || echo '[]' > /tmp/signals_runtime.json
           cp balance.json       /tmp/balance_runtime.json       2>/dev/null || echo '{}' > /tmp/balance_runtime.json
           cp scan_mode.json     /tmp/scan_mode_runtime.json     2>/dev/null || echo '{}' > /tmp/scan_mode_runtime.json
 
-          # Pull latest remote without touching our backed-up state
+          # ── 2. Reset working tree to clear modified files for git pull ──
+          git reset --hard HEAD
+
+          # ── 3. Pull latest remote main branch cleanly ──
           git fetch origin main
           git pull --rebase origin main || git pull origin main || true
 
-          # ── CRITICAL: Restore runtime state after pull ──
-          # Local runtime data ALWAYS wins over repo — the repo only has stale data.
+          # ── 4. Restore fresh runtime state back over pulled files ──
           cp /tmp/trades_runtime.json        trades.json
           cp /tmp/trade_history_runtime.json trade_history.json
           cp /tmp/signals_runtime.json       signals.json
           cp /tmp/balance_runtime.json       balance.json
           cp /tmp/scan_mode_runtime.json     scan_mode.json
 
-          # Stage and commit only state files — never use "git add ."
+          # ── 5. Stage, commit, and push updated state ──
           git add trades.json        || true
           git add trade_history.json || true
           git add signals.json       || true
