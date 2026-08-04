@@ -1,4 +1,4 @@
-# dashboard.py — V4.2: Full Institutional Server (Complete & Uncompressed)
+# dashboard.py — V4.3: Full Institutional Server (Patched for Private Repo State Sync)
 
 import os
 import json
@@ -20,34 +20,42 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
-GH_REPO   = os.getenv("GITHUB_REPO",  "Elliot14R/Crypto_AI_bot")
+GH_REPO   = os.getenv("GITHUB_REPO",  "MrZkull/Crypto_AI_bot")  # ✅ Updated default
 GH_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 
 _cache = {}
 _cache_ts = {}
-CACHE_TTL = 30  # 30 second cache TTL for fresh GitHub state sync
+CACHE_TTL = 15  # 15 second cache TTL for snappy GitHub state sync
 
-# ── GitHub fetch (base64 decode, two-path fallback) ───────────────────
+
+# ── GitHub fetch (base64 decode, root-first priority) ──────────────────
 
 def gh_fetch(filename: str):
-    """Fetch JSON or raw text file content from GitHub repository with multi-path fallback."""
+    """Fetch JSON or raw text file content from GitHub repository with root-first fallback."""
     if not GH_TOKEN or not GH_REPO:
+        log.warning(f"gh_fetch aborted: GH_PAT_TOKEN or GITHUB_REPO not configured (GH_REPO={GH_REPO})")
         return None
+        
     headers = {
         "Authorization": f"token {GH_TOKEN}",
         "Accept": "application/vnd.github.v3+json"
     }
-    for path in [f"data/{filename}", filename]:
+    
+    # 🎯 ROOT FIRST: GitHub Actions updates state files (trades.json, etc.) at repository root
+    for path in [filename, f"data/{filename}"]:
         try:
-            url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}"
+            url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}?ref={GH_BRANCH}"
             r = requests.get(url, headers=headers, timeout=8)
             if r.status_code == 200:
                 raw_content = base64.b64decode(r.json()["content"]).decode("utf-8")
                 if filename.endswith(".json"):
                     return json.loads(raw_content)
                 return raw_content
+            else:
+                log.debug(f"gh_fetch {path} returned HTTP {r.status_code}")
         except Exception as e:
             log.debug(f"gh_fetch error for path {path}: {e}")
+            
     return None
 
 
@@ -487,7 +495,7 @@ def api_performance():
         "total_trades": len(real), "wins": len(wins), "losses": len(loss),
         "win_rate":     round(len(wins)/len(real)*100, 1) if real else 0,
         "total_pnl":    round(tpnl, 4),
-        "avg_win":      round(sum(x["pnl"] for x in wins)/len(wins), 4) if wins else 0,
+        "avg_win":     round(sum(x["pnl"] for x in wins)/len(wins), 4) if wins else 0,
         "avg_loss":     round(sum(x["pnl"] for x in loss)/len(loss), 4) if loss else 0,
         "profit_factor":round(abs(sum(x["pnl"] for x in wins)/lt), 2) if lt else 0,
         "by_symbol": by_symbol, "daily_pnl": daily,
