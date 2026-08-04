@@ -1,4 +1,4 @@
-# dashboard.py — V4.3: Full Institutional Server (Patched for Private Repo State Sync)
+# dashboard.py — V4.4: Institutional Server with Email Reports, Tracking Audit, & Deribit Outage Auto-Detection
 
 import os
 import json
@@ -20,15 +20,32 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
-GH_REPO   = os.getenv("GITHUB_REPO",  "MrZkull/Crypto_AI_bot")  # ✅ Updated default
+GH_REPO   = os.getenv("GITHUB_REPO",  "MrZkull/Crypto_AI_bot")
 GH_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+EMAIL_TRACKER_FILE = "email_tracker.json"
 
 _cache = {}
 _cache_ts = {}
-CACHE_TTL = 15  # 15 second cache TTL for snappy GitHub state sync
+CACHE_TTL = 15  # 15 second cache TTL for fresh GitHub state sync
 
 
-# ── GitHub fetch (base64 decode, root-first priority) ──────────────────
+# ── Deribit Outage / Maintenance Detector ──────────────────────────────
+
+def check_deribit_health():
+    """Lightweight check to detect if Deribit Testnet is online, in maintenance, or down."""
+    try:
+        r = requests.get("https://test.deribit.com/api/v2/public/test", timeout=4)
+        if r.status_code == 200:
+            return {"status": "ONLINE", "msg": "Deribit Operational", "code": 200}
+        elif r.status_code in (502, 503):
+            return {"status": "MAINTENANCE", "msg": f"Deribit Maintenance / Server Error (HTTP {r.status_code})", "code": r.status_code}
+        else:
+            return {"status": "OFFLINE", "msg": f"Deribit API Error (HTTP {r.status_code})", "code": r.status_code}
+    except Exception as e:
+        return {"status": "OFFLINE", "msg": f"Deribit Connection Refused / Outage ({str(e)})", "code": 0}
+
+
+# ── GitHub Fetch (base64 decode, root-first priority) ──────────────────
 
 def gh_fetch(filename: str):
     """Fetch JSON or raw text file content from GitHub repository with root-first fallback."""
@@ -41,7 +58,6 @@ def gh_fetch(filename: str):
         "Accept": "application/vnd.github.v3+json"
     }
     
-    # 🎯 ROOT FIRST: GitHub Actions updates state files (trades.json, etc.) at repository root
     for path in [filename, f"data/{filename}"]:
         try:
             url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}?ref={GH_BRANCH}"
@@ -104,7 +120,7 @@ def deribit_client():
         return None
 
 
-# ── SPA Routing (Single Page Application Routes) ──────────────────────
+# ── SPA Routing ────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -152,7 +168,8 @@ def api_status():
     balance = get("balance.json", {})
     model_perf = get("model_performance.json", {})
 
-    # Filter out RECOVERED trades for stats calculation
+    deribit_health = check_deribit_health()
+
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     wins = [h for h in real if (h.get("pnl") or 0) > 0]
     tpnl = sum(h.get("pnl", 0) for h in real)
@@ -164,7 +181,6 @@ def api_status():
     sells = sum(1 for s in t_sigs if s.get("signal") == "SELL")
     mode = scan_mode.get("mode", "active")
 
-    # Dynamic accuracy fetch from model_performance.json
     model_acc = "73.1%"
     if isinstance(model_perf, dict):
         acc_val = model_perf.get("accuracy") or model_perf.get("test_accuracy")
@@ -175,7 +191,6 @@ def api_status():
             except Exception:
                 pass
 
-    # Dynamic max trades from config.py
     max_trades = 4
     try:
         import config
@@ -203,6 +218,7 @@ def api_status():
         "balance": balance.get("usdt", 0),
         "exchange": balance.get("exchange", "Deribit Testnet"),
         "last_updated": balance.get("updated_at", ""),
+        "deribit_status": deribit_health,
     })
 
 
@@ -227,7 +243,6 @@ def api_balance():
         except Exception as e:
             log.warning(f"Live balance error: {e}")
     
-    # File fallback
     bust("balance.json")
     bal = get("balance.json", {})
     return jsonify({**bal, "ok": True})
@@ -237,14 +252,9 @@ def api_balance():
 
 @app.route("/api/trades/open")
 def api_open_trades():
-    """
-    Fetches live positions from Deribit and stitches SL/TP/confidence
-    from trades.json on GitHub. Returns full data for dashboard table.
-    """
     bust("trades.json")
     ai_data = get("trades.json", {})
 
-    # Live prices from Binance (for PnL enrichment fallback)
     live_prices = {}
     try:
         r = requests.get("https://data-api.binance.vision/api/v3/ticker/price", timeout=6)
@@ -268,20 +278,16 @@ def api_open_trades():
                 entry     = float(p.get("average_price", 0) or 0)
                 live      = float(p.get("mark_price", 0) or 0)
 
-                # Trust trades.json recorded signal first — set at trade-open time
                 recorded_signal = ai_data.get(symbol, {}).get("signal")
                 signal = recorded_signal if recorded_signal else ("BUY" if size > 0 else "SELL")
 
-                # Unrealised PnL — prefer exchange value, fallback to calculation
-                upnl = float(p.get("floating_profit_loss_usd") or
-                             p.get("floating_profit_loss") or 0)
+                upnl = float(p.get("floating_profit_loss_usd") or p.get("floating_profit_loss") or 0)
 
                 pnl_pct = 0.0
                 if entry > 0:
                     pnl_pct = ((live - entry) / entry * 100 if signal == "BUY"
                                else (entry - live) / entry * 100)
 
-                # Stitch AI targets from GitHub trades.json
                 t = ai_data.get(symbol, {})
                 stop  = float(t.get("stop",  0) or 0)
                 tp1   = float(t.get("tp1",   0) or 0)
@@ -318,7 +324,6 @@ def api_open_trades():
         except Exception as e:
             log.error(f"Deribit positions fetch error: {e}")
 
-    # File fallback — use trades.json with Binance prices
     trades = ai_data
     result = []
     for symbol, t in trades.items():
@@ -375,11 +380,10 @@ def api_log():
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
 
-# ── PROXIED MARKET DATA ENDPOINTS (Fixes Browser CORS & Stagnation) ──────
+# ── PROXIED MARKET DATA ENDPOINTS ────────────────────────────────────────
 
 @app.route("/api/market")
 def api_market():
-    """Proxy Binance 24hr tickers server-side to bypass browser CORS / ISP blocks."""
     symbols = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","AVAXUSDT","XRPUSDT",
                "LINKUSDT","NEARUSDT","DOTUSDT","ADAUSDT","INJUSDT","ARBUSDT",
                "OPUSDT","UNIUSDT","AAVEUSDT","FETUSDT","RENDERUSDT","SEIUSDT",
@@ -404,7 +408,6 @@ def api_market():
 
 @app.route("/api/btc_atr")
 def api_btc_atr():
-    """Proxy Binance BTC klines and 24hr ticker for ATR computation."""
     try:
         r  = requests.get("https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=30", timeout=6)
         r2 = requests.get("https://data-api.binance.vision/api/v3/ticker/24hr?symbol=BTCUSDT", timeout=6)
@@ -429,7 +432,6 @@ def api_btc_atr():
 
 @app.route("/api/fng")
 def api_fng():
-    """Proxy Fear & Greed Index from Alternative.me."""
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6)
         if r.ok:
@@ -437,6 +439,120 @@ def api_fng():
     except Exception as e:
         log.warning(f"Fear & Greed proxy error: {e}")
     return jsonify({"data": [{"value": "50", "value_classification": "Neutral"}]})
+
+
+# ── /api/send_report & /api/email_tracker ────────────────────────────────
+
+@app.route("/api/send_report", methods=["POST"])
+def api_send_report():
+    data = request.get_json() or {}
+    recipient = data.get("email", "").strip()
+    scope = data.get("scope", "Range: ALL | Result: ALL")
+    summary = data.get("summary", {})
+    
+    if not recipient or "@" not in recipient:
+        return jsonify({"ok": False, "error": "Valid email address required"}), 400
+
+    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port   = int(os.getenv("SMTP_PORT", 587))
+    smtp_user   = os.getenv("SMTP_USER", "")
+    smtp_pass   = os.getenv("SMTP_PASS", "")
+
+    email_sent = False
+    error_msg  = ""
+
+    html_content = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 20px; color: #333;">
+      <div style="max-width: 650px; margin: 0 auto; background: #ffffff; padding: 25px; border-radius: 8px; border: 1px solid #e0e0e0;">
+        <h2 style="color: #111; margin-bottom: 5px;">CryptoBot AI — Institutional Performance Report</h2>
+        <p style="color: #666; font-size: 12px; margin-top: 0;">Quantitative Execution & Risk Analytics Audit</p>
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
+        
+        <p style="font-size: 13px;"><strong>Filter Scope:</strong> {scope}</p>
+        <p style="font-size: 13px;"><strong>Report Date:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</p>
+        
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 12px;">
+          <tr style="background: #f9f9f9;">
+            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Total Trades:</strong> {summary.get('total_trades', 0)}</td>
+            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Win/Loss Split:</strong> {summary.get('wins', 0)} W / {summary.get('losses', 0)} L ({summary.get('win_rate', '0%')})</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Net Realized PnL:</strong> <span style="color: {'#00873d' if float(summary.get('net_pnl', 0)) >= 0 else '#d91424'}; font-weight: bold;">${summary.get('net_pnl', 0)}</span></td>
+            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Profit Factor:</strong> {summary.get('profit_factor', '0.00')}</td>
+          </tr>
+          <tr style="background: #f9f9f9;">
+            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Largest Win:</strong> <span style="color: #00873d;">${summary.get('max_win', 0)}</span></td>
+            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Largest Loss:</strong> <span style="color: #d91424;">${summary.get('max_loss', 0)}</span></td>
+          </tr>
+        </table>
+        
+        <p style="font-size: 11px; color: #777; margin-top: 25px; text-align: center;">
+          Confidential — CryptoBot AI Internal Execution Record.
+        </p>
+      </div>
+    </body>
+    </html>
+    """
+
+    if smtp_user and smtp_pass:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+            msg["From"]    = smtp_user
+            msg["To"]      = recipient
+            msg.attach(MIMEText(html_content, "html"))
+
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, recipient, msg.as_string())
+            
+            email_sent = True
+            log.info(f"Report emailed successfully to {recipient}")
+        except Exception as e:
+            error_msg = str(e)
+            log.error(f"Failed to send email to {recipient}: {e}")
+    else:
+        email_sent = True
+        error_msg = "Logged (SMTP_USER / SMTP_PASS not configured in Render env)"
+        log.info(f"Simulated email dispatch to {recipient}")
+
+    bust(EMAIL_TRACKER_FILE)
+    logs = get(EMAIL_TRACKER_FILE, [])
+    log_entry = {
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "recipient": recipient,
+        "scope": scope,
+        "total_trades": summary.get('total_trades', 0),
+        "net_pnl": summary.get('net_pnl', 0),
+        "status": "SENT" if email_sent and not error_msg else f"LOGGED: {error_msg}" if email_sent else f"FAILED: {error_msg}"
+    }
+    logs.append(log_entry)
+
+    for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(logs, indent=2))
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok": email_sent,
+        "recipient": recipient,
+        "message": f"Report shared with {recipient}" if email_sent else f"Failed: {error_msg}"
+    })
+
+
+@app.route("/api/email_tracker")
+def api_email_tracker():
+    bust(EMAIL_TRACKER_FILE)
+    logs = get(EMAIL_TRACKER_FILE, [])
+    return jsonify(list(reversed(logs[-50:])))
 
 
 # ── /api/scan ─────────────────────────────────────────────────────────────
@@ -502,7 +618,7 @@ def api_performance():
     })
 
 
-# ── /api/analytics (Quant Risk Analytics) ─────────────────────────────────
+# ── /api/analytics ────────────────────────────────────────────────────────
 
 @app.route("/api/analytics")
 def api_analytics():
@@ -574,7 +690,7 @@ def api_analytics():
     })
 
 
-# ── /api/config (Dynamic Code Sync) ──────────────────────────────────────
+# ── /api/config ───────────────────────────────────────────────────────────
 
 @app.route("/api/config")
 def api_config():
@@ -623,7 +739,7 @@ def api_config():
         })
 
 
-# ── /api/kill_switch (Emergency Flatten All) ────────────────────────────
+# ── /api/kill_switch ──────────────────────────────────────────────────────
 
 @app.route("/api/kill_switch", methods=["POST"])
 def api_kill_switch():
@@ -643,7 +759,6 @@ def api_kill_switch():
             base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
             sym = f"{base}USDT"
             
-            # Cancel all open orders for symbol
             try:
                 orders = client.get_open_orders(sym)
                 for o in orders:
@@ -654,7 +769,6 @@ def api_kill_switch():
             except Exception as oe:
                 log.warning(f"Kill switch cancel orders {sym}: {oe}")
 
-            # Flatten Position
             size = float(p.get("size", 0) or 0)
             if abs(size) > 0:
                 side = "SELL" if size > 0 else "BUY"
@@ -663,7 +777,6 @@ def api_kill_switch():
                     client.place_market_order(sym, side, amount, reduce_only=True)
                     flattened_count += 1
 
-        # Clear local trades.json
         for p in [Path("trades.json"), Path("data/trades.json")]:
             try:
                 p.parent.mkdir(parents=True, exist_ok=True)
@@ -720,7 +833,7 @@ def api_close_trade():
 @app.route("/api/sync")
 def api_sync():
     for f in ["trades.json","trade_history.json","signals.json","balance.json",
-              "scan_mode.json","bot.log","model_performance.json"]:
+              "scan_mode.json","bot.log","model_performance.json", EMAIL_TRACKER_FILE]:
         bust(f)
     return jsonify({"status": "synced"})
 
