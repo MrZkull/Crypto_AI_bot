@@ -6,7 +6,7 @@
     "stop": 599.47,
     "tp1": 599.47,
     "tp2": 605.05,
-    "qty": 9.07,
+    "qty": 0.19999999999999998,
     "qty_tp1": 4.53,
     "qty_tp2": 4.54,
     "risk_usd": 1654.45,
@@ -34,6 +34,76 @@
       "Contrarian F&G aligned (+1)"
     ],
     "tier": "\ud83d\udc51 Big Three",
+    "exchange": "deribit_testnet",
+    "total_q": 0.19999999999999998
+  },
+  "TRXUSDT": {
+    "symbol": "TRXUSDT",
+    "signal": "BUY",
+    "entry": 0.32819,
+    "stop": 0.32744,
+    "tp1": 0.32924,
+    "tp2": 0.33045,
+    "qty": 16400,
+    "qty_tp1": 2000,
+    "qty_tp2": 0.0,
+    "risk_usd": 3882.7,
+    "balance_at_open": 107852.75,
+    "risk_mult": 3.5999999999999996,
+    "order_ids": {
+      "entry": "USDC-210049215219340536",
+      "stop_loss": "USDC-SLMS-31089",
+      "tp1": "USDC-210049215219343555"
+    },
+    "opened_at": "2026-08-05T09:12:00.797500+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 61.9,
+    "score": 5,
+    "reasons": [
+      "Conf (62%)",
+      "Strong ADX 49",
+      "4h trend aligns (RSI 52)",
+      "4h trend established (20h)",
+      "Volume surge 5.4\u00d7"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet"
+  },
+  "BCHUSDT": {
+    "symbol": "BCHUSDT",
+    "signal": "SELL",
+    "entry": 209.92689244,
+    "stop": 210.982,
+    "tp1": 208.45,
+    "tp2": 206.763,
+    "qty": 25.66,
+    "qty_tp1": 12.82,
+    "qty_tp2": 12.84,
+    "risk_usd": 1932.64,
+    "balance_at_open": 107852.75,
+    "risk_mult": 1.7919275603138374,
+    "order_ids": {
+      "entry": "USDC-210049215219412073",
+      "stop_loss": "USDC-SLMB-31090",
+      "tp1": "USDC-210049215219415391",
+      "tp2": "USDC-210049215219415450"
+    },
+    "opened_at": "2026-08-05T09:12:29.141125+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 53.0,
+    "score": 5,
+    "reasons": [
+      "Strong ADX 27",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 43)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"
   }
 }
