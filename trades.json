@@ -33,40 +33,11 @@
     "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
   },
-  "BNBUSDT": {
-    "symbol": "BNBUSDT",
-    "signal": "SELL",
-    "entry": 597.3655,
-    "stop": 600.03,
-    "tp1": 593.63,
-    "tp2": 589.36,
-    "qty": 0.01,
-    "qty_tp1": 0.01,
-    "qty_tp2": 0,
-    "risk_usd": 0.03,
-    "balance_at_open": 107817.94,
-    "risk_mult": 1.0,
-    "order_ids": {
-      "stop_loss": "USDC-SLMB-31110",
-      "tp1": "USDC-210049215241470612"
-    },
-    "opened_at": "2026-08-05T11:33:10.159296+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 60.0,
-    "score": 3,
-    "reasons": [
-      "Adopted untracked position via [3c]"
-    ],
-    "tier": "\ud83d\udc51 Big Three",
-    "exchange": "deribit_testnet"
-  },
   "XRPUSDT": {
     "symbol": "XRPUSDT",
     "signal": "BUY",
     "entry": 1.0603,
-    "stop": 1.0562,
+    "stop": 1.0603,
     "tp1": 1.0661,
     "tp2": 1.0727,
     "qty": 2520,
@@ -76,12 +47,12 @@
     "balance_at_open": 107817.94,
     "risk_mult": 1.0,
     "order_ids": {
-      "stop_loss": "USDC-SLMS-31111",
+      "stop_loss": "USDC-SLMS-31121",
       "tp1": "USDC-210049215241487454",
       "tp2": "USDC-210049215241488059"
     },
     "opened_at": "2026-08-05T11:33:16.695824+00:00",
-    "tp1_hit": false,
+    "tp1_hit": true,
     "tp2_hit": false,
     "closed": false,
     "confidence": 60.0,
@@ -90,40 +61,6 @@
       "Adopted untracked position via [3c]"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
-    "exchange": "deribit_testnet"
-  },
-  "BTCUSDT": {
-    "symbol": "BTCUSDT",
-    "signal": "SELL",
-    "entry": 64083.58858502,
-    "stop": 64303.0,
-    "tp1": 63776.5,
-    "tp2": 63426.0,
-    "qty": 0.0841,
-    "qty_tp1": 0.042,
-    "qty_tp2": 0.0421,
-    "risk_usd": 2587.63,
-    "balance_at_open": 107817.94,
-    "risk_mult": 2.4,
-    "order_ids": {
-      "entry": "USDC-210049215241508529",
-      "stop_loss": "USDC-SLMB-31112",
-      "tp1": "USDC-210049215241513109",
-      "tp2": "USDC-210049215241513651"
-    },
-    "opened_at": "2026-08-05T11:33:26.362992+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 54.7,
-    "score": 4,
-    "reasons": [
-      "ADX 20",
-      "RSI not oversold (48)",
-      "EMA bearish",
-      "4h trend established (20h)"
-    ],
-    "tier": "\ud83d\udc51 Big Three",
     "exchange": "deribit_testnet"
   }
 }
