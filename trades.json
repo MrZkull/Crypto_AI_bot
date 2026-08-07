@@ -30,41 +30,6 @@
     "exchange": "deribit_testnet",
     "total_q": 18.299999999999997
   },
-  "ETHUSDT": {
-    "symbol": "ETHUSDT",
-    "signal": "BUY",
-    "entry": 1901.99526836,
-    "stop": 1911.75,
-    "tp1": 1911.75,
-    "tp2": 1922.9,
-    "qty": 2.832,
-    "qty_tp1": 1.416,
-    "qty_tp2": 1.416,
-    "risk_usd": 2154.97,
-    "balance_at_open": 107748.68,
-    "risk_mult": 2.0,
-    "order_ids": {
-      "entry": "USDC-210049215743875960",
-      "stop_loss": "USDC-SLMS-31423",
-      "tp1": "USDC-210049215743883650",
-      "tp2": "USDC-210049215743884132"
-    },
-    "opened_at": "2026-08-07T08:02:46.833085+00:00",
-    "tp1_hit": true,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 50.3,
-    "score": 5,
-    "reasons": [
-      "ADX 23",
-      "RSI not overbought (51)",
-      "1h confirms",
-      "4h trend aligns (RSI 56)",
-      "4h trend established (20h)"
-    ],
-    "tier": "\ud83d\udc51 Big Three",
-    "exchange": "deribit_testnet"
-  },
   "LTCUSDT": {
     "symbol": "LTCUSDT",
     "signal": "BUY",
@@ -98,6 +63,41 @@
       "4h trend aligns (RSI 62)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "ADAUSDT": {
+    "symbol": "ADAUSDT",
+    "signal": "BUY",
+    "entry": 0.20173528,
+    "stop": 0.19931,
+    "tp1": 0.20513,
+    "tp2": 0.20901,
+    "qty": 26695.4,
+    "qty_tp1": 13347.6,
+    "qty_tp2": 13347.8,
+    "risk_usd": 806.94,
+    "balance_at_open": 107743.13,
+    "risk_mult": 0.7489512675016189,
+    "order_ids": {
+      "entry": "USDC-210049215782611285",
+      "stop_loss": "USDC-SLMS-31429",
+      "tp1": "USDC-210049215782616127",
+      "tp2": "USDC-210049215782617110"
+    },
+    "opened_at": "2026-08-07T11:12:45.962468+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 58.6,
+    "score": 5,
+    "reasons": [
+      "RSI not overbought (52)",
+      "EMA bullish",
+      "1h confirms",
+      "4h trend aligns (RSI 61)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83e\udd16 AI & Momentum",
     "exchange": "deribit_testnet"
   }
 }
