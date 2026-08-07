@@ -1,4 +1,4 @@
-# trade_executor.py — V2.9: Institutional Confidence Sizing + Sentiment Gates (Patched for Phase 3.4)
+# trade_executor.py — V3.0: Institutional Sizing, Spread Guardrail & Funding Multiplier
 
 import os, json, time, logging, requests, joblib
 import pandas as pd, numpy as np
@@ -29,13 +29,14 @@ STALE_LOCK_MINUTES = 20                # Auto-clears orphaned scan locks
 MAX_OPEN_TRADES    = 10  # MAINNET: 4 | TESTNET: 10
 
 # --- V2 PRO CONSTANTS ---
-COOLDOWN_FILE      = "cooldown.json"
-RELIABILITY_FILE   = "reliability.json"
-COOLDOWN_HOURS      = 2
-GHOST_STRIKE_LIMIT = 3
-MAX_DAILY_TRADES    = 20  # MAINNET: 8 | TESTNET: 40
-FUNDING_WARN_PCT   = 0.05
-FUNDING_SKIP_PCT   = 0.10
+COOLDOWN_FILE        = "cooldown.json"
+RELIABILITY_FILE     = "reliability.json"
+COOLDOWN_HOURS        = 2
+GHOST_STRIKE_LIMIT   = 3
+MAX_DAILY_TRADES      = 20  # MAINNET: 8 | TESTNET: 40
+FUNDING_WARN_PCT     = 0.05
+FUNDING_SKIP_PCT     = 0.10
+ENTRY_MAX_SPREAD_PCT = 0.005  # 0.5% max spread ceiling for NEW trade entries
 # ------------------------
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
@@ -148,22 +149,26 @@ def _get_daily_trade_count() -> int:
     hist  = load_history()
     return sum(1 for h in hist if h.get("opened_at", "")[:10] == today and h.get("close_reason") != "Ghost — PnL unrecoverable")
 
-def _check_funding_rate(deribit, symbol: str, signal: str) -> bool:
+def _check_funding_rate(deribit, symbol: str, signal: str) -> float:
     try:
         rate = deribit.get_funding_rate(symbol)
         rate_pct = abs(rate) * 100
         if signal == "BUY" and rate > 0:
             if rate_pct >= FUNDING_SKIP_PCT:
                 log.warning(f"  💸 {symbol}: funding {rate_pct:.3f}% (8h) — skip LONG (>{FUNDING_SKIP_PCT}%)")
-                return False
+                return 0.0
             elif rate_pct >= FUNDING_WARN_PCT:
-                log.warning(f"  ⚠️ {symbol}: funding {rate_pct:.3f}% (8h) — high for LONG")
+                log.warning(f"  ⚠️ {symbol}: funding {rate_pct:.3f}% (8h) — high for LONG (50% size penalty)")
+                return 0.5
         if signal == "SELL" and rate < 0:
             if rate_pct >= FUNDING_SKIP_PCT:
-                log.warning(f"  💸 {symbol}: funding -{rate_pct:.3f}% (8h) — skip SHORT")
-                return False
+                log.warning(f"  💸 {symbol}: funding -{rate_pct:.3f}% (8h) — skip SHORT (>{FUNDING_SKIP_PCT}%)")
+                return 0.0
+            elif rate_pct >= FUNDING_WARN_PCT:
+                log.warning(f"  ⚠️ {symbol}: funding -{rate_pct:.3f}% (8h) — high for SHORT (50% size penalty)")
+                return 0.5
     except Exception as e: log.debug(f"  funding check {symbol}: {e}")
-    return True
+    return 1.0
 
 def _wait_for_position(deribit, symbol: str, side: str, entry_oid: str, timeout: float = 8.0) -> bool:
     deadline = time.time() + timeout
@@ -553,7 +558,18 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         return False
     if _is_on_cooldown(symbol): return False
     if _is_unreliable(symbol): return False
-    if not _check_funding_rate(deribit, symbol, signal): return False
+    
+    # ── FUNDING RATE & SPREAD GUARDRAILS ──────────────────────────────
+    funding_mult = _check_funding_rate(deribit, symbol, signal)
+    if funding_mult <= 0: return False
+    risk_mult *= funding_mult
+
+    spread_info = deribit.get_order_book_spread(symbol)
+    if spread_info.get("spread_pct", 999) > ENTRY_MAX_SPREAD_PCT:
+        log.warning(f"  🚫 {symbol}: entry spread {spread_info.get('spread_pct',0)*100:.2f}% > "
+                    f"{ENTRY_MAX_SPREAD_PCT*100:.2f}% ceiling — book too thin, skip entry")
+        return False
+    # ──────────────────────────────────────────────────────────────────
     
     if risk_mult <= 0:
         log.info(f"  🛑 Risk multiplier is {risk_mult} (Drawdown Halt or Saturday block) — skip {symbol}")
