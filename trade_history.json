@@ -3368,5 +3368,80 @@
     "pnl": -65.5447,
     "closed_at": "2026-08-07T14:34:49.949243+00:00",
     "close_reason": "SL hit"
+  },
+  {
+    "symbol": "NEARUSDT",
+    "signal": "SELL",
+    "entry": 1.6434,
+    "stop": 1.6666,
+    "tp1": 1.6109,
+    "tp2": 1.5738,
+    "qty": 1630.0,
+    "qty_tp1": 1630,
+    "qty_tp2": 1640,
+    "risk_usd": 572.06,
+    "balance_at_open": 107714.89,
+    "risk_mult": 0.5310849810579471,
+    "order_ids": {
+      "entry": "USDC-210049215798135964",
+      "stop_loss": "USDC-SLMB-31433",
+      "tp1": "USDC-210049215798143048",
+      "tp2": "USDC-210049215798143948"
+    },
+    "opened_at": "2026-08-07T12:27:27.298780+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 51.7,
+    "score": 6,
+    "reasons": [
+      "Strong ADX 27",
+      "RSI not oversold (45)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 36)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet",
+    "close_price": 1.6109,
+    "pnl": 52.975,
+    "closed_at": "2026-08-07T16:29:02.844803+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
+  },
+  {
+    "symbol": "SOLUSDT",
+    "signal": "SELL",
+    "entry": 74.14,
+    "stop": 74.894,
+    "tp1": 73.084,
+    "tp2": 71.878,
+    "qty": 36.6,
+    "qty_tp1": 21.9,
+    "qty_tp2": 14.7,
+    "risk_usd": 27.6,
+    "balance_at_open": 107713.97,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMB-31447",
+      "tp1": "USDC-210049215823639720",
+      "tp2": "USDC-210049215823640111"
+    },
+    "opened_at": "2026-08-07T14:35:01.787263+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet",
+    "close_price": 74.897,
+    "pnl": -27.7062,
+    "closed_at": "2026-08-07T16:29:05.471375+00:00",
+    "close_reason": "SL hit"
   }
 ]
