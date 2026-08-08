@@ -251,7 +251,7 @@ class DeribitClient:
    def split_amount(self, symbol: str, total) -> tuple:
        if total <= 0:
            return 0, 0
-       step = self.get_min_trade_amount(symbol)
+       step = self.get_min_trade_amount(symbol)  # 👈 Fixed 'nin' to 'min'
        tp1 = max(step, math.floor((total * 0.60) / step) * step)
        tp2 = total - tp1
        if tp2 < step:
@@ -259,6 +259,7 @@ class DeribitClient:
            tp2 = 0
        decimals = _calc_decimals(step)
        return (round(tp1, decimals), round(tp2, decimals)) if decimals else (int(round(tp1)), int(round(tp2)))
+
 
     # ── Market data ───────────────────────────────────────────────────
 
