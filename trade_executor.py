@@ -231,21 +231,31 @@ def _cancel_all_open_orders_for_symbol(deribit: DeribitClient, symbol: str):
     except Exception as e:
         log.warning(f"  _cancel_all_open_orders_for_symbol {symbol}: {e}")
 
+import time
+
 def _get_safe_close_info(deribit: DeribitClient, symbol: str, trade: dict) -> tuple:
     """Returns (close_side, close_qty) calculated directly from exchange position state."""
-    try:
-        actual_pos = deribit.get_position_size(symbol)
-        if abs(actual_pos) > 0:
-            close_side = "SELL" if actual_pos > 0 else "BUY"
-            close_qty = deribit.round_amount(symbol, abs(actual_pos))
-            return close_side, close_qty
-    except Exception as e:
-        log.debug(f"  _get_safe_close_info {symbol}: position check failed ({e}) — fallback to local record")
+    # Attempt live exchange lookup twice to absorb temporary API timeouts/glitches
+    for attempt in range(2):
+        try:
+            actual_pos = deribit.get_position_size(symbol)
+            if abs(actual_pos) > 0:
+                close_side = "SELL" if actual_pos > 0 else "BUY"
+                close_qty = deribit.round_amount(symbol, abs(actual_pos))
+                return close_side, close_qty
+        except Exception as e:
+            log.debug(f"  _get_safe_close_info {symbol} attempt {attempt+1} failed: {e}")
+            if attempt == 0:
+                time.sleep(0.3)
 
+    # Fallback to local state record only if live API check fails after retries
     signal = trade.get("signal", "BUY")
     close_side = "SELL" if signal == "BUY" else "BUY"
+    
+    # Correctly select remaining position size based on TP1 state
     recorded_qty = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
     return close_side, recorded_qty
+
 
 def _verify_actually_closed(deribit: DeribitClient, symbol: str, tolerance: float = 0.01) -> bool:
     """After ANY emergency/force close attempt, check the real exchange position."""
@@ -255,6 +265,7 @@ def _verify_actually_closed(deribit: DeribitClient, symbol: str, tolerance: floa
     except Exception as e:
         log.warning(f"  _verify_actually_closed {symbol}: could not check ({e}) — assuming NOT closed")
         return False
+
 
 def save_balance(deribit: DeribitClient) -> float:
     try:
