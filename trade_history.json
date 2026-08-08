@@ -3741,5 +3741,74 @@
     "pnl": -25.748,
     "closed_at": "2026-08-08T05:07:01.819824+00:00",
     "close_reason": "SL hit"
+  },
+  {
+    "symbol": "LTCUSDT",
+    "signal": "BUY",
+    "entry": 45.512,
+    "stop": 45.27,
+    "tp1": 45.85,
+    "tp2": 46.24,
+    "qty": 21.0,
+    "qty_tp1": 21.0,
+    "qty_tp2": 14.1,
+    "risk_usd": 8.49,
+    "balance_at_open": 108119.95,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-31490",
+      "tp1": "USDC-210049215906254061",
+      "tp2": "USDC-210049215906254109"
+    },
+    "opened_at": "2026-08-07T22:01:40.569450+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet",
+    "close_price": 45.85,
+    "pnl": 7.098,
+    "closed_at": "2026-08-08T14:44:41.231489+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
+  },
+  {
+    "symbol": "LTCUSDT",
+    "signal": "BUY",
+    "entry": 45.512,
+    "stop": 45.512,
+    "tp1": 45.85,
+    "tp2": 46.24,
+    "qty": 35.1,
+    "qty_tp1": 21.0,
+    "qty_tp2": 14.1,
+    "risk_usd": 8.49,
+    "balance_at_open": 108119.95,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-31512",
+      "tp1": "USDC-210049215906254061",
+      "tp2": "USDC-210049215906254109"
+    },
+    "opened_at": "2026-08-07T22:01:40.569450+00:00",
+    "tp1_hit": true,
+    "tp2_hit": true,
+    "closed": true,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet",
+    "close_price": 46.24,
+    "pnl": 10.2648,
+    "closed_at": "2026-08-08T14:44:42.970428+00:00",
+    "close_reason": "TP2 hit"
   }
 ]
