@@ -1,4 +1,4 @@
-# dashboard.py — V5.1: Master Institutional Server with Resilient Proxies, SMTP Timeout & Type-Safe PDF Engine
+# dashboard.py — V5.2: Port 465 SSL Email Dispatch & GitHub Persistence
 
 import os
 import json
@@ -8,6 +8,7 @@ import math
 import logging
 import requests
 import re
+import socket
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,7 +49,14 @@ _cache_ts = {}
 CACHE_TTL = 15
 
 
-# ── PDF Generation Helper (Type-Safe Protection Against None Values) ─────
+# ── IPv4 Socket Resolution Helper (Fixes Render [Errno 101]) ────────────
+
+orig_getaddrinfo = socket.getaddrinfo
+def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+
+# ── PDF Generation Helper ──────────────────────────────────────────────
 
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     if not HAS_REPORTLAB:
@@ -143,7 +151,7 @@ def check_deribit_health():
         return {"status": "OFFLINE", "msg": f"Deribit Outage ({str(e)})", "code": 0}
 
 
-# ── GitHub State Fetching ──────────────────────────────────────────────
+# ── GitHub State Persistence Helpers ──────────────────────────────────
 
 def gh_fetch(filename: str):
     if not GH_TOKEN or not GH_REPO:
@@ -158,6 +166,26 @@ def gh_fetch(filename: str):
                 return json.loads(raw_content) if filename.endswith(".json") else raw_content
         except Exception: pass
     return None
+
+
+def gh_push(filename: str, content_dict):
+    """Persists state to GitHub so Render container restarts don't wipe data."""
+    if not GH_TOKEN or not GH_REPO:
+        return
+    headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+    url = f"https://api.github.com/repos/{GH_REPO}/contents/{filename}?ref={GH_BRANCH}"
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        sha = r.json().get("sha") if r.ok else None
+        payload = {
+            "message": f"Update {filename} state via Dashboard",
+            "content": base64.b64encode(json.dumps(content_dict, indent=2).encode('utf-8')).decode('utf-8'),
+            "branch": GH_BRANCH
+        }
+        if sha: payload["sha"] = sha
+        requests.put(url, headers=headers, json=payload, timeout=8)
+    except Exception as e:
+        log.warning(f"gh_push failed for {filename}: {e}")
 
 
 def get(filename: str, default):
@@ -326,7 +354,7 @@ def api_log():
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
 
-# ── Market & ATR Proxies (With Fallback Protection) ─────────────────────
+# ── Market & ATR Proxies ────────────────────────────────────────────────
 
 @app.route("/api/market")
 def api_market():
@@ -348,7 +376,6 @@ def api_market():
                         "quoteVolume": float(item.get("quoteVolume", 0)),
                     }
         else:
-            log.warning(f"Binance 24hr ticker returned HTTP {r.status_code}. Trying backup source...")
             r2 = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,binancecoin,solana,avalanche-2,near,sui,aptos,cosmos,tron,chainlink,polkadot,uniswap,aave,ripple,litecoin,bitcoin-cash,algorand,fetch-ai,cardano,dogecoin&vs_currencies=usd&include_24hr_change=true", timeout=6)
             if r2.ok:
                 cg = r2.json()
@@ -440,7 +467,7 @@ def api_monitor():
     })
 
 
-# ── Email Dispatch (With 10s SMTP Timeout & Traceback Logging) ──────────
+# ── Persistent Email Dispatch (Port 465 SSL + GitHub Backup) ────────────
 
 def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     bust(EMAIL_TRACKER_FILE)
@@ -452,12 +479,14 @@ def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
         "net_pnl": summary.get('net_pnl', 0), "status": status
     }
     logs.append(log_entry)
+    
+    # Save locally AND push to GitHub repo so restarts don't wipe tracker history
     for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(logs, indent=2))
-        except Exception as e:
-            log.debug(f"Failed to write email tracker log to {p}: {e}")
+        except Exception: pass
+    gh_push(EMAIL_TRACKER_FILE, logs)
 
 
 @app.route("/api/send_report", methods=["POST"])
@@ -472,7 +501,6 @@ def api_send_report():
         return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
 
     smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    smtp_port   = int(os.getenv("SMTP_PORT", 587))
     smtp_user   = os.getenv("SMTP_USER", "").strip()
     smtp_pass   = os.getenv("SMTP_PASS", "").strip()
 
@@ -502,7 +530,6 @@ def api_send_report():
             <td style="padding: 10px; border: 1px solid #ddd;"><strong>Profit Factor:</strong> {summary.get('profit_factor', '0.00')}</td>
           </tr>
         </table>
-        <p style="font-size: 12px; color: #444; font-weight: bold; margin-top: 15px;">📎 A full PDF report document is attached to this email.</p>
         <p style="font-size: 11px; color: #777; margin-top: 25px; text-align: center;">Confidential — CryptoBot AI Internal Execution Record.</p>
       </div>
     </body>
@@ -530,11 +557,14 @@ def api_send_report():
             except Exception as pdf_err:
                 log.exception(f"PDF generation failed, falling back to HTML: {pdf_err}")
 
-        # Explicit 10-second timeout prevents Gunicorn worker timeout crash
-        with smtplib.SMTP(smtp_server, smtp_port, timeout=10) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, recipient, msg.as_string())
+        # 🎯 FIX: Force IPv4 & Port 465 SSL connection to bypass Render IPv6 [Errno 101] network block
+        socket.getaddrinfo = ipv4_only_getaddrinfo
+        try:
+            with smtplib.SMTP_SSL(smtp_server, 465, timeout=10) as server:
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, recipient, msg.as_string())
+        finally:
+            socket.getaddrinfo = orig_getaddrinfo
 
         log.info(f"Report emailed successfully to {recipient}")
         _log_email_attempt(recipient, scope, summary, status_text)
