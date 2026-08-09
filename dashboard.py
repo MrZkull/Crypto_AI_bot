@@ -1,4 +1,4 @@
-# dashboard.py — V4.4: Institutional Server with Email Reports, Tracking Audit, & Deribit Outage Auto-Detection
+# dashboard.py — V4.5: Institutional Server with PDF Email Attachments, Audit Tracker, & Deribit Health
 
 import os
 import json
@@ -7,11 +7,25 @@ import time
 import math
 import logging
 import requests
+import re
+from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
+
+# Email & MIME imports
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+
+# ReportLab imports for in-memory PDF generation
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 load_dotenv()
 app = Flask(__name__, static_folder="dashboard_static")
@@ -19,14 +33,101 @@ CORS(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
-GH_REPO   = os.getenv("GITHUB_REPO",  "MrZkull/Crypto_AI_bot")
-GH_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+GH_TOKEN   = os.getenv("GH_PAT_TOKEN", "")
+GH_REPO    = os.getenv("GITHUB_REPO",  "MrZkull/Crypto_AI_bot")
+GH_BRANCH  = os.getenv("GITHUB_BRANCH", "main")
 EMAIL_TRACKER_FILE = "email_tracker.json"
+EMAIL_REGEX = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 _cache = {}
 _cache_ts = {}
 CACHE_TTL = 15  # 15 second cache TTL for fresh GitHub state sync
+
+
+# ── PDF Generation Helper ──────────────────────────────────────────────
+
+def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
+    """Generates an in-memory PDF report using ReportLab."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        leading=20,
+        textColor=colors.HexColor('#0f172a'),
+        spaceAfter=4
+    )
+    subtitle_style = ParagraphStyle(
+        'DocSubTitle',
+        parent=styles['Normal'],
+        fontSize=9,
+        textColor=colors.HexColor('#64748b'),
+        spaceAfter=12
+    )
+    normal_style = ParagraphStyle('DocNormal', parent=styles['Normal'], fontSize=9, leading=12)
+
+    elements = [
+        Paragraph("CryptoBot AI — Institutional Performance Report", title_style),
+        Paragraph("Quantitative Execution & Risk Analytics Audit", subtitle_style),
+        Paragraph(f"<b>Filter Scope:</b> {scope} | <b>Report Date:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", normal_style),
+        Spacer(1, 10)
+    ]
+
+    # Metrics Summary Table
+    pnl_val = float(summary.get('net_pnl', 0))
+    pnl_color = colors.HexColor('#00873d') if pnl_val >= 0 else colors.HexColor('#d91424')
+    
+    summary_data = [
+        [f"Total Trades: {summary.get('total_trades', 0)}", f"Win/Loss Split: {summary.get('wins', 0)}W / {summary.get('losses', 0)}L ({summary.get('win_rate', '0%')})"],
+        [f"Net Realized PnL: ${pnl_val:.2f}", f"Profit Factor: {summary.get('profit_factor', '0.00')}"],
+        [f"Largest Win: ${summary.get('max_win', 0)}", f"Largest Loss: ${summary.get('max_loss', 0)}"]
+    ]
+    
+    sum_table = Table(summary_data, colWidths=[260, 260])
+    sum_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+        ('PADDING', (0,0), (-1,-1), 6),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 9),
+    ]))
+    elements.extend([sum_table, Spacer(1, 12)])
+
+    # Trades Breakdown Table
+    if trades:
+        elements.append(Paragraph("<b>Executed Trade Records (Latest 30):</b>", normal_style))
+        elements.append(Spacer(1, 6))
+        trade_rows = [["Date (UTC)", "Symbol", "Dir", "Entry", "Close", "PnL ($)", "Reason"]]
+        for t in trades[:30]:
+            pnl = float(t.get('pnl', 0))
+            trade_rows.append([
+                str(t.get('closed_at') or t.get('opened_at') or '')[:16].replace('T', ' '),
+                str(t.get('symbol', '')),
+                str(t.get('signal', '')),
+                f"{float(t.get('entry', 0)):.4f}",
+                f"{float(t.get('close_price', t.get('entry', 0))):.4f}",
+                f"{pnl:+.2f}",
+                str(t.get('close_reason', 'Closed'))[:20]
+            ])
+
+        trade_table = Table(trade_rows, colWidths=[85, 65, 40, 65, 65, 60, 140])
+        trade_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f172a')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
+            ('PADDING', (0,0), (-1,-1), 4),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ]))
+        elements.append(trade_table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 # ── Deribit Outage / Maintenance Detector ──────────────────────────────
@@ -302,17 +403,17 @@ def api_open_trades():
                         progress = min(100, max(0, abs(live - entry) / dist * 100))
 
                 result.append({
-                    "symbol":     symbol,
-                    "signal":     signal,
-                    "entry":      round(entry, 6),
+                    "symbol":      symbol,
+                    "signal":      signal,
+                    "entry":       round(entry, 6),
                     "live_price": round(live,  6),
-                    "stop":       stop,
-                    "tp1":        tp1,
-                    "tp2":        tp2,
-                    "qty":        abs(size),
+                    "stop":        stop,
+                    "tp1":         tp1,
+                    "tp2":         tp2,
+                    "qty":         abs(size),
                     "unrealised": round(upnl, 4),
                     "pnl_pct":    round(pnl_pct, 2),
-                    "progress":   round(progress, 1),
+                    "progress":    round(progress, 1),
                     "confidence": conf,
                     "score":      score,
                     "reasons":    t.get("reasons", []),
@@ -443,11 +544,6 @@ def api_fng():
 
 # ── /api/send_report & /api/email_tracker ────────────────────────────────
 
-import re
-
-EMAIL_REGEX = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-
-
 def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     """Logs email dispatch attempts into email_tracker.json across local and data paths."""
     bust(EMAIL_TRACKER_FILE)
@@ -469,13 +565,14 @@ def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
         except Exception as e:
             log.debug(f"Failed to write email tracker log to {p}: {e}")
 
-# ── /api/send_report & /api/email_tracker
+
 @app.route("/api/send_report", methods=["POST"])
 def api_send_report():
     data = request.get_json() or {}
     recipient = data.get("email", "").strip()
     scope = data.get("scope", "Range: ALL | Result: ALL")
     summary = data.get("summary", {})
+    trades = data.get("trades", [])
 
     # 1. Strict Email Format Check
     if not recipient or not re.match(EMAIL_REGEX, recipient):
@@ -494,7 +591,6 @@ def api_send_report():
     if not smtp_user or not smtp_pass:
         error_msg = "SMTP_USER and SMTP_PASS environment variables are not configured in Render."
         log.warning(f"Email send aborted for {recipient}: {error_msg}")
-        
         _log_email_attempt(recipient, scope, summary, "FAILED: Missing Render SMTP Credentials")
         
         return jsonify({
@@ -504,6 +600,9 @@ def api_send_report():
         }), 500
 
     # 3. Real SMTP Email Dispatch
+    pnl_val = float(summary.get('net_pnl', 0))
+    pnl_color = '#00873d' if pnl_val >= 0 else '#d91424'
+
     html_content = f"""
     <html>
     <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 20px; color: #333;">
@@ -521,7 +620,7 @@ def api_send_report():
             <td style="padding: 10px; border: 1px solid #ddd;"><strong>Win/Loss Split:</strong> {summary.get('wins', 0)} W / {summary.get('losses', 0)} L ({summary.get('win_rate', '0%')})</td>
           </tr>
           <tr>
-            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Net Realized PnL:</strong> <span style="color: {'#00873d' if float(summary.get('net_pnl', 0)) >= 0 else '#d91424'}; font-weight: bold;">${summary.get('net_pnl', 0)}</span></td>
+            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Net Realized PnL:</strong> <span style="color: {pnl_color}; font-weight: bold;">${summary.get('net_pnl', 0)}</span></td>
             <td style="padding: 10px; border: 1px solid #ddd;"><strong>Profit Factor:</strong> {summary.get('profit_factor', '0.00')}</td>
           </tr>
           <tr style="background: #f9f9f9;">
@@ -529,6 +628,8 @@ def api_send_report():
             <td style="padding: 10px; border: 1px solid #ddd;"><strong>Largest Loss:</strong> <span style="color: #d91424;">${summary.get('max_loss', 0)}</span></td>
           </tr>
         </table>
+        
+        <p style="font-size: 12px; color: #444; font-weight: bold; margin-top: 15px;">📎 A full PDF report document is attached to this email.</p>
         
         <p style="font-size: 11px; color: #777; margin-top: 25px; text-align: center;">
           Confidential — CryptoBot AI Internal Execution Record.
@@ -539,15 +640,25 @@ def api_send_report():
     """
 
     try:
-        import smtplib
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-
-        msg = MIMEMultipart("alternative")
+        msg = MIMEMultipart("mixed")
         msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
         msg["From"]    = smtp_user
         msg["To"]      = recipient
-        msg.attach(MIMEText(html_content, "html"))
+
+        msg_body = MIMEMultipart("alternative")
+        msg_body.attach(MIMEText(html_content, "html"))
+        msg.attach(msg_body)
+
+        # Generate and Attach PDF
+        try:
+            pdf_data = generate_pdf_bytes(scope, summary, trades)
+            pdf_attachment = MIMEApplication(pdf_data, _subtype="pdf")
+            pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf")
+            msg.attach(pdf_attachment)
+            status_text = "SENT (PDF Attached)"
+        except Exception as pdf_err:
+            log.warning(f"PDF generation failed, sending HTML body only: {pdf_err}")
+            status_text = "SENT (HTML Only)"
 
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
@@ -555,12 +666,12 @@ def api_send_report():
             server.sendmail(smtp_user, recipient, msg.as_string())
 
         log.info(f"Report emailed successfully to {recipient}")
-        _log_email_attempt(recipient, scope, summary, "SENT")
+        _log_email_attempt(recipient, scope, summary, status_text)
 
         return jsonify({
             "ok": True,
             "recipient": recipient,
-            "message": f"Report successfully dispatched to {recipient}"
+            "message": f"Report shared with {recipient}"
         })
 
     except Exception as e:
