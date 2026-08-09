@@ -603,6 +603,56 @@ function renderCoinPerformance(realTrades) {
   grid.innerHTML = ALL_COINS.map(coin => { const cTrades = realTrades.filter(t => t.symbol === coin), total = cTrades.length, wins = cTrades.filter(isWin).length, losses = total - wins, pnl = cTrades.reduce((s, t) => s + (t.pnl || 0), 0), wr = total ? (wins / total * 100).toFixed(0) : null, wrColor = wr == null ? 'var(--text3)' : wr >= 60 ? 'var(--green)' : wr >= 40 ? 'var(--amber)' : 'var(--red)', pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)'; return `<div class="coin-perf-card"><div style="display:flex;justify-content:space-between;align-items:center;"><span class="coin-perf-sym">${coin.replace('USDT','')}</span><span style="font-size:10px;color:${pnlColor};font-weight:700;">${pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '$0'}</span></div><div class="coin-perf-wr" style="color:${wrColor}">${wr != null ? wr + '%' : '—'}</div><div class="coin-perf-sub">${total > 0 ? wins + 'W / ' + losses + 'L (' + total + ' trades)' : 'No trades'}</div></div>`; }).join('');
 }
 
+/* 🎯 RESTORED MARKET TAB FETCHING (VIA PROXY /api/market) & ATR */
+async function fetchMarketData() {
+  try {
+    let fg = await fetch('https://api.alternative.me/fng/?limit=1').then(r => r.json()).catch(() => null); if (!fg) fg = await apiFetch('/api/fng', null);
+    if (fg && fg.data && fg.data.length) {
+      const val = parseInt(fg.data[0].value), lbl = fg.data[0].value_classification, col = val < 25 ? 'var(--green)' : val < 45 ? 'var(--cyan)' : val < 55 ? 'var(--text2)' : val < 75 ? 'var(--amber)' : 'var(--red)';
+      document.getElementById('fgNum').textContent = val; document.getElementById('fgNum').style.color = col; document.getElementById('fgLabel').textContent = lbl; document.getElementById('fgCursor').style.left = val + '%';
+      document.getElementById('fgAdvice').textContent = val < 25 ? 'Market in extreme fear — historically a buying opportunity' : val < 45 ? 'Market fearful — be cautious, wait for confirmation' : val < 55 ? 'Market balanced — follow individual coin signals' : val < 75 ? 'Market greedy — use tight stop losses' : 'Extreme greed — high risk of reversal, reduce position size';
+    }
+  } catch (e) {}
+
+  try {
+    const map = await apiFetch('/api/market', {});
+    let gainers = 0, losers = 0, best = null, worst = null;
+    const grid = document.getElementById('mktPairsGrid');
+    if (grid && Object.keys(map).length) {
+      grid.innerHTML = ALL_COINS.map(sym => {
+        const t = map[sym]; if (!t) return '';
+        const price = parseFloat(t.lastPrice || 0), chg = parseFloat(t.priceChangePercent || 0);
+        if (chg > 0) gainers++; else losers++;
+        if (!best || chg > parseFloat(map[best]?.priceChangePercent || 0)) best = sym;
+        if (!worst || chg < parseFloat(map[worst]?.priceChangePercent || 0)) worst = sym;
+        const dec = price < 1 ? 4 : price < 100 ? 2 : 0;
+        return `<div class="market-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-family:var(--sans);font-size:13px;font-weight:700;color:#fff">${sym.replace('USDT','')}</span><span class="mc-chg ${chg>=0?'up':'down'}">${pct(chg)}</span></div><div class="mc-price">$${price.toLocaleString('en',{minimumFractionDigits:dec,maximumFractionDigits:dec})}</div><div style="font-size:10px;color:var(--text3)">Vol: $${(parseFloat(t.quoteVolume||0)/1e6).toFixed(1)}M</div></div>`;
+      }).join('');
+    }
+    ['mkt-gainers', 'mkt-losers'].forEach((id, i) => { const el = document.getElementById(id); if (el) el.textContent = [gainers, losers][i]; });
+    if (best) { document.getElementById('mkt-best').textContent = pct(parseFloat(map[best].priceChangePercent || 0)); document.getElementById('mkt-best-sym').textContent = best; }
+    if (worst) { document.getElementById('mkt-worst').textContent = pct(parseFloat(map[worst].priceChangePercent || 0)); document.getElementById('mkt-worst-sym').textContent = worst; }
+  } catch (e) {}
+  fetchBtcAtr();
+}
+
+async function fetchBtcAtr() {
+  try {
+    const proxyRes = await apiFetch('/api/btc_atr', null);
+    if (proxyRes && proxyRes.ok) {
+      document.getElementById('btcAtr').textContent = proxyRes.atr.toFixed(2);
+      document.getElementById('btcAtrPct').textContent = proxyRes.pct.toFixed(2) + '%';
+      document.getElementById('btcPrice').textContent = '$' + proxyRes.price.toLocaleString('en', { maximumFractionDigits: 0 });
+      const chgEl = document.getElementById('btcChg');
+      if (chgEl) { chgEl.textContent = pct(proxyRes.chg_24h); chgEl.style.color = proxyRes.chg_24h >= 0 ? 'var(--green)' : 'var(--red)'; }
+      const volEl = document.getElementById('volBanner'), volTxt = document.getElementById('volText');
+      if (proxyRes.pct > 4) { volEl.className = 'vol-banner high'; volTxt.textContent = `🚨 EXTREME VOLATILITY — BTC ATR ${proxyRes.pct.toFixed(2)}%`; }
+      else if (proxyRes.pct > 2) { volEl.className = 'vol-banner high'; volTxt.textContent = `⚠️ HIGH VOLATILITY — BTC ATR ${proxyRes.pct.toFixed(2)}%`; }
+      else { volEl.className = 'vol-banner normal'; volTxt.textContent = `✓ Normal volatility — BTC ATR ${proxyRes.pct.toFixed(2)}%`; }
+    }
+  } catch (e) {}
+}
+
 /* QUANT CHARTS: MOVEABLE SCALE & CROSSHAIRS */
 async function fetchAnalytics() {
   const d = await apiFetch('/api/analytics', null); if (!d || !d.ok) return;
