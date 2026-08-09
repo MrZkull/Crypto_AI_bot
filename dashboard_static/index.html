@@ -192,6 +192,28 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
 .coin-perf-wr{font-size:14px;font-weight:800}
 .coin-perf-sub{font-size:9px;color:var(--text3)}
 
+/* 📌 STICKY HISTORY TOOLBAR & TABLE HEADERS */
+.history-toolbar {
+  position: sticky;
+  top: 57px;
+  z-index: 25;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
+.htable-wrapper {
+  max-height: 65vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  position: relative;
+}
+.htable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg2);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.6);
+}
+
 /* 🏛️ INSTITUTIONAL PRINT TEMPLATE STYLES */
 .printable-report { display: none; }
 @media print {
@@ -475,8 +497,8 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
         <span class="panel-badge" id="histBadge">0 trades</span>
       </div>
 
-      <!-- FILTER & EXPORT TOOLBAR -->
-      <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;background:var(--bg3)">
+      <!-- FILTER & EXPORT TOOLBAR (STICKY) -->
+      <div class="history-toolbar" style="display:flex;align-items:center;gap:8px;padding:10px 16px;flex-wrap:wrap;">
         <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-right:2px">Range:</span>
         <button class="fbtn active" onclick="setHistRange('all',this)">All Time</button>
         <button class="fbtn" onclick="setHistRange('today',this)">Today</button>
@@ -505,7 +527,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
         </div>
       </div>
 
-      <div style="overflow-x:auto">
+      <div class="htable-wrapper">
         <table class="htable">
           <thead><tr><th>Symbol</th><th>Tier</th><th>Dir</th><th>Entry</th><th>Close</th><th>PnL (USDT)</th><th>Result</th><th>Opened</th><th>Duration</th><th>Reason</th></tr></thead>
           <tbody id="histBody"><tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No closed trades yet</td></tr></tbody>
@@ -1235,8 +1257,8 @@ async function fetchSignals() {
   const avgConf = confs.length ? (confs.reduce((a,b)=>a+b,0)/confs.length).toFixed(1) : 0;
 
   ['sig-total','statSigToday'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent=tod.filter(s=>!s.isRejected).length; });
-  const sb = document.getElementById('sig-buy');    if(sb) sb.textContent = buy;
-  const ss = document.getElementById('sig-sell');   if(ss) ss.textContent = sell;
+  const sb = document.getElementById('sig-buy');   if(sb) sb.textContent = buy;
+  const ss = document.getElementById('sig-sell');  if(ss) ss.textContent = sell;
   const sa = document.getElementById('sig-avgconf');if(sa) sa.textContent = avgConf ? avgConf+'%' : '—';
   const sb2= document.getElementById('statSigSub'); if(sb2) sb2.textContent = buy+' BUY · '+sell+' SELL';
 
@@ -1628,17 +1650,17 @@ async function sendEmailReport() {
     return;
   }
 
-  const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
+  const filteredTrades = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
   let wins = 0, losses = 0, netPnL = 0, maxWin = 0, maxLoss = 0, grossP = 0, grossL = 0;
 
-  data.forEach(t => {
+  filteredTrades.forEach(t => {
     const pnl = parseFloat(t.pnl || 0);
     netPnL += pnl;
     if (pnl > 0) { wins++; grossP += pnl; if (pnl > maxWin) maxWin = pnl; }
     else if (pnl < 0) { losses++; grossL += Math.abs(pnl); if (pnl < maxLoss) maxLoss = pnl; }
   });
 
-  const total = data.length;
+  const total = filteredTrades.length;
   const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) + '%' : "0.0%";
   const profitFactor = grossL > 0 ? (grossP / grossL).toFixed(2) : "0.00";
 
@@ -1651,7 +1673,8 @@ async function sendEmailReport() {
   const payload = {
     email,
     scope: `Range: ${histRange.toUpperCase()} | Result: ${histResultFilter.toUpperCase()}`,
-    summary
+    summary,
+    trades: filteredTrades // 👈 PASSES FILTERED TRADES TO BACKEND FOR PDF GENERATION
   };
 
   closeEmailModal();
@@ -1664,7 +1687,7 @@ async function sendEmailReport() {
     });
 
     if (r && r.ok) {
-      alert(`✅ Performance Report sent successfully to ${email}!`);
+      alert(`✅ Performance Report with PDF attachment sent successfully to ${email}!`);
     } else {
       alert(`🚨 Email Sending Failed:\n${r?.message || 'Server error'}`);
     }
@@ -1980,11 +2003,11 @@ function renderMonEvents() {
 }
 
 function updateOverallHealth(checks) {
-  const ok   = checks.filter(c=>c==='ok').length;
+  const ok    = checks.filter(c=>c==='ok').length;
   const warn = checks.filter(c=>c==='warn').length;
-  const err  = checks.filter(c=>c==='err').length;
+  const err   = checks.filter(c=>c==='err').length;
   const pct2 = checks.length ? Math.round((ok+warn*0.5)/checks.length*100) : 100;
-  const col  = pct2>=80?'var(--green)':pct2>=60?'var(--amber)':'var(--red)';
+  const col   = pct2>=80?'var(--green)':pct2>=60?'var(--amber)':'var(--red)';
   sv('monPct',pct2+'%',col);
   const fill = document.getElementById('monFill');
   if (fill){fill.style.width=pct2+'%';fill.style.background=col;}
