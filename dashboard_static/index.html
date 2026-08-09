@@ -214,6 +214,28 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.6);
 }
 
+/* Picklist Dropdown Styling */
+.fselect {
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text2);
+  font-family: var(--mono);
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.fselect:hover, .fselect:focus {
+  border-color: var(--blue);
+  color: var(--text);
+}
+.fselect option {
+  background: var(--bg2);
+  color: var(--text);
+}
+
 /* 🏛️ INSTITUTIONAL PRINT TEMPLATE STYLES */
 .printable-report { display: none; }
 @media print {
@@ -497,33 +519,85 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
         <span class="panel-badge" id="histBadge">0 trades</span>
       </div>
 
-      <!-- FILTER & EXPORT TOOLBAR (STICKY) -->
-      <div class="history-toolbar" style="display:flex;align-items:center;gap:8px;padding:10px 16px;flex-wrap:wrap;">
-        <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-right:2px">Range:</span>
-        <button class="fbtn active" onclick="setHistRange('all',this)">All Time</button>
-        <button class="fbtn" onclick="setHistRange('today',this)">Today</button>
-        <button class="fbtn" onclick="setHistRange('7d',this)">7 Days</button>
-        <button class="fbtn" onclick="setHistRange('30d',this)">30 Days</button>
-        <button class="fbtn" onclick="setHistRange('custom',this)">📅 Custom</button>
-        <div id="histCustomRange" style="display:none;align-items:center;gap:6px">
-          <input type="date" id="histFrom">
-          <span style="color:var(--text3);font-size:12px">→</span>
-          <input type="date" id="histTo">
-          <button class="fbtn" onclick="applyCustomRange()" style="border-color:var(--blue);color:var(--blue)">Apply</button>
+      <!-- FILTER & EXPORT TOOLBAR (STICKY WITH ADVANCED PICKLISTS) -->
+      <div class="history-toolbar" style="display:flex;flex-direction:column;gap:10px;padding:12px 16px;">
+        <!-- ROW 1: Date Range, Results, Export Buttons -->
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;">Range:</span>
+          <button class="fbtn active" onclick="setHistRange('all',this)">All Time</button>
+          <button class="fbtn" onclick="setHistRange('today',this)">Today</button>
+          <button class="fbtn" onclick="setHistRange('7d',this)">7 Days</button>
+          <button class="fbtn" onclick="setHistRange('30d',this)">30 Days</button>
+          <button class="fbtn" onclick="setHistRange('custom',this)">📅 Custom</button>
+          <div id="histCustomRange" style="display:none;align-items:center;gap:6px">
+            <input type="date" id="histFrom">
+            <span style="color:var(--text3);font-size:12px">→</span>
+            <input type="date" id="histTo">
+            <button class="fbtn" onclick="applyCustomRange()" style="border-color:var(--blue);color:var(--blue)">Apply</button>
+          </div>
+
+          <div style="width:1px;height:18px;background:var(--border);margin:0 4px"></div>
+
+          <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;">Result:</span>
+          <button class="fbtn active" onclick="setHistResult('all',this)">All</button>
+          <button class="fbtn buy-btn" onclick="setHistResult('win',this)">✓ Wins</button>
+          <button class="fbtn sell-btn" onclick="setHistResult('loss',this)">✕ Losses</button>
+
+          <!-- EXPORT & EMAIL BUTTONS -->
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button onclick="openEmailModal()" class="fbtn" style="background:var(--purple2);border-color:var(--purple);color:var(--purple);font-weight:600;">✉️ Send Email</button>
+            <button onclick="downloadCSVReport()" class="fbtn" style="background:var(--green2);border-color:var(--green);color:var(--green);font-weight:600;">📥 CSV</button>
+            <button onclick="printPDFReport()" class="fbtn" style="background:var(--blue2);border-color:var(--blue);color:var(--blue);font-weight:600;">📄 PDF</button>
+          </div>
         </div>
 
-        <div style="width:1px;height:18px;background:var(--border);margin:0 4px"></div>
+        <!-- ROW 2: PICKLIST DROPDOWNS (SORT, CATEGORY, SYMBOL, DIR, REASON) -->
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--border)">
+          <!-- SORT ORDER -->
+          <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;">Sort:</span>
+          <select id="histSortPick" class="fselect" onchange="renderHistoryFiltered()">
+            <option value="newest">📅 Newest First</option>
+            <option value="oldest">📅 Oldest First</option>
+            <option value="pnl_desc">📈 Profit: High → Low</option>
+            <option value="pnl_asc">📉 Profit: Low → High</option>
+          </select>
 
-        <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-right:2px">Result:</span>
-        <button class="fbtn active" onclick="setHistResult('all',this)">All</button>
-        <button class="fbtn buy-btn" onclick="setHistResult('win',this)">✓ Wins</button>
-        <button class="fbtn sell-btn" onclick="setHistResult('loss',this)">✕ Losses</button>
+          <!-- CATEGORY / TIER -->
+          <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-left:4px;">Category:</span>
+          <select id="histCategoryPick" class="fselect" onchange="renderHistoryFiltered()">
+            <option value="all">All Categories / Tiers</option>
+            <option value="big3">👑 Big Three</option>
+            <option value="liq1">⚡ High-Liquidity L1s</option>
+            <option value="inst">🏛️ Institutional Alts</option>
+            <option value="ai_mom">🤖 AI & Momentum</option>
+          </select>
 
-        <!-- EXPORT & EMAIL BUTTONS -->
-        <div style="margin-left:auto;display:flex;gap:6px">
-          <button onclick="openEmailModal()" class="fbtn" style="background:var(--purple2);border-color:var(--purple);color:var(--purple);font-weight:600;">✉️ Send to Email</button>
-          <button onclick="downloadCSVReport()" class="fbtn" style="background:var(--green2);border-color:var(--green);color:var(--green);font-weight:600;">📥 Export CSV</button>
-          <button onclick="printPDFReport()" class="fbtn" style="background:var(--blue2);border-color:var(--blue);color:var(--blue);font-weight:600;">📄 Export PDF Report</button>
+          <!-- SPECIFIC SYMBOL -->
+          <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-left:4px;">Symbol:</span>
+          <select id="histSymbolPick" class="fselect" onchange="renderHistoryFiltered()">
+            <option value="all">All Symbols</option>
+          </select>
+
+          <!-- DIRECTION -->
+          <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-left:4px;">Dir:</span>
+          <select id="histDirPick" class="fselect" onchange="renderHistoryFiltered()">
+            <option value="all">All Directions</option>
+            <option value="BUY">▲ BUY Only</option>
+            <option value="SELL">▼ SELL Only</option>
+          </select>
+
+          <!-- EXIT REASON -->
+          <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-left:4px;">Reason:</span>
+          <select id="histReasonPick" class="fselect" onchange="renderHistoryFiltered()">
+            <option value="all">All Exit Reasons</option>
+            <option value="tp">🎯 TP Hit (TP1 / TP2)</option>
+            <option value="sl">🛑 SL Hit</option>
+            <option value="manual">✋ Manual Close</option>
+            <option value="time">⏰ Time Exit</option>
+          </select>
+
+          <!-- RESET BUTTON -->
+          <button onclick="resetHistFilters()" class="fbtn" style="margin-left:auto;color:var(--text3);border-color:var(--border2)">↻ Reset Picklists</button>
         </div>
       </div>
 
@@ -1351,6 +1425,37 @@ function applyCustomRange() {
   renderHistoryFiltered();
 }
 
+// Populate the Symbol Picklist on startup
+function populateSymbolPicklist() {
+  const select = document.getElementById('histSymbolPick');
+  if (!select || select.options.length > 1) return;
+  
+  ALL_COINS.forEach(sym => {
+    const opt = document.createElement('option');
+    opt.value = sym;
+    opt.textContent = sym.replace('USDT', '') + ' / USDT';
+    select.appendChild(opt);
+  });
+}
+
+function resetHistFilters() {
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  setVal('histSortPick', 'newest');
+  setVal('histCategoryPick', 'all');
+  setVal('histSymbolPick', 'all');
+  setVal('histDirPick', 'all');
+  setVal('histReasonPick', 'all');
+  histRange = 'all';
+  histResultFilter = 'all';
+  
+  document.querySelectorAll('.fbtn[onclick*="setHistRange"]').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.fbtn[onclick*="setHistResult"]').forEach(b => b.classList.remove('active'));
+  document.querySelector('.fbtn[onclick*="setHistRange(\'all\'"]')?.classList.add('active');
+  document.querySelector('.fbtn[onclick*="setHistResult(\'all\'"]')?.classList.add('active');
+  
+  renderHistoryFiltered();
+}
+
 function getHistFiltered() {
   const now = new Date();
   let from = null, to = null;
@@ -1367,23 +1472,67 @@ function getHistFiltered() {
     if (t) { to = new Date(t + 'T23:59:59'); }
   }
 
+  // Picklist element values
+  const category = document.getElementById('histCategoryPick')?.value || 'all';
+  const symbol = document.getElementById('histSymbolPick')?.value || 'all';
+  const dir = document.getElementById('histDirPick')?.value || 'all';
+  const reason = document.getElementById('histReasonPick')?.value || 'all';
+
   const isWin = t => (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
 
-  return allHistory.filter(t => {
+  let list = allHistory.filter(t => {
     const d = new Date(t.opened_at || t.closed_at || 0);
     if (from && d < from) return false;
     if (to   && d > to)   return false;
 
+    // Result Filter (Wins / Losses)
     if (histResultFilter === 'win' && !isWin(t)) return false;
     if (histResultFilter === 'loss' && isWin(t)) return false;
 
+    // Category / Tier Filter
+    if (category !== 'all') {
+      const allowedCoins = COINS[category] || [];
+      if (!allowedCoins.includes(t.symbol)) return false;
+    }
+
+    // Specific Symbol Filter
+    if (symbol !== 'all' && t.symbol !== symbol) return false;
+
+    // Direction Filter (BUY / SELL)
+    if (dir !== 'all' && t.signal !== dir) return false;
+
+    // Reason Filter
+    if (reason !== 'all') {
+      const r = (t.close_reason || '').toLowerCase();
+      if (reason === 'tp' && !r.includes('tp')) return false;
+      if (reason === 'sl' && !r.includes('sl')) return false;
+      if (reason === 'manual' && !r.includes('manual')) return false;
+      if (reason === 'time' && !r.includes('time')) return false;
+    }
+
     return true;
   });
+
+  // Sorting Logic (High to Low Profit, Low to High Profit, Newest, Oldest)
+  const sort = document.getElementById('histSortPick')?.value || 'newest';
+  list.sort((a, b) => {
+    const pnlA = parseFloat(a.pnl || 0);
+    const pnlB = parseFloat(b.pnl || 0);
+    const dateA = new Date(a.closed_at || a.opened_at || 0);
+    const dateB = new Date(b.closed_at || b.opened_at || 0);
+
+    if (sort === 'pnl_desc') return pnlB - pnlA; // High profit -> Low profit
+    if (sort === 'pnl_asc')  return pnlA - pnlB; // Low profit -> High profit
+    if (sort === 'oldest')   return dateA - dateB; // Oldest -> Newest
+    return dateB - dateA;                         // Newest -> Oldest
+  });
+
+  return list;
 }
 
 function renderHistoryFiltered() {
-  const data  = getHistFiltered();
-  const real  = data.filter(t => t.signal !== 'RECOVERED');
+  populateSymbolPicklist();
+  const real  = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
   const isWin = t => (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
   const wins  = real.filter(t => isWin(t));
   const loss  = real.filter(t => !isWin(t));
@@ -1405,10 +1554,12 @@ function renderHistoryFiltered() {
   const tbody = document.getElementById('histBody');
   if (!tbody) return;
   if (!real.length) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No trades match selected filter</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text3)">No trades match selected picklist filters</td></tr>';
     return;
   }
-  tbody.innerHTML = [...real].reverse().map(t => {
+
+  // Render sorted and filtered list
+  tbody.innerHTML = real.map(t => {
     const win = isWin(t);
     const dec = (t.entry||1) < 10 ? 4 : 2;
     const dur = t.opened_at && t.closed_at ?
@@ -1558,7 +1709,7 @@ function renderInstitutionalReport() {
     tbody.appendChild(row);
   });
 
-  // 🎯 FIX 1: animation: false prevents Chart.js from rendering blank frame 0
+  // animation: false prevents Chart.js from rendering blank frame 0
   const ctxPie = document.getElementById('repPieCanvas').getContext('2d');
   if (reportPieChartInst) reportPieChartInst.destroy();
   reportPieChartInst = new Chart(ctxPie, {
@@ -1595,7 +1746,7 @@ function renderInstitutionalReport() {
 function printPDFReport() {
   const rep = document.getElementById('printableReport');
   
-  // 🎯 FIX 2: Render off-screen first so Chart.js can measure canvas dimensions
+  // Render off-screen first so Chart.js can measure canvas dimensions
   rep.style.display = 'block';
   rep.style.position = 'absolute';
   rep.style.top = '-9999px';
