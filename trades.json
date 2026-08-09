@@ -1,70 +1,4 @@
 {
-  "ETHUSDT": {
-    "symbol": "ETHUSDT",
-    "signal": "BUY",
-    "entry": 1914.03,
-    "stop": 1905.2,
-    "tp1": 1926.4,
-    "tp2": 1940.55,
-    "qty": 2.924,
-    "qty_tp1": 1.754,
-    "qty_tp2": 1.17,
-    "risk_usd": 25.82,
-    "balance_at_open": 108119.95,
-    "risk_mult": 1.0,
-    "order_ids": {
-      "stop_loss": "USDC-SLMS-31489",
-      "tp1": "USDC-210049215906243861",
-      "tp2": "USDC-210049215906244241"
-    },
-    "opened_at": "2026-08-07T22:01:37.148132+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 60.0,
-    "score": 3,
-    "reasons": [
-      "Adopted untracked position via [3c]"
-    ],
-    "tier": "\ud83d\udc51 Big Three",
-    "exchange": "deribit_testnet"
-  },
-  "BNBUSDT": {
-    "symbol": "BNBUSDT",
-    "signal": "BUY",
-    "entry": 610.8060158,
-    "stop": 606.81,
-    "tp1": 616.4,
-    "tp2": 622.79,
-    "qty": 8.86,
-    "qty_tp1": 5.31,
-    "qty_tp2": 3.55,
-    "risk_usd": 633.28,
-    "balance_at_open": 108300.99,
-    "risk_mult": 0.5847371616788105,
-    "order_ids": {
-      "entry": "USDC-210049216397492389",
-      "stop_loss": "USDC-SLMS-31548",
-      "tp1": "USDC-210049216397496571",
-      "tp2": "USDC-210049216397496934"
-    },
-    "opened_at": "2026-08-09T14:10:40.566551+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 53.5,
-    "score": 6,
-    "reasons": [
-      "Strong ADX 48",
-      "EMA bullish",
-      "1h confirms",
-      "4h trend aligns (RSI 70)",
-      "4h trend established (20h)",
-      "Volume surge 1.8\u00d7"
-    ],
-    "tier": "\ud83d\udc51 Big Three",
-    "exchange": "deribit_testnet"
-  },
   "TRXUSDT": {
     "symbol": "TRXUSDT",
     "signal": "BUY",
@@ -101,6 +35,42 @@
       "Volume surge 1.5\u00d7"
     ],
     "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet"
+  },
+  "XRPUSDT": {
+    "symbol": "XRPUSDT",
+    "signal": "SELL",
+    "entry": 1.0378,
+    "stop": 1.0452,
+    "tp1": 1.0275,
+    "tp2": 1.0156,
+    "qty": 5210,
+    "qty_tp1": 3120,
+    "qty_tp2": 2090,
+    "risk_usd": 855.27,
+    "balance_at_open": 108205.0,
+    "risk_mult": 0.7904188056350963,
+    "order_ids": {
+      "entry": "USDC-210049216502185900",
+      "stop_loss": "USDC-SLMB-31559",
+      "tp1": "USDC-210049216502190103",
+      "tp2": "USDC-210049216502190314"
+    },
+    "opened_at": "2026-08-09T22:43:34.058106+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 64.0,
+    "score": 6,
+    "reasons": [
+      "Conf (64%)",
+      "Strong ADX 27",
+      "RSI not oversold (41)",
+      "4h trend aligns (RSI 46)",
+      "4h trend established (20h)",
+      "Volume surge 2.5\u00d7"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"
   }
 }
