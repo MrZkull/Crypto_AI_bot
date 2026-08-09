@@ -1,4 +1,4 @@
-# dashboard.py — V4.5: Institutional Server with PDF Email Attachments, Audit Tracker, & Deribit Health
+# dashboard.py — V4.6: Robust Email PDF Fallback, Daily Analytics, & Deribit Health
 
 import os
 import json
@@ -21,11 +21,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-# ReportLab imports for in-memory PDF generation
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
+# Safe ReportLab import check
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
 
 load_dotenv()
 app = Flask(__name__, static_folder="dashboard_static")
@@ -47,25 +51,21 @@ CACHE_TTL = 15  # 15 second cache TTL for fresh GitHub state sync
 # ── PDF Generation Helper ──────────────────────────────────────────────
 
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
-    """Generates an in-memory PDF report using ReportLab."""
+    """Generates an in-memory PDF report using ReportLab if installed."""
+    if not HAS_REPORTLAB:
+        raise ImportError("ReportLab package is not installed on this server.")
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     styles = getSampleStyleSheet()
     
     title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading1'],
-        fontSize=16,
-        leading=20,
-        textColor=colors.HexColor('#0f172a'),
-        spaceAfter=4
+        'DocTitle', parent=styles['Heading1'], fontSize=16, leading=20,
+        textColor=colors.HexColor('#0f172a'), spaceAfter=4
     )
     subtitle_style = ParagraphStyle(
-        'DocSubTitle',
-        parent=styles['Normal'],
-        fontSize=9,
-        textColor=colors.HexColor('#64748b'),
-        spaceAfter=12
+        'DocSubTitle', parent=styles['Normal'], fontSize=9,
+        textColor=colors.HexColor('#64748b'), spaceAfter=12
     )
     normal_style = ParagraphStyle('DocNormal', parent=styles['Normal'], fontSize=9, leading=12)
 
@@ -76,9 +76,7 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
         Spacer(1, 10)
     ]
 
-    # Metrics Summary Table
     pnl_val = float(summary.get('net_pnl', 0))
-    pnl_color = colors.HexColor('#00873d') if pnl_val >= 0 else colors.HexColor('#d91424')
     
     summary_data = [
         [f"Total Trades: {summary.get('total_trades', 0)}", f"Win/Loss Split: {summary.get('wins', 0)}W / {summary.get('losses', 0)}L ({summary.get('win_rate', '0%')})"],
@@ -97,7 +95,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     ]))
     elements.extend([sum_table, Spacer(1, 12)])
 
-    # Trades Breakdown Table
     if trades:
         elements.append(Paragraph("<b>Executed Trade Records (Latest 30):</b>", normal_style))
         elements.append(Spacer(1, 6))
@@ -589,14 +586,14 @@ def api_send_report():
 
     # 2. Check Render Environment Variables
     if not smtp_user or not smtp_pass:
-        error_msg = "SMTP_USER and SMTP_PASS environment variables are not configured in Render."
+        error_msg = "SMTP_USER and SMTP_PASS environment variables are missing in Render settings."
         log.warning(f"Email send aborted for {recipient}: {error_msg}")
         _log_email_attempt(recipient, scope, summary, "FAILED: Missing Render SMTP Credentials")
         
         return jsonify({
             "ok": False,
             "error": "SMTP_NOT_CONFIGURED",
-            "message": "Email delivery failed: Server SMTP credentials are missing in Render environment settings."
+            "message": "Email delivery failed: Server SMTP credentials (SMTP_USER/SMTP_PASS) are missing in Render environment settings."
         }), 500
 
     # 3. Real SMTP Email Dispatch
@@ -649,16 +646,17 @@ def api_send_report():
         msg_body.attach(MIMEText(html_content, "html"))
         msg.attach(msg_body)
 
-        # Generate and Attach PDF
-        try:
-            pdf_data = generate_pdf_bytes(scope, summary, trades)
-            pdf_attachment = MIMEApplication(pdf_data, _subtype="pdf")
-            pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf")
-            msg.attach(pdf_attachment)
-            status_text = "SENT (PDF Attached)"
-        except Exception as pdf_err:
-            log.warning(f"PDF generation failed, sending HTML body only: {pdf_err}")
-            status_text = "SENT (HTML Only)"
+        # Generate and Attach PDF with Fail-Safe Fallback
+        status_text = "SENT (HTML Only)"
+        if HAS_REPORTLAB:
+            try:
+                pdf_data = generate_pdf_bytes(scope, summary, trades)
+                pdf_attachment = MIMEApplication(pdf_data, _subtype="pdf")
+                pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf")
+                msg.attach(pdf_attachment)
+                status_text = "SENT (PDF Attached)"
+            except Exception as pdf_err:
+                log.warning(f"PDF generation failed, falling back to HTML dispatch: {pdf_err}")
 
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
@@ -800,10 +798,19 @@ def api_analytics():
             dds.append(dd)
         max_dd = round(max(dds), 2) if dds else 0.0
 
+    # Daily PnL Aggregation
+    daily_pnl_map = {}
+    for t in real_trades:
+        day = (t.get("closed_at") or t.get("opened_at") or "")[:10]
+        if day:
+            daily_pnl_map[day] = round(daily_pnl_map.get(day, 0) + float(t.get("pnl", 0)), 2)
+
+    daily_points = [{"date": d, "pnl": p} for d, p in sorted(daily_pnl_map.items())]
+
     equity_points = []
     bust("balance.json")
     bal_data = get("balance.json", {})
-    current_bal = float(bal_data.get("usdt", 107913.78))
+    current_bal = float(bal_data.get("usdt", 108296.99))
     
     running = current_bal - sum(pnls)
     for t in real_trades[-50:]:
@@ -824,7 +831,8 @@ def api_analytics():
         "win_rate": round(win_rate, 1),
         "avg_win": round(avg_win, 4),
         "avg_loss": round(avg_loss, 4),
-        "equity_curve": equity_points
+        "equity_curve": equity_points,
+        "daily_pnl": daily_points
     })
 
 
