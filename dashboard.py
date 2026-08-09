@@ -586,7 +586,7 @@ def api_send_report():
 
     # 2. Check Render Environment Variables
     if not smtp_user or not smtp_pass:
-        error_msg = "SMTP_USER and SMTP_PASS environment variables are missing in Render settings."
+        error_msg = "SMTP_USER and SMTP_PASS environment variables are not configured in Render."
         log.warning(f"Email send aborted for {recipient}: {error_msg}")
         _log_email_attempt(recipient, scope, summary, "FAILED: Missing Render SMTP Credentials")
         
