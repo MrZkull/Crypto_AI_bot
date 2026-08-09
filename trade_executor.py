@@ -1230,18 +1230,18 @@ def check_stale_trades(deribit: DeribitClient):
 
 
 def clean_ghost_trades(deribit: DeribitClient):
-    trades=load_trades()
+    trades = load_trades()
     if not trades: return
     live_pos = {}
     for p in deribit.get_positions():
-        if float(p.get("size",0))!=0:
-            inst=p.get("instrument_name","")
-            base=inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-            live_pos[f"{base}USDT"]=True
+        if float(p.get("size", 0)) != 0:
+            inst = p.get("instrument_name", "")
+            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+            live_pos[f"{base}USDT"] = True
 
-    to_remove=[]
+    to_remove = []
     for symbol, trade in trades.items():
-        if float(trade.get("stop",0))==0 or float(trade.get("tp1",0))==0:
+        if float(trade.get("stop", 0)) == 0 or float(trade.get("tp1", 0)) == 0:
             log.warning(f"  🗑️ {symbol}: broken state — remove")
             to_remove.append(symbol); continue
             
@@ -1268,42 +1268,54 @@ def clean_ghost_trades(deribit: DeribitClient):
             
         if symbol not in live_pos:
             log.warning(f"  🕵️ {symbol}: no position — recovering PnL...")
-            real_pnl=None; real_close=None; reason="Closed on exchange"
+            real_pnl = None; real_close = None; reason = "Closed on exchange"
             try:
-                fills=deribit.get_trade_history_for_instrument(symbol,count=20)
-                entry=float(trade["entry"]); entry_dir=trade["signal"]
-                close_fills=[f for f in fills
-                    if (entry_dir=="BUY" and f.get("direction")=="sell") or
-                       (entry_dir=="SELL" and f.get("direction")=="buy")]
+                fills = deribit.get_trade_history_for_instrument(symbol, count=20)
+                entry = float(trade["entry"]); entry_dir = trade["signal"]
+                close_fills = [f for f in fills
+                    if (entry_dir == "BUY" and f.get("direction") == "sell") or
+                       (entry_dir == "SELL" and f.get("direction") == "buy")]
                 if close_fills:
-                    latest=close_fills[0]; real_close=float(latest.get("price",0) or 0)
-                    qty=float(trade.get("qty",0))
-                    if real_close>0 and qty>0:
-                        diff=(real_close-entry) if entry_dir=="BUY" else (entry-real_close)
-                        real_pnl=round(diff*qty,4)
-                        tp1_p=float(trade.get("tp1",0)); tp2_p=float(trade.get("tp2",0))
-                        if entry_dir=="BUY":
-                            if real_close >= tp2_p*0.998: reason="TP2 hit"
-                            elif real_close >= tp1_p*0.998: reason="TP1 hit"
-                            else: reason="SL hit"
+                    latest = close_fills[0]; real_close = float(latest.get("price", 0) or 0)
+                    qty = float(trade.get("qty", 0))
+                    if real_close > 0 and qty > 0:
+                        diff = (real_close - entry) if entry_dir == "BUY" else (entry - real_close)
+                        real_pnl = round(diff * qty, 4)
+                        tp1_p = float(trade.get("tp1", 0)); tp2_p = float(trade.get("tp2", 0))
+                        
+                        if entry_dir == "BUY":
+                            if real_close >= tp2_p * 0.998:
+                                reason = "TP2 hit"
+                            elif real_close >= tp1_p * 0.998:
+                                reason = "TP1 hit"
+                            elif real_pnl > 0:
+                                reason = "Manual close (Profit)"  # 🎯 Check for profitable manual exits
+                            else:
+                                reason = "SL hit"
                         else:
-                            if real_close <= tp2_p*1.002: reason="TP2 hit"
-                            elif real_close <= tp1_p*1.002: reason="TP1 hit"
-                            else: reason="SL hit"
+                            if real_close <= tp2_p * 1.002:
+                                reason = "TP2 hit"
+                            elif real_close <= tp1_p * 1.002:
+                                reason = "TP1 hit"
+                            elif real_pnl > 0:
+                                reason = "Manual close (Profit)"  # 🎯 Check for profitable manual exits
+                            else:
+                                reason = "SL hit"
                         log.info(f"  ✅ Recovered {symbol}: close={real_close:.4f} pnl={real_pnl:+.4f} ({reason})")
-            except Exception as e: log.warning(f"  PnL recovery {symbol}: {e}")
+            except Exception as e:
+                log.warning(f"  PnL recovery {symbol}: {e}")
 
             if real_pnl is not None and real_close is not None:
-                _close_record(trade,real_close,real_pnl,reason)
-                _send(f"{'✅' if real_pnl>0 else '❌'} *{reason} — {symbol}*\nPnL:`{real_pnl:+.4f}`")
+                _close_record(trade, real_close, real_pnl, reason)
+                _send(f"{'✅' if real_pnl > 0 else '❌'} *{reason} — {symbol}*\nPnL:`{real_pnl:+.4f}`")
             else:
-                _close_record(trade,float(trade.get("entry",0)),0.0,"Ghost — PnL unrecoverable")
+                _close_record(trade, float(trade.get("entry", 0)), 0.0, "Ghost — PnL unrecoverable")
                 _record_ghost(symbol)
                 _add_cooldown(symbol, "Ghost trade — position unrecoverable")
             to_remove.append(symbol)
 
     if to_remove:
-        for sym in to_remove: trades.pop(sym,None)
+        for sym in to_remove: trades.pop(sym, None)
         save_trades(trades)
         log.info(f"  Processed {len(to_remove)} ghost/closed trade(s)")
 
