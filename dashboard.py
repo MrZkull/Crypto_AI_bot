@@ -1,4 +1,4 @@
-# dashboard.py — V5.0: Full Uncompressed Institutional Server with Resilient Market Proxies & SMTP Timeout
+# dashboard.py — V5.1: Master Institutional Server with Resilient Proxies, SMTP Timeout & Type-Safe PDF Engine
 
 import os
 import json
@@ -48,7 +48,7 @@ _cache_ts = {}
 CACHE_TTL = 15
 
 
-# ── PDF Generation Helper (Safely Caster Protected) ─────────────────────
+# ── PDF Generation Helper (Type-Safe Protection Against None Values) ─────
 
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     if not HAS_REPORTLAB:
@@ -94,10 +94,10 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     elements.extend([sum_table, Spacer(1, 12)])
 
     if trades:
-        elements.append(Paragraph("<b>Executed Trade Records (Latest 30):</b>", normal_style))
+        elements.append(Paragraph("<b>Executed Trade Records (Filtered Set):</b>", normal_style))
         elements.append(Spacer(1, 6))
         trade_rows = [["#", "Date (UTC)", "Symbol", "Dir", "Entry", "Close", "PnL ($)", "Reason"]]
-        for idx, t in enumerate(trades[:30], 1):
+        for idx, t in enumerate(trades[:40], 1):
             pnl = float(t.get('pnl') or 0)
             entry = float(t.get('entry') or 0)
             close_price = float(t.get('close_price') or entry)
@@ -235,7 +235,6 @@ def api_status():
     scan_mode = get("scan_mode.json", {})
     trades = get("trades.json", {})
     balance = get("balance.json", {})
-    model_perf = get("model_performance.json", {})
 
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     wins = [h for h in real if (h.get("pnl") or 0) > 0]
@@ -349,7 +348,7 @@ def api_market():
                         "quoteVolume": float(item.get("quoteVolume", 0)),
                     }
         else:
-            # Fallback to CoinGecko if Binance blocks Render IP
+            log.warning(f"Binance 24hr ticker returned HTTP {r.status_code}. Trying backup source...")
             r2 = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,binancecoin,solana,avalanche-2,near,sui,aptos,cosmos,tron,chainlink,polkadot,uniswap,aave,ripple,litecoin,bitcoin-cash,algorand,fetch-ai,cardano,dogecoin&vs_currencies=usd&include_24hr_change=true", timeout=6)
             if r2.ok:
                 cg = r2.json()
@@ -502,10 +501,6 @@ def api_send_report():
             <td style="padding: 10px; border: 1px solid #ddd;"><strong>Net Realized PnL:</strong> <span style="color: {pnl_color}; font-weight: bold;">${summary.get('net_pnl', 0)}</span></td>
             <td style="padding: 10px; border: 1px solid #ddd;"><strong>Profit Factor:</strong> {summary.get('profit_factor', '0.00')}</td>
           </tr>
-          <tr style="background: #f9f9f9;">
-            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Largest Win:</strong> <span style="color: #00873d;">${summary.get('max_win', 0)}</span></td>
-            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Largest Loss:</strong> <span style="color: #d91424;">${summary.get('max_loss', 0)}</span></td>
-          </tr>
         </table>
         <p style="font-size: 12px; color: #444; font-weight: bold; margin-top: 15px;">📎 A full PDF report document is attached to this email.</p>
         <p style="font-size: 11px; color: #777; margin-top: 25px; text-align: center;">Confidential — CryptoBot AI Internal Execution Record.</p>
@@ -535,7 +530,7 @@ def api_send_report():
             except Exception as pdf_err:
                 log.exception(f"PDF generation failed, falling back to HTML: {pdf_err}")
 
-        # 🎯 Explicit 10-second timeout prevents Gunicorn worker timeout crash
+        # Explicit 10-second timeout prevents Gunicorn worker timeout crash
         with smtplib.SMTP(smtp_server, smtp_port, timeout=10) as server:
             server.starttls()
             server.login(smtp_user, smtp_pass)
