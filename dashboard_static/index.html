@@ -125,9 +125,7 @@ input[type="date"]{background:var(--bg3);border:1px solid var(--border);color:va
     <div class="nav-item" onclick="showPage('monitor')" id="nav-monitor"><span class="nav-icon">◉</span>System Monitor<span class="nav-badge" id="monitorAlertBadge" style="display:none">!</span></div>
   </nav>
   <div class="sidebar-coins"><div class="coins-label">Monitored Coins</div><div class="coin-chips" id="coinChips"></div></div>
-  <div class="sidebar-bottom">
-    <div class="mode-badge active-mode" id="sidebarMode"><div class="mode-dot"></div><div><div style="font-size:11px;font-weight:600" id="sidebarModeTitle">ACTIVE HOURS</div><div style="font-size:9px;opacity:0.8" id="sidebarModeSub">Scan every 15 min</div></div></div>
-  </div>
+  <div class="sidebar-bottom"><div class="mode-badge active-mode" id="sidebarMode"><div class="mode-dot"></div><div><div style="font-size:11px;font-weight:600" id="sidebarModeTitle">ACTIVE HOURS</div><div style="font-size:9px;opacity:0.8" id="sidebarModeSub">Scan every 15 min</div></div></div></div>
 </aside>
 
 <div class="main">
@@ -145,47 +143,26 @@ input[type="date"]{background:var(--bg3);border:1px solid var(--border);color:va
   </div>
 
   <div id="deribitAlertBanner" style="display:none;background:var(--amber2);border:1px solid var(--amber);color:var(--amber);padding:12px 20px;border-radius:8px;margin:16px 24px 0;font-weight:600;align-items:center;gap:12px;">
-    <span style="font-size:18px">🚨</span><div><div id="deribitAlertTitle" style="font-size:12px;font-weight:800;">DERIBIT EXCHANGE MAINTENANCE DETECTED</div><div id="deribitAlertText" style="font-size:11px;opacity:0.9;">Testnet servers maintenance detected. Bot scanning paused until recovery.</div></div>
+    <span style="font-size:18px">🚨</span><div><div id="deribitAlertTitle" style="font-size:12px;font-weight:800;">DERIBIT MAINTENANCE DETECTED</div><div id="deribitAlertText" style="font-size:11px;opacity:0.9;">Testnet maintenance detected. Bot scanning paused until recovery.</div></div>
   </div>
 
   <!-- DASHBOARD PAGE -->
   <div class="page active" id="page-dashboard">
     <div class="stats-row">
-      <div class="stat-card c-green"><div class="stat-label">Testnet Balance</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub">USDT(Deribit Live Balance)</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Testnet Balance</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub">USDT Live Balance</div></div>
       <div class="stat-card c-blue"><div class="stat-label">Open Trades</div><div class="stat-value blue" id="statOpen">0</div><div class="stat-sub" id="statOpenSub">of 4 max</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Win Rate</div><div class="stat-value cyan" id="statWR">—</div><div class="stat-sub" id="statWRSub">— W / — L</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="statPnl">+0.0000</div><div class="stat-sub">USDC closed trades</div></div>
-      <div class="stat-card c-purple"><div class="stat-label">Model Accuracy</div><div class="stat-value purple" id="statModelAcc">73.1%</div><div class="stat-sub" id="statModelSub">XGB + RF + GB</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="statPnl">+0.0000</div><div class="stat-sub">USDT closed trades</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Model Accuracy</div><div class="stat-value purple" id="statModelAcc">73.1%</div><div class="stat-sub">XGB + RF + GB</div></div>
       <div class="stat-card c-green"><div class="stat-label">Today Signals</div><div class="stat-value green" id="statSigToday">0</div><div class="stat-sub" id="statSigSub">0 BUY · 0 SELL</div></div>
       <div class="stat-card c-blue"><div class="stat-label">Monitoring</div><div class="stat-value blue" style="font-size:16px">21 pairs</div><div class="stat-sub">4 tiers · 15 min scan</div></div>
     </div>
-    <div class="scan-mode-bar active-mode" id="scanModeBar">
-      <div class="smode-dot"></div>
-      <div style="flex:1"><div style="font-weight:600;font-size:12px" id="smodeTitleMain">ACTIVE HOURS — Scanning every 15 minutes</div><div style="font-size:10px;opacity:0.8;margin-top:1px" id="smodeSubMain">Min confidence: 60% · Min score: 3/6 · UTC 08:00–20:00</div></div>
-      <div style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(0,0,0,0.3);border:1px solid currentColor;opacity:0.7" id="smodeBadge">ACTIVE</div>
-    </div>
+    <div class="scan-mode-bar active-mode" id="scanModeBar"><div class="smode-dot"></div><div style="flex:1"><div style="font-weight:600;font-size:12px" id="smodeTitleMain">ACTIVE HOURS — Scanning every 15 minutes</div><div style="font-size:10px;opacity:0.8;margin-top:1px" id="smodeSubMain">Min confidence: 60% · Min score: 3/6 · UTC 08:00–20:00</div></div><div style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(0,0,0,0.3);border:1px solid currentColor;opacity:0.7" id="smodeBadge">ACTIVE</div></div>
     <div class="g2">
-      <div class="panel">
-        <div class="panel-header"><span class="panel-title">Open Trades</span><div class="panel-meta"><span class="panel-badge" style="color:var(--green);border-color:var(--green)">LIVE PnL</span><span class="panel-badge" id="openBadge">0 active</span></div></div>
-        <div class="panel-body" id="openTradesBody"><div class="empty"><div class="eicon">📡</div><div class="emsg">No open trades.<br>Bot scans every 15 min.</div></div></div>
-      </div>
+      <div class="panel"><div class="panel-header"><span class="panel-title">Open Trades</span><div class="panel-meta"><span class="panel-badge" style="color:var(--green);border-color:var(--green)">LIVE PnL</span><span class="panel-badge" id="openBadge">0 active</span></div></div><div class="panel-body" id="openTradesBody"><div class="empty"><div class="eicon">📡</div><div class="emsg">No open trades.<br>Bot scans every 15 min.</div></div></div></div>
       <div>
-        <div class="panel">
-          <div class="panel-header"><span class="panel-title">BTC Volatility (ATR)</span><span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">LIVE</span></div>
-          <div class="panel-body">
-            <div id="volBanner" class="vol-banner normal"><span>⬤</span><span id="volText">Fetching BTC ATR...</span></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <div class="price-box"><div class="price-lbl">ATR Value</div><div class="price-val" id="btcAtr" style="color:var(--cyan)">—</div></div>
-              <div class="price-box"><div class="price-lbl">ATR % of Price</div><div class="price-val" id="btcAtrPct" style="color:var(--cyan)">—</div></div>
-              <div class="price-box"><div class="price-lbl">BTC Price</div><div class="price-val" id="btcPrice" style="color:var(--blue)">—</div></div>
-              <div class="price-box"><div class="price-lbl">24h Change</div><div class="price-val" id="btcChg">—</div></div>
-            </div>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-header"><span class="panel-title">Testnet Balance</span><span class="panel-badge" style="color:var(--green);border-color:var(--green)">Deribit(by Coinbase) Testnet</span></div>
-          <div class="panel-body"><div class="balance-card"><div class="bal-num" id="balMain">—</div><div class="bal-sub">USDT Available</div></div><div id="balAssets" style="margin-top:10px"><div style="font-size:10px;color:var(--text3);text-align:center">Loading assets...</div></div></div>
-        </div>
+        <div class="panel"><div class="panel-header"><span class="panel-title">BTC Volatility (ATR)</span><span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">LIVE</span></div><div class="panel-body"><div id="volBanner" class="vol-banner normal"><span>⬤</span><span id="volText">Fetching BTC ATR...</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div class="price-box"><div class="price-lbl">ATR Value</div><div class="price-val" id="btcAtr" style="color:var(--cyan)">—</div></div><div class="price-box"><div class="price-lbl">ATR % of Price</div><div class="price-val" id="btcAtrPct" style="color:var(--cyan)">—</div></div><div class="price-box"><div class="price-lbl">BTC Price</div><div class="price-val" id="btcPrice" style="color:var(--blue)">—</div></div><div class="price-box"><div class="price-lbl">24h Change</div><div class="price-val" id="btcChg">—</div></div></div></div></div>
+        <div class="panel"><div class="panel-header"><span class="panel-title">Testnet Balance</span><span class="panel-badge" style="color:var(--green);border-color:var(--green)">Deribit Testnet</span></div><div class="panel-body"><div class="balance-card"><div class="bal-num" id="balMain">—</div><div class="bal-sub">USDT Available</div></div><div id="balAssets" style="margin-top:10px"><div style="font-size:10px;color:var(--text3);text-align:center">Loading assets...</div></div></div></div>
       </div>
     </div>
     <div class="g3">
@@ -203,11 +180,7 @@ input[type="date"]{background:var(--bg3);border:1px solid var(--border);color:va
       <div class="stat-card c-amber"><div class="stat-label">Avg Confidence</div><div class="stat-value amber" id="sig-avgconf">—</div><div class="stat-sub">AI model score</div></div>
     </div>
     <div class="panel">
-      <div class="signal-filters">
-        <div style="display:flex;gap:4px"><button class="fbtn active" onclick="filterSig('all',this)">All</button><button class="fbtn buy-btn" onclick="filterSig('buy',this)">▲ BUY</button><button class="fbtn sell-btn" onclick="filterSig('sell',this)">▼ SELL</button></div>
-        <div style="width:1px;height:20px;background:var(--border);margin:0 4px"></div>
-        <div style="display:flex;gap:4px"><button class="fbtn active" onclick="filterConf(0,this)">Any %</button><button class="fbtn" onclick="filterConf(60,this)">60%+</button><button class="fbtn" onclick="filterConf(70,this)">70%+</button><button class="fbtn" onclick="filterConf(75,this)">75%+</button></div>
-      </div>
+      <div class="signal-filters"><div style="display:flex;gap:4px"><button class="fbtn active" onclick="filterSig('all',this)">All</button><button class="fbtn buy-btn" onclick="filterSig('buy',this)">▲ BUY</button><button class="fbtn sell-btn" onclick="filterSig('sell',this)">▼ SELL</button></div><div style="width:1px;height:20px;background:var(--border);margin:0 4px"></div><div style="display:flex;gap:4px"><button class="fbtn active" onclick="filterConf(0,this)">Any %</button><button class="fbtn" onclick="filterConf(60,this)">60%+</button><button class="fbtn" onclick="filterConf(70,this)">70%+</button><button class="fbtn" onclick="filterConf(75,this)">75%+</button></div></div>
       <div id="signalsBody" style="padding:10px 14px;max-height:calc(100vh - 300px);overflow-y:auto"><div class="empty"><div class="eicon">⚡</div><div class="emsg">No signals yet. Bot scans every 15 min.</div></div></div>
     </div>
   </div>
@@ -264,7 +237,7 @@ input[type="date"]{background:var(--bg3);border:1px solid var(--border);color:va
     <div class="panel">
       <div class="panel-header"><span class="panel-title">Trade History &amp; Institutional Analytics</span><span class="panel-badge" id="histBadge">0 trades</span></div>
 
-      <!-- FILTER & EXPORT TOOLBAR (NO OVERLAP WITH TABLE HEADERS) -->
+      <!-- FILTER & EXPORT TOOLBAR -->
       <div class="history-toolbar" style="display:flex;flex-direction:column;gap:10px;padding:12px 16px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span style="font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;">Range:</span>
@@ -358,7 +331,7 @@ input[type="date"]{background:var(--bg3);border:1px solid var(--border);color:va
     <div class="panel"><div class="panel-header"><span class="panel-title">Signal Performance by Coin</span></div><div class="panel-body"><div id="coinPerfGrid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px"><div class="empty" style="grid-column:1/-1"><div class="emsg">Loading...</div></div></div></div></div>
   </div>
 
-  <!-- QUANT ANALYTICS PAGE (WITH MOVEABLE SCALE LINES & DAILY PNL CHART) -->
+  <!-- QUANT ANALYTICS PAGE -->
   <div class="page" id="page-quant">
     <div class="stats-row" style="grid-template-columns:repeat(5,1fr)">
       <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">1.82</div><div class="stat-sub">Annualized</div></div>
@@ -437,6 +410,10 @@ const PAGES = { dashboard: 'Dashboard', signals: 'Signals', market: 'Market', tr
 
 let allSignals = [], allTrades = {}, allHistory = [], histRange = 'all', histResultFilter = 'all', sigFilter = 'all', confFilter = 0, scanRunning = false, monTimer = null;
 let equityChartInst = null, dailyPnlChartInst = null, calibrationChartInst = null, reportPieChartInst = null, reportEquityChartInst = null;
+
+// 🎯 RESTORED MISSING MONITOR HELPERS
+const sd = (id, s) => { const el = document.getElementById(id); if (el) el.className = 'mon-dot ' + (s || 'idle'); };
+const sv = (id, v, color) => { const el = document.getElementById(id); if (el) { el.textContent = v; if (color) el.style.color = color; } };
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -632,6 +609,38 @@ function renderCoinPerformance(realTrades) {
   grid.innerHTML = ALL_COINS.map(coin => { const cTrades = realTrades.filter(t => t.symbol === coin), total = cTrades.length, wins = cTrades.filter(isWin).length, losses = total - wins, pnl = cTrades.reduce((s, t) => s + (t.pnl || 0), 0), wr = total ? (wins / total * 100).toFixed(0) : null, wrColor = wr == null ? 'var(--text3)' : wr >= 60 ? 'var(--green)' : wr >= 40 ? 'var(--amber)' : 'var(--red)', pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)'; return `<div class="coin-perf-card"><div style="display:flex;justify-content:space-between;align-items:center;"><span class="coin-perf-sym">${coin.replace('USDT','')}</span><span style="font-size:10px;color:${pnlColor};font-weight:700;">${pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '$0'}</span></div><div class="coin-perf-wr" style="color:${wrColor}">${wr != null ? wr + '%' : '—'}</div><div class="coin-perf-sub">${total > 0 ? wins + 'W / ' + losses + 'L (' + total + ' trades)' : 'No trades'}</div></div>`; }).join('');
 }
 
+/* 🎯 FIXED MARKET TAB FETCHING (USING BACKEND PROXY /api/market) */
+async function fetchMarketData() {
+  try {
+    let fg = await fetch('https://api.alternative.me/fng/?limit=1').then(r => r.json()).catch(() => null); if (!fg) fg = await apiFetch('/api/fng', null);
+    if (fg && fg.data && fg.data.length) {
+      const val = parseInt(fg.data[0].value), lbl = fg.data[0].value_classification, col = val < 25 ? 'var(--green)' : val < 45 ? 'var(--cyan)' : val < 55 ? 'var(--text2)' : val < 75 ? 'var(--amber)' : 'var(--red)';
+      document.getElementById('fgNum').textContent = val; document.getElementById('fgNum').style.color = col; document.getElementById('fgLabel').textContent = lbl; document.getElementById('fgCursor').style.left = val + '%';
+      document.getElementById('fgAdvice').textContent = val < 25 ? 'Market in extreme fear — historically a buying opportunity' : val < 45 ? 'Market fearful — be cautious, wait for confirmation' : val < 55 ? 'Market balanced — follow individual coin signals' : val < 75 ? 'Market greedy — use tight stop losses' : 'Extreme greed — high risk of reversal, reduce position size';
+    }
+  } catch (e) {}
+
+  try {
+    const map = await apiFetch('/api/market', {});
+    let gainers = 0, losers = 0, best = null, worst = null;
+    const grid = document.getElementById('mktPairsGrid');
+    if (grid && Object.keys(map).length) {
+      grid.innerHTML = ALL_COINS.map(sym => {
+        const t = map[sym]; if (!t) return '';
+        const price = parseFloat(t.lastPrice || 0), chg = parseFloat(t.priceChangePercent || 0);
+        if (chg > 0) gainers++; else losers++;
+        if (!best || chg > parseFloat(map[best]?.priceChangePercent || 0)) best = sym;
+        if (!worst || chg < parseFloat(map[worst]?.priceChangePercent || 0)) worst = sym;
+        const dec = price < 1 ? 4 : price < 100 ? 2 : 0;
+        return `<div class="market-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-family:var(--sans);font-size:13px;font-weight:700;color:#fff">${sym.replace('USDT','')}</span><span class="mc-chg ${chg>=0?'up':'down'}">${pct(chg)}</span></div><div class="mc-price">$${price.toLocaleString('en',{minimumFractionDigits:dec,maximumFractionDigits:dec})}</div><div style="font-size:10px;color:var(--text3)">Vol: $${(parseFloat(t.quoteVolume||0)/1e6).toFixed(1)}M</div></div>`;
+      }).join('');
+    }
+    ['mkt-gainers', 'mkt-losers'].forEach((id, i) => { const el = document.getElementById(id); if (el) el.textContent = [gainers, losers][i]; });
+    if (best) { document.getElementById('mkt-best').textContent = pct(parseFloat(map[best].priceChangePercent || 0)); document.getElementById('mkt-best-sym').textContent = best; }
+    if (worst) { document.getElementById('mkt-worst').textContent = pct(parseFloat(map[worst].priceChangePercent || 0)); document.getElementById('mkt-worst-sym').textContent = worst; }
+  } catch (e) {}
+}
+
 /* QUANT CHARTS: MOVEABLE SCALE & CROSSHAIRS */
 async function fetchAnalytics() {
   const d = await apiFetch('/api/analytics', null); if (!d || !d.ok) return;
@@ -717,17 +726,6 @@ async function fetchEmailTracker() {
   if (!logs.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text3)">No shared report logs recorded yet</td></tr>'; return; }
   tbody.innerHTML = logs.map(l => `<tr><td style="color:var(--text3);">${l.timestamp}</td><td style="color:#fff;font-weight:600;">${l.recipient}</td><td style="color:var(--text2);font-size:10px;">${l.scope}</td><td>${l.total_trades}</td><td style="color:${parseFloat(l.net_pnl)>=0?'var(--green)':'var(--red)'};font-weight:600;">$${l.net_pnl}</td><td><span class="tag ${l.status.startsWith('SENT')?'win':'loss'}">${l.status}</span></td></tr>`).join('');
 }
-
-async function fetchMarketData() {
-  try {
-    let fg = await fetch('https://api.alternative.me/fng/?limit=1').then(r => r.json()).catch(() => null); if (!fg) fg = await apiFetch('/api/fng', null);
-    if (fg && fg.data && fg.data.length) { const val = parseInt(fg.data[0].value), lbl = fg.data[0].value_classification, col = val < 25 ? 'var(--green)' : val < 45 ? 'var(--cyan)' : val < 55 ? 'var(--text2)' : val < 75 ? 'var(--amber)' : 'var(--red)'; document.getElementById('fgNum').textContent = val; document.getElementById('fgNum').style.color = col; document.getElementById('fgLabel').textContent = lbl; document.getElementById('fgCursor').style.left = val + '%'; }
-  } catch (e) {}
-}
-
-async function runMonitorChecks() { try { const r = await fetch(API_BASE + '/api/status'); await r.json(); sd('d-api', 'ok'); sv('v-api', 'Online', 'var(--green)'); } catch (e) { sd('d-api', 'err'); sv('v-api', 'OFFLINE', 'var(--red)'); } }
-function startMonitorPolling() { runMonitorChecks(); if (monTimer) clearInterval(monTimer); monTimer = setInterval(runMonitorChecks, 30000); }
-function stopMonitorPolling() { if (monTimer) { clearInterval(monTimer); monTimer = null; } }
 
 async function refreshAll() { await Promise.all([fetchStatus(), fetchBalance(), fetchOpenTrades(), fetchSignals(), fetchMarketData(), fetchLog(), fetchConfig()]); updateCoinChips(); }
 
