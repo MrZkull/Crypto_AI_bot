@@ -6,7 +6,10 @@
 <title>CryptoBot AI — Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
 <!-- Non-blocking script loading -->
+<!-- Replace line 8 in <head> -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js" defer></script>
 <style>
 :root {
   --bg: #07090d; --bg2: #0c1018; --bg3: #111820; --bg4: #161f2a;
@@ -1686,6 +1689,8 @@ async function fetchAnalytics() {
   renderDailyPnlChart(d.daily_pnl || []);
 }
 
+// Replace renderEquityChart & renderDailyPnlChart (~Lines 1565-1625)
+
 function renderEquityChart(points) {
   const ctx = document.getElementById('equityChart')?.getContext('2d');
   if (!ctx) return;
@@ -1695,11 +1700,26 @@ function renderEquityChart(points) {
     type: 'line',
     data: {
       labels: points.map(p => p.time),
-      datasets: [{ label: 'Account Equity (USDT)', data: points.map(p => p.equity), borderColor: '#10b981', borderWidth: 2, backgroundColor: 'rgba(16,185,129,0.08)', fill: true, tension: 0.2 }]
+      datasets: [{
+        label: 'Account Equity (USDT)',
+        data: points.map(p => p.equity),
+        borderColor: '#10b981',
+        borderWidth: 2,
+        backgroundColor: 'rgba(16,185,129,0.08)',
+        fill: true,
+        tension: 0.2
+      }]
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        zoom: {
+          pan: { enabled: true, mode: 'x' },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+        }
+      },
       scales: {
         x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 } } },
         y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#10b981', font: { family: 'JetBrains Mono', size: 10 } } }
@@ -1717,11 +1737,23 @@ function renderDailyPnlChart(dailyPoints) {
     type: 'bar',
     data: {
       labels: dailyPoints.map(p => p.date),
-      datasets: [{ label: 'Daily Realized PnL (USDT)', data: dailyPoints.map(p => p.pnl), backgroundColor: dailyPoints.map(p => p.pnl >= 0 ? '#10b981' : '#f43f5e'), borderRadius: 4 }]
+      datasets: [{
+        label: 'Daily Realized PnL (USDT)',
+        data: dailyPoints.map(p => p.pnl),
+        backgroundColor: dailyPoints.map(p => p.pnl >= 0 ? '#10b981' : '#f43f5e'),
+        borderRadius: 4
+      }]
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        zoom: {
+          pan: { enabled: true, mode: 'x' },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+        }
+      },
       scales: {
         x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 } } },
         y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#cbd5e1', font: { family: 'JetBrains Mono', size: 10 } } }
