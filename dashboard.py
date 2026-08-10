@@ -59,6 +59,8 @@ def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
 
 # ── PDF Generation Helper (Type-Safe Protection Against None Values) ─────
 
+# dashboard.py — Professional Institutional PDF Generator
+
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     if not HAS_REPORTLAB:
         raise ImportError("ReportLab package is not installed on this server.")
@@ -67,79 +69,146 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     trades = trades or []
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    # Letter size: 612 x 792 pt. Margins: 36 pt (0.5 inch) -> Printable width = 540 pt
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=letter, 
+        rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
+    )
     styles = getSampleStyleSheet()
     
-    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontSize=16, leading=20, textColor=colors.HexColor('#0f172a'), spaceAfter=4)
-    subtitle_style = ParagraphStyle('DocSubTitle', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#64748b'), spaceAfter=12)
-    normal_style = ParagraphStyle('DocNormal', parent=styles['Normal'], fontSize=9, leading=12)
+    # Custom Typography Styles
+    title_style = ParagraphStyle(
+        'RepTitle', parent=styles['Heading1'], 
+        fontSize=14, leading=18, textColor=colors.HexColor('#0f172a'), spaceAfter=2, fontName='Helvetica-Bold'
+    )
+    subtitle_style = ParagraphStyle(
+        'RepSub', parent=styles['Normal'], 
+        fontSize=8, leading=10, textColor=colors.HexColor('#64748b'), spaceAfter=10, fontName='Helvetica'
+    )
+    section_heading = ParagraphStyle(
+        'RepSec', parent=styles['Heading2'], 
+        fontSize=10, leading=14, textColor=colors.HexColor('#1e293b'), spaceBefore=10, spaceAfter=6, fontName='Helvetica-Bold'
+    )
+    cell_style = ParagraphStyle(
+        'RepCell', parent=styles['Normal'], 
+        fontSize=7, leading=9, textColor=colors.HexColor('#334155'), fontName='Helvetica'
+    )
+    cell_bold = ParagraphStyle(
+        'RepCellBold', parent=cell_style, fontName='Helvetica-Bold'
+    )
+    cell_green = ParagraphStyle(
+        'RepCellGreen', parent=cell_style, textColor=colors.HexColor('#10b981'), fontName='Helvetica-Bold'
+    )
+    cell_red = ParagraphStyle(
+        'RepCellRed', parent=cell_style, textColor=colors.HexColor('#f43f5e'), fontName='Helvetica-Bold'
+    )
+    header_cell = ParagraphStyle(
+        'RepHeaderCell', parent=styles['Normal'], 
+        fontSize=7, leading=9, textColor=colors.white, fontName='Helvetica-Bold', alignment=1 # Center
+    )
 
-    elements = [
-        Paragraph("CryptoBot AI — Institutional Performance Report", title_style),
-        Paragraph("Quantitative Execution & Risk Analytics Audit", subtitle_style),
-        Paragraph(f"<b>Filter Scope:</b> {scope} | <b>Report Date:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", normal_style),
-        Spacer(1, 10)
-    ]
+    elements = []
 
+    # 1. Title & Metadata Banner
+    elements.append(Paragraph("CryptoBot AI — Institutional Performance Report", title_style))
+    elements.append(Paragraph("Quantitative Execution & Risk Analytics Audit", subtitle_style))
+    
+    meta_text = f"<b>Scope:</b> {scope} | <b>Generated:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+    elements.append(Paragraph(meta_text, ParagraphStyle('Meta', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor('#475569'), spaceAfter=8)))
+
+    # 2. Executive Summary KPI Table (2 columns x 3 rows = 6 key metrics)
     pnl_val = float(summary.get('net_pnl') or 0)
     wins_val = int(summary.get('wins') or 0)
     losses_val = int(summary.get('losses') or 0)
     total_trades_val = int(summary.get('total_trades') or 0)
+    win_rate_val = summary.get('win_rate', '0%')
+    profit_factor_val = summary.get('profit_factor', '0.00')
     max_win_val = float(summary.get('max_win') or 0)
     max_loss_val = float(summary.get('max_loss') or 0)
 
-    summary_data = [
-        [f"Total Trades: {total_trades_val}", f"Win/Loss Split: {wins_val}W / {losses_val}L ({summary.get('win_rate', '0%')})"],
-        [f"Net Realized PnL: ${pnl_val:.2f}", f"Profit Factor: {summary.get('profit_factor', '0.00')}"],
-        [f"Largest Win: ${max_win_val:.2f}", f"Largest Loss: ${max_loss_val:.2f}"]
+    summary_table_data = [
+        [
+            Paragraph("<b>Total Trades Taken:</b>", cell_style), Paragraph(str(total_trades_val), cell_bold),
+            Paragraph("<b>Win / Loss Split:</b>", cell_style), Paragraph(f"{wins_val} W / {losses_val} L ({win_rate_val})", cell_bold)
+        ],
+        [
+            Paragraph("<b>Net Realized PnL:</b>", cell_style), Paragraph(f"${pnl_val:+.2f}", cell_green if pnl_val >= 0 else cell_red),
+            Paragraph("<b>Profit Factor:</b>", cell_style), Paragraph(str(profit_factor_val), cell_bold)
+        ],
+        [
+            Paragraph("<b>Largest Win:</b>", cell_style), Paragraph(f"${max_win_val:+.2f}", cell_green),
+            Paragraph("<b>Largest Loss:</b>", cell_style), Paragraph(f"${max_loss_val:+.2f}", cell_red)
+        ]
     ]
     
-    sum_table = Table(summary_data, colWidths=[260, 260])
+    # Printable width = 540 pt. Col widths: 110, 160, 110, 160 = 540
+    sum_table = Table(summary_table_data, colWidths=[110, 160, 110, 160])
     sum_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
         ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
         ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
-        ('PADDING', (0,0), (-1,-1), 6),
-        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 9),
+        ('PADDING', (0,0), (-1,-1), 5),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
-    elements.extend([sum_table, Spacer(1, 12)])
+    elements.append(sum_table)
+    elements.append(Spacer(1, 10))
 
-    if trades:
-        elements.append(Paragraph("<b>Executed Trade Records (Filtered Set):</b>", normal_style))
-        elements.append(Spacer(1, 6))
-        trade_rows = [["#", "Date (UTC)", "Symbol", "Dir", "Entry", "Close", "PnL ($)", "Reason"]]
-        for idx, t in enumerate(trades[:40], 1):
-            t = t or {}
-            pnl = float(t.get('pnl') or 0)
-            entry = float(t.get('entry') or 0)
-            close_price = float(t.get('close_price') or entry)
-            trade_rows.append([
-                str(idx),
-                str(t.get('closed_at') or t.get('opened_at') or '')[:16].replace('T', ' '),
-                str(t.get('symbol', '')),
-                str(t.get('signal', '')),
-                f"{entry:.4f}",
-                f"{close_price:.4f}",
-                f"{pnl:+.2f}",
-                str(t.get('close_reason', 'Closed'))[:20]
-            ])
+    # 3. Trade History Table
+    elements.append(Paragraph("Executed Trade Records", section_heading))
+    
+    headers = ["#", "Date (UTC)", "Symbol", "Dir", "Entry", "Close", "Qty", "PnL (USDT)", "Reason"]
+    header_row = [Paragraph(h, header_cell) for h in headers]
+    trade_rows = [header_row]
 
-        trade_table = Table(trade_rows, colWidths=[25, 80, 60, 35, 55, 55, 55, 135])
-        trade_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f172a')),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 8),
-            ('PADDING', (0,0), (-1,-1), 4),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-        ]))
-        elements.append(trade_table)
+    for idx, t in enumerate(trades, 1):
+        t = t or {}
+        pnl = float(t.get('pnl') or 0)
+        entry = float(t.get('entry') or 0)
+        close_price = float(t.get('close_price') or entry)
+        sig = str(t.get('signal', ''))
+        
+        dir_style = cell_green if sig == 'BUY' else cell_red
+        pnl_style = cell_green if pnl >= 0 else cell_red
+
+        row = [
+            Paragraph(str(idx), cell_style),
+            Paragraph(str(t.get('closed_at') or t.get('opened_at') or '')[:16].replace('T', ' '), cell_style),
+            Paragraph(str(t.get('symbol', '')), cell_bold),
+            Paragraph(sig, dir_style),
+            Paragraph(f"{entry:.4f}", cell_style),
+            Paragraph(f"{close_price:.4f}", cell_style),
+            Paragraph(str(t.get('qty', 0)), cell_style),
+            Paragraph(f"{pnl:+.4f}", pnl_style),
+            Paragraph(str(t.get('close_reason', 'Closed'))[:25], cell_style)
+        ]
+        trade_rows.append(row)
+
+    # Printable width = 540 pt. Sum of column widths = 538 pt.
+    col_widths = [22, 85, 65, 32, 52, 52, 45, 65, 120]
+    trade_table = Table(trade_rows, colWidths=col_widths, repeatRows=1)
+    
+    t_style = [
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f172a')),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('PADDING', (0,0), (-1,-1), 4),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]
+    
+    # Zebra striping for data rows
+    for r_idx in range(1, len(trade_rows)):
+        if r_idx % 2 == 0:
+            t_style.append(('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#f8fafc')))
+        else:
+            t_style.append(('BACKGROUND', (0, r_idx), (-1, r_idx), colors.white))
+
+    trade_table.setStyle(TableStyle(t_style))
+    elements.append(trade_table)
 
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
-
 
 # ── Deribit Health Check ───────────────────────────────────────────────
 
