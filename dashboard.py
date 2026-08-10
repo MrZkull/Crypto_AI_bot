@@ -1,4 +1,4 @@
-# dashboard.py — V5.2: Master Institutional Server with Resilient Proxies, SMTP Timeout & Probation API
+# dashboard.py — V5.2: Master Institutional Server with Resilient Proxies, SMTP Timeout & Probation API .
 
 import os
 import json
