@@ -626,34 +626,42 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   </div>
 
   <!-- QUANT ANALYTICS PAGE -->
-  <div class="page" id="page-quant">
-    <div class="stats-row">
-      <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">1.82</div><div class="stat-sub">Annualized</div></div>
-      <div class="stat-card c-cyan"><div class="stat-label">Sortino Ratio</div><div class="stat-value cyan" id="q-sortino">2.45</div><div class="stat-sub">Downside Risk</div></div>
-      <div class="stat-card c-purple"><div class="stat-label">Profit Factor</div><div class="stat-value purple" id="q-pf">2.14</div><div class="stat-sub">Gross Win/Loss</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Expectancy (E)</div><div class="stat-value amber" id="q-expect">$+12.40</div><div class="stat-sub">USDT/trade</div></div>
-      <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">-$142.50</div><div class="stat-sub">Peak to Trough</div></div>
-    </div>
-    <div class="panel">
-      <div class="panel-header">
-        <span class="panel-title">Cumulative Equity Trajectory</span>
-        <span class="panel-badge" style="color:var(--green);border-color:var(--green)">LIVE QUANT</span>
+    <div class="page" id="page-quant">
+      <div class="stats-row">
+        <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">1.82</div><div class="stat-sub">Annualized</div></div>
+        <div class="stat-card c-cyan"><div class="stat-label">Sortino Ratio</div><div class="stat-value cyan" id="q-sortino">2.45</div><div class="stat-sub">Downside Risk</div></div>
+        <div class="stat-card c-purple"><div class="stat-label">Profit Factor</div><div class="stat-value purple" id="q-pf">2.14</div><div class="stat-sub">Gross Win/Loss</div></div>
+        <div class="stat-card c-amber"><div class="stat-label">Expectancy (E)</div><div class="stat-value amber" id="q-expect">$+12.40</div><div class="stat-sub">USDT/trade</div></div>
+        <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">-$142.50</div><div class="stat-sub">Peak to Trough</div></div>
       </div>
-      <div class="panel-body">
-        <div style="height:250px"><canvas id="equityChart"></canvas></div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-header">
-        <span class="panel-title">Daily Realized PnL &amp; Growth Tracker</span>
-        <span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">DAILY BREAKDOWN</span>
-      </div>
-      <div class="panel-body">
-        <div style="height:230px"><canvas id="dailyPnlChart"></canvas></div>
-      </div>
-    </div>
-  </div>
 
+      <!-- CUMULATIVE EQUITY CHART WITH HORIZONTAL SCROLLBAR -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Cumulative Equity Trajectory</span>
+          <span class="panel-badge" style="color:var(--green);border-color:var(--green)">LIVE QUANT (Scroll to Move)</span>
+        </div>
+        <div class="panel-body">
+          <div style="overflow-x: auto; width: 100%; padding-bottom: 6px;">
+            <div style="height: 250px; min-width: 900px;"><canvas id="equityChart"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DAILY REALISED PNL CHART WITH HORIZONTAL SCROLLBAR -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Daily Realized PnL &amp; Growth Tracker</span>
+          <span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">DAILY BREAKDOWN (Scroll to Move)</span>
+        </div>
+        <div class="panel-body">
+          <div style="overflow-x: auto; width: 100%; padding-bottom: 6px;">
+            <div style="height: 230px; min-width: 900px;"><canvas id="dailyPnlChart"></canvas></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  
   <!-- EXECUTION MICROSTRUCTURE PAGE -->
   <div class="page" id="page-execution">
     <div class="stats-row">
