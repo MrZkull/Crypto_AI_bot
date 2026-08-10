@@ -6,7 +6,6 @@
 <title>CryptoBot AI — Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
 <!-- Non-blocking script loading -->
-<!-- Replace line 8 in <head> -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js" defer></script>
@@ -44,6 +43,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .coin-chips { display: flex; flex-wrap: wrap; gap: 3px; }
 .coin-chip { font-size: 8px; padding: 2px 5px; border-radius: 3px; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); cursor: pointer; }
 .coin-chip.has-signal { border-color: var(--green); color: var(--green); background: var(--green2); }
+.coin-chip.probated-chip { border-color: var(--amber) !important; color: var(--amber) !important; background: var(--amber2) !important; font-weight: 700; }
 
 /* MAIN CONTENT AREA */
 .main { margin-left: var(--nav-w); flex: 1; display: flex; flex-direction: column; min-height: 100vh; min-width: 0; width: calc(100% - var(--nav-w)); }
@@ -58,6 +58,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .btn-scan { font-family: var(--mono); font-size: 10px; padding: 5px 10px; background: var(--blue2); border: 1px solid var(--blue); color: var(--blue); border-radius: 4px; cursor: pointer; }
 .btn-kill { font-family: var(--mono); font-size: 10px; padding: 5px 10px; background: var(--red2); border: 1px solid var(--red); color: var(--red); border-radius: 4px; cursor: pointer; font-weight: 700; }
 .last-upd { font-size: 9px; color: var(--text3); }
+
 .page { display: none; padding: 16px; flex: 1; }
 .page.active { display: block; }
 
@@ -212,6 +213,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 }
 </style>
 </head>
+
 <body>
 
 <aside class="sidebar">
@@ -361,7 +363,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       </div>
     </div>
   </div>
-    <!-- SIGNALS PAGE -->
+
+  <!-- SIGNALS PAGE -->
   <div class="page" id="page-signals">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Total Signals Today</div><div class="stat-value green" id="sig-total">0</div><div class="stat-sub">last 24 hours</div></div>
@@ -587,7 +590,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       </div>
     </div>
   </div>
-    <!-- PERFORMANCE PAGE -->
+
+  <!-- PERFORMANCE PAGE -->
   <div class="page" id="page-performance">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Best Trade</div><div class="stat-value green" id="p-best">—</div><div class="stat-sub" id="p-best-sym">USDT profit</div></div>
@@ -775,6 +779,33 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       </div>
       <button onclick="runMonitorChecks()" style="background:var(--blue2);border:1px solid var(--blue);color:var(--blue);padding:6px 12px;border-radius:5px;cursor:pointer;font-size:10px;font-weight:600;font-family:var(--mono)">↻ Refresh</button>
     </div>
+    
+    <!-- 🔒 PROBATION & COOLDOWN TRACKER PANEL -->
+    <div class="mon-card" style="margin-bottom:14px;">
+      <div class="mon-card-hd">
+        <span class="mon-card-title">🔒 Probation &amp; Cooldown Tracker</span>
+        <span style="font-size:9px;color:var(--amber);">+10.0% Confidence Premium Required</span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="htable">
+          <thead>
+            <tr>
+              <th>Coin Symbol</th>
+              <th>Probation Win Streak</th>
+              <th>Consecutive Losses</th>
+              <th>7-Day Cooldown Timer</th>
+              <th>Required Threshold</th>
+            </tr>
+          </thead>
+          <tbody id="probationTrackerBody">
+            <tr>
+              <td colspan="5" style="text-align:center;padding:12px;color:var(--text3)">Loading probation state...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div id="monAlertBanner" style="display:none;margin-bottom:12px"></div>
     <div class="mon-card" style="margin-bottom:14px">
       <div class="mon-card-bd" style="flex-direction:row;align-items:center;gap:12px;padding:12px">
@@ -937,6 +968,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     <p>Confidential — CryptoBot AI Internal Execution Record.</p>
   </div>
 </div>
+
 <script>
 // ═══════════════════════════════════════════════════════
 // STATE & UTILS
@@ -956,6 +988,7 @@ const PAGES = {
 };
 
 let allSignals = [], allTrades = {}, allHistory = [];
+let probatedCoinsSet = new Set(), probatedCoinsData = [];
 let histRange = 'all', histResultFilter = 'all', sigFilter = 'all', confFilter = 0;
 let scanRunning = false, monTimer = null;
 let equityChartInst = null, dailyPnlChartInst = null, calibrationChartInst = null;
@@ -1008,6 +1041,37 @@ async function apiFetch(path, fallback, opts) {
   } catch(e) {
     return fallback;
   }
+}
+
+// ── PROBATION & COOLDOWN TRACKER FETCHERS ─────────────────────────────
+async function fetchProbationData() {
+  const d = await apiFetch('/api/probation', { ok: false, probated_coins: [] });
+  if (d && d.ok) {
+    probatedCoinsData = d.probated_coins || [];
+    probatedCoinsSet = new Set(probatedCoinsData.map(c => c.symbol));
+    renderProbationTracker();
+    updateCoinChips();
+  }
+}
+
+function renderProbationTracker() {
+  const tbody = document.getElementById('probationTrackerBody');
+  if (!tbody) return;
+
+  if (!probatedCoinsData.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:12px;color:var(--green)">✓ All 21 coins operating under standard confidence thresholds</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = probatedCoinsData.map(c => `
+    <tr>
+      <td style="color:#fff;font-weight:700;">${c.symbol}</td>
+      <td style="color:var(--green);font-weight:600;">${c.probation_wins} / 3 Wins</td>
+      <td style="color:var(--red);">${c.probation_consecutive_losses} / 3 Losses</td>
+      <td style="color:var(--amber);">${c.time_left_hrs}h remaining</td>
+      <td><span class="tag" style="background:var(--amber2);color:var(--amber);border:1px solid #f59e0b40">${c.required_conf.toFixed(1)}% Min Conf</span></td>
+    </tr>
+  `).join('');
 }
 
 async function fetchStatus() {
@@ -1126,12 +1190,16 @@ function renderTradeCard(t) {
   const fmt      = (v, d) => (v != null && !isNaN(v) && parseFloat(v) > 0) ? parseFloat(v).toFixed(d) : '—';
   const sigCol   = isBuy ? 'var(--green)' : 'var(--red)';
 
+  const isProbation = probatedCoinsSet.has(t.symbol);
+  const probBadge = isProbation ? `<span class="tag" style="background:var(--amber2);color:var(--amber);border:1px solid #f59e0b40;margin-left:4px;">🔒 PROBATION (+10%)</span>` : '';
+
   return `
   <div class="trade-card ${isBuy?'buy':'sell'}">
     <div class="tc-top">
       <div style="display:flex;align-items:center;gap:6px;">
         <span class="tc-sym">${t.symbol.replace('USDT','')}<span style="font-size:10px;color:var(--text3)">/USDT</span></span>
         <span class="dir-tag ${isBuy?'buy':'sell'}">${t.signal}</span>
+        ${probBadge}
       </div>
       <div style="display:flex;align-items:flex-start;gap:12px;">
         <div style="text-align:right;">
@@ -1172,64 +1240,89 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   if (!entry || !sl || !tp1 || !tp2 || sl === 0) {
     return `<div style="padding:4px 0">
       <div style="height:5px;background:rgba(255,255,255,0.07);border-radius:3px"></div>
-      <div style="font-size:8px;color:var(--red);margin-top:2px">⚠ SL/TP missing</div>
+      <div style="font-size:8px;color:var(--red);margin-top:2px">⚠ SL/TP missing — check orders</div>
     </div>`;
   }
 
-  const riskDist   = Math.abs(entry - sl);
-  const rewardDist = Math.abs(tp2 - entry);
+  const slTrailedInProfit = isBuy ? (sl >= entry) : (sl <= entry);
+  const slAtTp1 = Math.abs(sl - tp1) < (entry * 0.0005);
 
-  let rawLow, rawHigh;
-  if (isBuy) {
-    rawLow  = sl   - riskDist  * 2;
-    rawHigh = tp2  + rewardDist * 0.3;
-  } else {
-    rawLow  = tp2  - rewardDist * 0.3;
-    rawHigh = sl   + riskDist  * 2;
-  }
+  const norm = v => isBuy ? v : (2 * entry - v);
 
-  const pad = riskDist * 0.1;
-  const displayLow  = Math.min(rawLow,  live - pad);
-  const displayHigh = Math.max(rawHigh, live + pad);
-  const displayRange = displayHigh - displayLow;
+  const nEntry = norm(entry);
+  const nSl    = norm(sl);
+  const nTp1   = norm(tp1);
+  const nTp2   = norm(tp2);
+  const nLive  = norm(live);
 
-  if (displayRange <= 0) return '';
+  const rawRiskDist = Math.abs(nEntry - nSl);
+  const riskDist    = slTrailedInProfit ? (Math.abs(nTp1 - nEntry) * 0.5) : rawRiskDist;
+  const rewardDist  = Math.abs(nTp2 - nEntry);
 
-  const toPct = v => Math.min(100, Math.max(0, (v - displayLow) / displayRange * 100));
+  const minLeft  = nEntry - Math.max(riskDist, rewardDist * 0.3);
+  const maxRight = nTp2 + rewardDist * 0.15;
 
-  const slPct    = toPct(sl);
-  const entryPct = toPct(entry);
-  const tp1Pct   = toPct(tp1);
-  const tp2Pct   = toPct(tp2);
-  const dotPct   = toPct(live);
+  const displayLow   = Math.min(minLeft, nLive, nSl);
+  const displayHigh  = Math.max(maxRight, nLive);
+  const displayRange = Math.max(0.0001, displayHigh - displayLow);
 
-  const inProfit  = isBuy ? live >= entry : live <= entry;
-  const beyondSl  = isBuy ? live < sl     : live > sl;
-  const dotColor  = beyondSl ? 'var(--red)' : inProfit ? 'var(--green)' : 'var(--amber)';
+  const toPct = v => Math.min(98, Math.max(2, (v - displayLow) / displayRange * 100));
 
-  const pctFromEntry = entry > 0 ? ((live - entry) / entry * 100) : 0;
+  const slPct    = toPct(nSl);
+  const entryPct = toPct(nEntry);
+  const tp1Pct   = toPct(nTp1);
+  const tp2Pct   = toPct(nTp2);
+  const dotPct   = toPct(nLive);
+
+  const inProfit = isBuy ? live >= entry : live <= entry;
+  const beyondSl = isBuy ? live < sl     : live > sl;
+  const dotColor = beyondSl ? 'var(--red)' : inProfit ? 'var(--green)' : 'var(--amber)';
+  const tp1Color = tp1Hit ? 'var(--green)' : 'var(--blue)';
+
+  const pctFromEntry = entry > 0 ? (isBuy ? (live - entry)/entry*100 : (entry - live)/entry*100) : 0;
   const pctStr = (pctFromEntry >= 0 ? '+' : '') + pctFromEntry.toFixed(2) + '%';
 
-  const stageLabel = !live ? '⏳ Awaiting price' :
-    (tp1Hit ? '🎯 TP1 ✓ → TP2' :
-    beyondSl ? `🛑 Below SL (${pctStr})` :
-    (isBuy ? live >= tp1 : live <= tp1) ? `🎯 At TP1! (${pctStr})` :
-    (isBuy ? live >= entry : live <= entry) ? `▲ In profit (${pctStr})` :
-    `▼ ${pctStr}`);
+  let stageLabel = !live ? '⏳ Awaiting price' :
+    (tp1Hit ? '🎯 TP1 Hit! Trailing SL Active' :
+    slTrailedInProfit ? `🔒 Profit Locked (SL @ ${slAtTp1 ? 'TP1' : 'Breakeven'})` :
+    beyondSl ? `🛑 Beyond SL (${pctStr})` :
+    inProfit ? `▲ In profit (${pctStr})` :
+    `▼ Drawdown (${pctStr})`);
+
+  const dec = v => (v < 10 ? 4 : 2);
+  const rewardWidth = Math.max(0, tp1Pct - entryPct);
+  const targetWidth = Math.max(0, tp2Pct - tp1Pct);
 
   return `
-  <div style="font-size:8px;color:var(--text3);margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+  <div style="font-size:9px;color:var(--text3);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
     <span style="color:${dotColor};font-weight:600">${stageLabel}</span>
-    <span style="color:var(--cyan)">Live: $${live.toFixed(4)}</span>
+    <span style="color:var(--cyan)">Live: $${live.toFixed(dec(live))}</span>
   </div>
 
-  <div style="position:relative;height:8px;border-radius:4px;background:rgba(255,255,255,0.05);margin-bottom:4px;overflow:visible">
-    <div style="position:absolute;left:0;top:0;height:100%;width:${slPct.toFixed(2)}%;background:rgba(244,63,94,0.15);border-radius:4px 0 0 4px"></div>
-    <div style="position:absolute;left:${slPct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,entryPct-slPct).toFixed(2)}%;background:rgba(245,158,11,0.15)"></div>
-    <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,tp1Pct-entryPct).toFixed(2)}%;background:rgba(59,130,246,0.2)"></div>
-    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${Math.max(0,tp2Pct-tp1Pct).toFixed(2)}%;background:rgba(16,185,129,0.2);border-radius:0 4px 4px 0"></div>
+  <div style="position:relative;height:8px;border-radius:4px;background:rgba(255,255,255,0.05);margin-bottom:2px;overflow:visible">
+    <div style="position:absolute;left:0%;top:0;height:100%;width:${entryPct.toFixed(2)}%;background:rgba(244,63,94,0.18);border-radius:4px 0 0 4px"></div>
+    <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:0;height:100%;width:${rewardWidth.toFixed(2)}%;background:rgba(59,130,246,0.25)"></div>
+    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${targetWidth.toFixed(2)}%;background:rgba(16,185,129,0.25);border-radius:0 4px 4px 0"></div>
 
-    <div style="position:absolute;top:50%;left:${dotPct.toFixed(2)}%;transform:translate(-50%,-50%);width:12px;height:12px;border-radius:50%;background:${dotColor};border:2px solid var(--bg);box-shadow:0 0 6px ${dotColor};z-index:10;"></div>
+    <div style="position:absolute;left:${slPct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:${slTrailedInProfit ? 'var(--green)' : 'var(--red)'};border-radius:1px;z-index:3"></div>
+    <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:var(--text3);border-radius:1px;z-index:2"></div>
+    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:var(--blue);border-radius:1px;z-index:2"></div>
+    <div style="position:absolute;left:${tp2Pct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:var(--green);border-radius:1px;z-index:2"></div>
+
+    <div style="
+      position:absolute; top:50%; left:${dotPct.toFixed(2)}%;
+      transform:translate(-50%,-50%); width:12px;height:12px;
+      border-radius:50%; background:${dotColor}; border:2px solid var(--bg);
+      box-shadow:0 0 6px ${dotColor}; z-index:10;
+      transition:left 0.6s ease;
+    "></div>
+  </div>
+
+  <div style="position:relative;height:22px;margin-top:3px;font-family:var(--mono);overflow:visible">
+    <span style="position:absolute;left:${slPct.toFixed(2)}%;transform:translateX(-50%);top:0;font-size:8px;color:${slTrailedInProfit ? 'var(--green)' : 'var(--red)'};white-space:nowrap;font-weight:700">${slTrailedInProfit ? 'SL🔒' : 'SL'}</span>
+    <span style="position:absolute;left:${entryPct.toFixed(2)}%;transform:translateX(-50%);top:11px;font-size:8px;color:var(--text3);white-space:nowrap">Entry</span>
+    <span style="position:absolute;left:${tp1Pct.toFixed(2)}%;transform:translateX(-50%);top:0;font-size:8px;color:${tp1Color};white-space:nowrap;font-weight:700">TP1${tp1Hit ? '✓' : ''}</span>
+    <span style="position:absolute;left:${tp2Pct.toFixed(2)}%;transform:translateX(-50%);top:11px;font-size:8px;color:var(--green);white-space:nowrap;font-weight:700">TP2</span>
   </div>`;
 }
 
@@ -1564,6 +1657,7 @@ function renderCoinPerformance(realTrades) {
     `;
   }).join('');
 }
+
 // 🎯 Market Data & ATR
 async function fetchMarketData() {
   try {
@@ -1688,8 +1782,6 @@ async function fetchAnalytics() {
   renderEquityChart(d.equity_curve || []);
   renderDailyPnlChart(d.daily_pnl || []);
 }
-
-// Replace renderEquityChart & renderDailyPnlChart (~Lines 1565-1625)
 
 function renderEquityChart(points) {
   const ctx = document.getElementById('equityChart')?.getContext('2d');
@@ -1875,7 +1967,15 @@ function updateCoinChips() {
   const sigSyms = new Set(allSignals.map(s => s.symbol));
   ALL_COINS.forEach(c => {
     const el = document.getElementById('chip-'+c);
-    if (el) el.className = 'coin-chip'+(sigSyms.has(c)?' has-signal':'');
+    if (el) {
+      const isProbated = probatedCoinsSet.has(c);
+      const coinName = c.replace('USDT', '');
+      
+      el.textContent = isProbated ? `${coinName} 🔒` : coinName;
+      el.className = 'coin-chip' + 
+        (isProbated ? ' probated-chip' : '') + 
+        (sigSyms.has(c) ? ' has-signal' : '');
+    }
   });
 }
 
@@ -2136,6 +2236,7 @@ async function refreshAll() {
     fetchMarketData(),
     fetchLog(),
     fetchConfig(),
+    fetchProbationData(),
   ]);
   updateCoinChips();
 }
