@@ -2,6 +2,7 @@
 
 import os
 import requests
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=".env", override=True)
@@ -9,14 +10,19 @@ load_dotenv(dotenv_path=".env", override=True)
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 
-def send_message(text, parse_mode="Markdown"):
+def send_message(text, parse_mode="Markdown", silent=False):
     if not BOT_TOKEN or not CHAT_ID:
         print("Telegram not configured - check your .env file")
         return False
     url     = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": parse_mode}
+    payload = {
+        "chat_id": CHAT_ID, 
+        "text": text, 
+        "parse_mode": parse_mode,
+        "disable_notification": silent
+    }
     try:
-        r = requests.post(url, data=payload, timeout=10)
+        requests.post(url, data=payload, timeout=10)
         return True
     except Exception as e:
         print(f"Telegram error: {e}")
@@ -48,10 +54,39 @@ def send_signal(symbol, signal, confidence, entry, stop, t1, t2, reasons, score)
     )
     return send_message(msg)
 
+def send_open_trade(sym, sig, conf, score, entry, stop, tp1, tp2, qty, q1, q2, risk, bal, is_probation=False, tier=""):
+    emoji = "🟢" if sig == "BUY" else "🔴"
+    d = 4 if entry < 10 else 2
+    
+    sl_pct  = abs((stop - entry) / entry * 100)
+    tp1_pct = abs((tp1 - entry) / entry * 100)
+    tp2_pct = abs((tp2 - entry) / entry * 100)
+    
+    rr_tp1 = (tp1_pct / sl_pct) if sl_pct > 0 else 3.5
+    rr_tp2 = (tp2_pct / sl_pct) if sl_pct > 0 else 7.5
+
+    prob_tag = "\n🔒 *PROBATION TRADE* (+10.0% Conf Premium)" if is_probation else ""
+
+    text = (
+        f"⚡ *CryptoBot AI — Position Opened*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{emoji} *{sig} — {sym}* ({tier})\n"
+        f"🎯 *AI Conf:* `{conf:.1f}%`  |  ⭐ *Score:* `{score}/6`{prob_tag}\n\n"
+        f"📊 *Execution Details:*\n"
+        f"• Entry:  `{entry:,.{d}f}`\n"
+        f"• Size:   `{qty} contracts` (${risk:.2f} risk)\n"
+        f"• Margin: `10x Leverage` (Deribit Testnet)\n\n"
+        f"🛡️ *Risk & Target Levels:*\n"
+        f"🛑 *SL:*  `{stop:,.{d}f}` (-{sl_pct:.1f}%)\n"
+        f"🎯 *TP1:* `{tp1:,.{d}f}` (+{tp1_pct:.1f}%) × {q1} `[{rr_tp1:.1f}R]`\n"
+        f"🎯 *TP2:* `{tp2:,.{d}f}` (+{tp2_pct:.2f}%) × {q2} `[{rr_tp2:.1f}R]`\n\n"
+        f"💰 *Account Equity:* `${bal:,.2f} USDT`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    return send_message(text, silent=False)
+
 def send_startup():
     from config import SYMBOLS
-    
-    # Optional logic based on how you have your modules defined
     try:
         from news_sentiment import get_market_conditions
         market = get_market_conditions()
