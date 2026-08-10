@@ -28,5 +28,41 @@
     ],
     "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet"
+  },
+  "XRPUSDT": {
+    "symbol": "XRPUSDT",
+    "signal": "SELL",
+    "entry": 1.0219,
+    "stop": 1.0296,
+    "tp1": 1.0111,
+    "tp2": 0.9987,
+    "qty": 5290,
+    "qty_tp1": 3170,
+    "qty_tp2": 2120,
+    "risk_usd": 1932.11,
+    "balance_at_open": 108146.71,
+    "risk_mult": 1.7865664702301431,
+    "order_ids": {
+      "entry": "USDC-210049216703474589",
+      "stop_loss": "USDC-SLMB-31639",
+      "tp1": "USDC-210049216703478178",
+      "tp2": "USDC-210049216703478349"
+    },
+    "opened_at": "2026-08-10T15:45:23.317162+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 65.4,
+    "score": 6,
+    "reasons": [
+      "Conf (65%)",
+      "Strong ADX 37",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 38)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
   }
 }
