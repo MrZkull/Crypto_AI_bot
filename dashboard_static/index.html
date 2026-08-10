@@ -6,9 +6,10 @@
 <title>CryptoBot AI — Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
 <!-- Non-blocking script loading -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js" defer></script>
+<!-- Chart.js v4 + Hammer.js + Zoom Plugin -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 :root {
   --bg: #07090d; --bg2: #0c1018; --bg3: #111820; --bg4: #161f2a;
@@ -1799,7 +1800,9 @@ function renderEquityChart(points) {
         borderWidth: 2,
         backgroundColor: 'rgba(16,185,129,0.08)',
         fill: true,
-        tension: 0.2
+        tension: 0.2,
+        pointRadius: 3,
+        pointHoverRadius: 6
       }]
     },
     options: {
@@ -1813,8 +1816,20 @@ function renderEquityChart(points) {
         }
       },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 } } },
-        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#10b981', font: { family: 'JetBrains Mono', size: 10 } } }
+        x: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: {
+            color: '#94a3b8',
+            font: { family: 'JetBrains Mono', size: 9 },
+            maxTicksLimit: 10,
+            maxRotation: 45,
+            minRotation: 45
+          }
+        },
+        y: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#10b981', font: { family: 'JetBrains Mono', size: 10 } }
+        }
       }
     }
   });
@@ -1847,8 +1862,20 @@ function renderDailyPnlChart(dailyPoints) {
         }
       },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 } } },
-        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#cbd5e1', font: { family: 'JetBrains Mono', size: 10 } } }
+        x: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: {
+            color: '#94a3b8',
+            font: { family: 'JetBrains Mono', size: 9 },
+            maxTicksLimit: 12,
+            maxRotation: 45,
+            minRotation: 45
+          }
+        },
+        y: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#cbd5e1', font: { family: 'JetBrains Mono', size: 10 } }
+        }
       }
     }
   });
@@ -2134,8 +2161,15 @@ function printPDFReport() {
   }, 150);
 }
 
-function openEmailModal() { document.getElementById('emailModal').classList.add('active'); }
-function closeEmailModal() { document.getElementById('emailModal').classList.remove('active'); }
+function openEmailModal() { 
+  const input = document.getElementById('emailRecipient');
+  if (input) input.value = '';
+  document.getElementById('emailModal').classList.add('active'); 
+}
+
+function closeEmailModal() { 
+  document.getElementById('emailModal').classList.remove('active'); 
+}
 
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
