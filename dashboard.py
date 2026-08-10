@@ -1,4 +1,4 @@
-# dashboard.py — V5.2: Port 465 SSL Email Dispatch & GitHub Persistence
+# dashboard.py — V5.2: Master Institutional Server with Resilient Proxies, SMTP Timeout & Probation API
 
 import os
 import json
@@ -42,6 +42,7 @@ GH_TOKEN   = os.getenv("GH_PAT_TOKEN", "")
 GH_REPO    = os.getenv("GITHUB_REPO",  "MrZkull/Crypto_AI_bot")
 GH_BRANCH  = os.getenv("GITHUB_BRANCH", "main")
 EMAIL_TRACKER_FILE = "email_tracker.json"
+RELIABILITY_FILE   = "reliability.json"
 EMAIL_REGEX = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 _cache = {}
@@ -56,11 +57,14 @@ def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
 
-# ── PDF Generation Helper ──────────────────────────────────────────────
+# ── PDF Generation Helper (Type-Safe Protection Against None Values) ─────
 
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     if not HAS_REPORTLAB:
         raise ImportError("ReportLab package is not installed on this server.")
+
+    summary = summary or {}
+    trades = trades or []
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -106,6 +110,7 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
         elements.append(Spacer(1, 6))
         trade_rows = [["#", "Date (UTC)", "Symbol", "Dir", "Entry", "Close", "PnL ($)", "Reason"]]
         for idx, t in enumerate(trades[:40], 1):
+            t = t or {}
             pnl = float(t.get('pnl') or 0)
             entry = float(t.get('entry') or 0)
             close_price = float(t.get('close_price') or entry)
@@ -169,7 +174,6 @@ def gh_fetch(filename: str):
 
 
 def gh_push(filename: str, content_dict):
-    """Persists state to GitHub so Render container restarts don't wipe data."""
     if not GH_TOKEN or not GH_REPO:
         return
     headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
@@ -354,6 +358,35 @@ def api_log():
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
 
+# ── Probation & Cooldown Tracker Endpoint ─────────────────────────────
+
+@app.route("/api/probation")
+def api_probation():
+    bust(RELIABILITY_FILE)
+    rel = get(RELIABILITY_FILE, {})
+    now = time.time()
+    probated_coins = []
+
+    scan_mode = get("scan_mode.json", {})
+    base_conf = float(scan_mode.get("min_confidence", 60.0))
+
+    for symbol, data in rel.items():
+        if isinstance(data, dict) and data.get("is_benched", False):
+            benched_at = data.get("benched_at", 0)
+            time_left_sec = max(0, (7 * 86400) - (now - benched_at)) if benched_at > 0 else 0
+            
+            probated_coins.append({
+                "symbol": symbol,
+                "probation_wins": data.get("probation_wins", 0),
+                "probation_consecutive_losses": data.get("probation_consecutive_losses", 0),
+                "time_left_hrs": round(time_left_sec / 3600, 1),
+                "required_conf": base_conf + 10.0,
+                "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
+            })
+
+    return jsonify({"ok": True, "probated_coins": probated_coins})
+
+
 # ── Market & ATR Proxies ────────────────────────────────────────────────
 
 @app.route("/api/market")
@@ -376,6 +409,7 @@ def api_market():
                         "quoteVolume": float(item.get("quoteVolume", 0)),
                     }
         else:
+            log.warning(f"Binance 24hr ticker returned HTTP {r.status_code}. Trying CoinGecko backup...")
             r2 = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,binancecoin,solana,avalanche-2,near,sui,aptos,cosmos,tron,chainlink,polkadot,uniswap,aave,ripple,litecoin,bitcoin-cash,algorand,fetch-ai,cardano,dogecoin&vs_currencies=usd&include_24hr_change=true", timeout=6)
             if r2.ok:
                 cg = r2.json()
@@ -467,7 +501,7 @@ def api_monitor():
     })
 
 
-# ── Persistent Email Dispatch (Port 465 SSL + GitHub Backup) ────────────
+# ── Persistent Email Dispatch (Port 465 SSL + Dual-Port Fallback) ────────
 
 def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     bust(EMAIL_TRACKER_FILE)
@@ -480,7 +514,6 @@ def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     }
     logs.append(log_entry)
     
-    # Save locally AND push to GitHub repo so restarts don't wipe tracker history
     for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -492,10 +525,10 @@ def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
 @app.route("/api/send_report", methods=["POST"])
 def api_send_report():
     data = request.get_json() or {}
-    recipient = data.get("email", "").strip()
-    scope = data.get("scope", "Range: ALL | Result: ALL")
-    summary = data.get("summary", {})
-    trades = data.get("trades", [])
+    recipient = str(data.get("email") or "").strip()
+    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
+    summary = data.get("summary") or {}
+    trades = data.get("trades") or []
 
     if not recipient or not re.match(EMAIL_REGEX, recipient):
         return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
@@ -530,52 +563,65 @@ def api_send_report():
             <td style="padding: 10px; border: 1px solid #ddd;"><strong>Profit Factor:</strong> {summary.get('profit_factor', '0.00')}</td>
           </tr>
         </table>
+        <p style="font-size: 12px; color: #444; font-weight: bold; margin-top: 15px;">📎 A full PDF report document is attached to this email.</p>
         <p style="font-size: 11px; color: #777; margin-top: 25px; text-align: center;">Confidential — CryptoBot AI Internal Execution Record.</p>
       </div>
     </body>
     </html>
     """
 
-    try:
-        msg = MIMEMultipart("mixed")
-        msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-        msg["From"] = smtp_user
-        msg["To"] = recipient
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    msg["From"] = smtp_user
+    msg["To"] = recipient
 
-        msg_body = MIMEMultipart("alternative")
-        msg_body.attach(MIMEText(html_content, "html"))
-        msg.attach(msg_body)
+    msg_body = MIMEMultipart("alternative")
+    msg_body.attach(MIMEText(html_content, "html"))
+    msg.attach(msg_body)
 
-        status_text = "SENT (HTML Only)"
-        if HAS_REPORTLAB:
-            try:
-                pdf_data = generate_pdf_bytes(scope, summary, trades)
-                pdf_attachment = MIMEApplication(pdf_data, _subtype="pdf")
-                pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf")
-                msg.attach(pdf_attachment)
-                status_text = "SENT (PDF Attached)"
-            except Exception as pdf_err:
-                log.exception(f"PDF generation failed, falling back to HTML: {pdf_err}")
-
-        # 🎯 FIX: Force IPv4 & Port 465 SSL connection to bypass Render IPv6 [Errno 101] network block
-        socket.getaddrinfo = ipv4_only_getaddrinfo
+    status_text = "SENT (HTML Only)"
+    if HAS_REPORTLAB:
         try:
-            with smtplib.SMTP_SSL(smtp_server, 465, timeout=10) as server:
+            pdf_data = generate_pdf_bytes(scope, summary, trades)
+            pdf_attachment = MIMEApplication(pdf_data, _subtype="pdf")
+            pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf")
+            msg.attach(pdf_attachment)
+            status_text = "SENT (PDF Attached)"
+        except Exception as pdf_err:
+            log.exception(f"PDF generation failed, falling back to HTML: {pdf_err}")
+
+    socket.getaddrinfo = ipv4_only_getaddrinfo
+    sent = False
+    last_err = ""
+
+    try:
+        with smtplib.SMTP_SSL(smtp_server, 465, timeout=6) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, recipient, msg.as_string())
+            sent = True
+    except Exception as e1:
+        last_err = f"Port 465 SSL error: {e1}"
+        log.warning(f"Port 465 failed ({e1}), falling back to Port 587 STARTTLS...")
+
+    if not sent:
+        try:
+            with smtplib.SMTP(smtp_server, 587, timeout=6) as server:
+                server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, recipient, msg.as_string())
-        finally:
-            socket.getaddrinfo = orig_getaddrinfo
+                sent = True
+        except Exception as e2:
+            last_err += f" | Port 587 STARTTLS error: {e2}"
 
+    socket.getaddrinfo = orig_getaddrinfo
+
+    if sent:
         log.info(f"Report emailed successfully to {recipient}")
         _log_email_attempt(recipient, scope, summary, status_text)
-
         return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
-
-    except Exception as e:
-        error_msg = str(e)
-        log.error(f"Failed to email report to {recipient}: {error_msg}")
-        _log_email_attempt(recipient, scope, summary, f"FAILED: {error_msg}")
-        return jsonify({"ok": False, "error": "DISPATCH_FAILED", "message": f"SMTP Error / Timeout: {error_msg}"}), 500
+    else:
+        _log_email_attempt(recipient, scope, summary, f"FAILED: {last_err}")
+        return jsonify({"ok": False, "error": "DISPATCH_FAILED", "message": f"SMTP Connection Failed: {last_err}"}), 500
 
 
 @app.route("/api/email_tracker")
