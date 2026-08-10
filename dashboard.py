@@ -59,8 +59,6 @@ def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
 
 # ── PDF Generation Helper (Type-Safe Protection Against None Values) ─────
 
-# dashboard.py — Professional Institutional PDF Generator
-
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     if not HAS_REPORTLAB:
         raise ImportError("ReportLab package is not installed on this server.")
@@ -209,6 +207,7 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
+
 
 # ── Deribit Health Check ───────────────────────────────────────────────
 
@@ -591,10 +590,6 @@ def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     gh_push(EMAIL_TRACKER_FILE, logs)
 
 
-# dashboard.py — HTTPS API + SMTP Fallback Dispatch Engine
-
-# dashboard.py — Resend API First Class Handler (No Silent SMTP Fallthrough)
-
 @app.route("/api/send_report", methods=["POST"])
 def api_send_report():
     data = request.get_json() or {}
@@ -640,7 +635,7 @@ def api_send_report():
             """
 
             payload = {
-                "from": "CryptoBot AI <onboarding@resend.dev>",
+                "from": "CryptoBot AI <reports@alorix.io>",
                 "to": [recipient],
                 "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
                 "html": html_content
