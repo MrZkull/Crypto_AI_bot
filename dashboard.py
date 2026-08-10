@@ -522,6 +522,8 @@ def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     gh_push(EMAIL_TRACKER_FILE, logs)
 
 
+# dashboard.py — HTTPS API + SMTP Fallback Dispatch Engine
+
 @app.route("/api/send_report", methods=["POST"])
 def api_send_report():
     data = request.get_json() or {}
@@ -533,77 +535,67 @@ def api_send_report():
     if not recipient or not re.match(EMAIL_REGEX, recipient):
         return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
 
+    # 1. Check if Resend HTTP API Key exists (Port 443 - Bypasses Render Port Blocks)
+    resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
+    if resend_api_key:
+        try:
+            pnl_val = float(summary.get('net_pnl') or 0)
+            pnl_color = '#00873d' if pnl_val >= 0 else '#d91424'
+            
+            html_content = f"""
+            <h3>CryptoBot AI — Performance Report</h3>
+            <p><strong>Filter Scope:</strong> {scope}</p>
+            <p><strong>Net PnL:</strong> <span style="color:{pnl_color};">${pnl_val:.2f}</span></p>
+            <p><strong>Win Rate:</strong> {summary.get('win_rate', '0%')}</p>
+            """
+
+            payload = {
+                "from": "CryptoBot AI <onboarding@resend.dev>",
+                "to": [recipient],
+                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                "html": html_content
+            }
+
+            r = requests.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=10
+            )
+            if r.ok:
+                log.info(f"Report emailed via Resend HTTP API to {recipient}")
+                _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
+        except Exception as api_err:
+            log.warning(f"Resend HTTP API failed ({api_err}), trying SMTP fallback...")
+
+    # 2. SMTP Direct Fallback (For local / non-blocked networks)
     smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     smtp_user   = os.getenv("SMTP_USER", "").strip()
     smtp_pass   = os.getenv("SMTP_PASS", "").strip()
 
     if not smtp_user or not smtp_pass:
-        _log_email_attempt(recipient, scope, summary, "FAILED: Missing SMTP Credentials")
-        return jsonify({"ok": False, "error": "SMTP_NOT_CONFIGURED", "message": "SMTP credentials missing in Render environment variables."}), 500
+        _log_email_attempt(recipient, scope, summary, "FAILED: Missing Credentials")
+        return jsonify({"ok": False, "error": "SMTP_NOT_CONFIGURED", "message": "Missing SMTP / Resend credentials in Render."}), 500
 
-    pnl_val = float(summary.get('net_pnl') or 0)
-    pnl_color = '#00873d' if pnl_val >= 0 else '#d91424'
-
-    html_content = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 20px; color: #333;">
-      <div style="max-width: 650px; margin: 0 auto; background: #ffffff; padding: 25px; border-radius: 8px; border: 1px solid #e0e0e0;">
-        <h2 style="color: #111; margin-bottom: 5px;">CryptoBot AI — Institutional Performance Report</h2>
-        <p style="color: #666; font-size: 12px; margin-top: 0;">Quantitative Execution & Risk Analytics Audit</p>
-        <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
-        <p style="font-size: 13px;"><strong>Filter Scope:</strong> {scope}</p>
-        <p style="font-size: 13px;"><strong>Report Date:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</p>
-        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 12px;">
-          <tr style="background: #f9f9f9;">
-            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Total Trades:</strong> {summary.get('total_trades', 0)}</td>
-            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Win/Loss Split:</strong> {summary.get('wins', 0)} W / {summary.get('losses', 0)} L ({summary.get('win_rate', '0%')})</td>
-          </tr>
-          <tr>
-            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Net Realized PnL:</strong> <span style="color: {pnl_color}; font-weight: bold;">${summary.get('net_pnl', 0)}</span></td>
-            <td style="padding: 10px; border: 1px solid #ddd;"><strong>Profit Factor:</strong> {summary.get('profit_factor', '0.00')}</td>
-          </tr>
-        </table>
-        <p style="font-size: 12px; color: #444; font-weight: bold; margin-top: 15px;">📎 A full PDF report document is attached to this email.</p>
-        <p style="font-size: 11px; color: #777; margin-top: 25px; text-align: center;">Confidential — CryptoBot AI Internal Execution Record.</p>
-      </div>
-    </body>
-    </html>
-    """
-
-    msg = MIMEMultipart("mixed")
-    msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-    msg["From"] = smtp_user
-    msg["To"] = recipient
-
-    msg_body = MIMEMultipart("alternative")
-    msg_body.attach(MIMEText(html_content, "html"))
-    msg.attach(msg_body)
-
-    status_text = "SENT (HTML Only)"
-    if HAS_REPORTLAB:
-        try:
-            pdf_data = generate_pdf_bytes(scope, summary, trades)
-            pdf_attachment = MIMEApplication(pdf_data, _subtype="pdf")
-            pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf")
-            msg.attach(pdf_attachment)
-            status_text = "SENT (PDF Attached)"
-        except Exception as pdf_err:
-            log.exception(f"PDF generation failed, falling back to HTML: {pdf_err}")
-
+    # SMTP logic...
     socket.getaddrinfo = ipv4_only_getaddrinfo
     sent = False
     last_err = ""
 
     try:
+        msg = MIMEMultipart("mixed")
+        msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        msg["From"] = smtp_user
+        msg["To"] = recipient
+        msg.attach(MIMEText(f"Filter Scope: {scope}\nNet PnL: ${summary.get('net_pnl', 0)}", "plain"))
+
         with smtplib.SMTP_SSL(smtp_server, 465, timeout=6) as server:
             server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, recipient, msg.as_string())
             sent = True
     except Exception as e1:
-        last_err = f"Port 465 SSL error: {e1}"
-        log.warning(f"Port 465 failed ({e1}), falling back to Port 587 STARTTLS...")
-
-    if not sent:
+        last_err = f"Port 465: {e1}"
         try:
             with smtplib.SMTP(smtp_server, 587, timeout=6) as server:
                 server.starttls()
@@ -611,19 +603,17 @@ def api_send_report():
                 server.sendmail(smtp_user, recipient, msg.as_string())
                 sent = True
         except Exception as e2:
-            last_err += f" | Port 587 STARTTLS error: {e2}"
+            last_err += f" | Port 587: {e2}"
 
     socket.getaddrinfo = orig_getaddrinfo
 
     if sent:
-        log.info(f"Report emailed successfully to {recipient}")
-        _log_email_attempt(recipient, scope, summary, status_text)
+        _log_email_attempt(recipient, scope, summary, "SENT (SMTP)")
         return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
     else:
         _log_email_attempt(recipient, scope, summary, f"FAILED: {last_err}")
-        return jsonify({"ok": False, "error": "DISPATCH_FAILED", "message": f"SMTP Connection Failed: {last_err}"}), 500
-
-
+        return jsonify({"ok": False, "error": "DISPATCH_FAILED", "message": f"Cloud firewall blocked SMTP ports. Add RESEND_API_KEY environment variable to use Port 443 HTTPS. Error: {last_err}"}), 500
+        
 @app.route("/api/email_tracker")
 def api_email_tracker():
     bust(EMAIL_TRACKER_FILE)
