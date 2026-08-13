@@ -6,7 +6,7 @@
     "stop": 6.423,
     "tp1": 6.423,
     "tp2": 6.645,
-    "qty": 806.2,
+    "qty": 1128.8,
     "qty_tp1": 483.7,
     "qty_tp2": 322.6,
     "risk_usd": 112.08,
@@ -28,7 +28,7 @@
     ],
     "tier": "\u26a1 High-Liquidity L1s",
     "exchange": "deribit_testnet",
-    "total_q": 806.2
+    "total_q": 1128.8
   },
   "ADAUSDT": {
     "symbol": "ADAUSDT",
@@ -127,6 +127,42 @@
       "RSI not oversold (64)",
       "1h confirms",
       "4h trend aligns (RSI 38)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "XRPUSDT": {
+    "symbol": "XRPUSDT",
+    "signal": "SELL",
+    "entry": 1.00684683,
+    "stop": 1.0109,
+    "tp1": 1.0011,
+    "tp2": 0.9946,
+    "qty": 5360,
+    "qty_tp1": 3210,
+    "qty_tp2": 2150,
+    "risk_usd": 2387.0,
+    "balance_at_open": 107943.49,
+    "risk_mult": 2.2113381060200816,
+    "order_ids": {
+      "entry": "USDC-210049217515876584",
+      "stop_loss": "USDC-SLMB-31907",
+      "tp1": "USDC-210049217515882069",
+      "tp2": "USDC-210049217515882596"
+    },
+    "opened_at": "2026-08-13T11:15:51.048014+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 55.4,
+    "score": 6,
+    "reasons": [
+      "Strong ADX 40",
+      "RSI not oversold (40)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 40)",
       "4h trend established (20h)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
