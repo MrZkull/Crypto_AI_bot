@@ -10,6 +10,9 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<!-- noUiSlider: touch-friendly dual-handle range scrubber for Quant charts -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.css">
+<script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.js"></script>
 <style>
 :root {
   --bg: #07090d; --bg2: #0c1018; --bg3: #111820; --bg4: #161f2a;
@@ -22,7 +25,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; min-height: 100vh; display: flex; overflow-x: auto; }
 
-/* 🏛️ ALWAYS-OPEN PINNED ACCESSIBLE SIDEBAR (NO HAMBURGER MENU) */
+/* 🏛️ ALWAYS-OPEN PINNED ACCESSIBLE SIDEBAR */
 .sidebar { width: var(--nav-w); min-height: 100vh; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; z-index: 200; flex-shrink: 0; }
 .sidebar-logo { padding: 18px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
 .logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 2s ease-in-out infinite; flex-shrink: 0; }
@@ -63,7 +66,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .page { display: none; padding: 16px; flex: 1; }
 .page.active { display: block; }
 
-/* 📱 FLUID RESPONSIVE STAT CARDS & GRIDS */
 .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; position: relative; overflow: hidden; }
 .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
@@ -186,7 +188,34 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .fselect { font-size: 10px; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text2); font-family: var(--mono); outline: none; cursor: pointer; }
 .fselect option { background: var(--bg2); color: var(--text); }
 
-/* 📱 RESPONSIVE BREAKPOINTS (SIDEBAR STAYS OPEN, CONTENT COLLAPSES NEATLY) */
+/* Quant chart range scrubber (noUiSlider theming) */
+.quant-scrub-wrap { padding: 4px 10px 2px; }
+.quant-scrub-label {
+  display:flex; justify-content:space-between; font-family:var(--mono);
+  font-size:9px; color:var(--text3); margin-bottom:8px; letter-spacing:.02em;
+}
+.quant-scrub-label span.qs-active { color: var(--green); font-weight:700; }
+.quant-range-slider { height: 6px; margin: 0 4px 14px; }
+.quant-range-slider .noUi-target {
+  background: var(--bg4); border: 1px solid var(--border2); border-radius: 4px; box-shadow: none;
+}
+.quant-range-slider .noUi-connect { background: var(--green); }
+.quant-range-slider .noUi-handle {
+  width: 16px; height: 16px; top: -6px; right: -8px;
+  border-radius: 50%; background: var(--text); border: 2px solid var(--green);
+  box-shadow: 0 0 0 3px rgba(16,185,129,0.15); cursor: grab;
+}
+.quant-range-slider .noUi-handle:before,
+.quant-range-slider .noUi-handle:after { display: none; }
+.quant-range-slider.qs-cyan .noUi-connect { background: var(--cyan); }
+.quant-range-slider.qs-cyan .noUi-handle { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(6,182,212,0.15); }
+.qs-reset-btn {
+  font-family: var(--mono); font-size: 9px; color: var(--text3); background: transparent;
+  border: 1px solid var(--border2); border-radius: 4px; padding: 2px 8px; cursor: pointer;
+}
+.qs-reset-btn:hover { color: var(--text); border-color: var(--text3); }
+
+/* RESPONSIVE BREAKPOINTS */
 @media (max-width: 1024px) {
   .g2, .g3 { grid-template-columns: 1fr; }
 }
@@ -204,13 +233,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   .logo-sub, .coins-label, .sidebar-section { display: none; }
   .nav-item span:not(.nav-icon):not(.nav-badge) { font-size: 9px; }
   .stats-row { grid-template-columns: 1fr; }
-}
-
-.printable-report { display: none; }
-@media print {
-  body * { visibility: hidden; }
-  .printable-report, .printable-report * { visibility: visible; }
-  .printable-report { display: block !important; position: absolute; left: 0; top: 0; width: 100%; color: #111; background: #fff !important; font-family: Arial, sans-serif; padding: 20px; }
 }
 </style>
 </head>
@@ -625,42 +647,54 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- QUANT ANALYTICS PAGE -->
-    <div class="page" id="page-quant">
-      <div class="stats-row">
-        <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">1.82</div><div class="stat-sub">Annualized</div></div>
-        <div class="stat-card c-cyan"><div class="stat-label">Sortino Ratio</div><div class="stat-value cyan" id="q-sortino">2.45</div><div class="stat-sub">Downside Risk</div></div>
-        <div class="stat-card c-purple"><div class="stat-label">Profit Factor</div><div class="stat-value purple" id="q-pf">2.14</div><div class="stat-sub">Gross Win/Loss</div></div>
-        <div class="stat-card c-amber"><div class="stat-label">Expectancy (E)</div><div class="stat-value amber" id="q-expect">$+12.40</div><div class="stat-sub">USDT/trade</div></div>
-        <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">-$142.50</div><div class="stat-sub">Peak to Trough</div></div>
-      </div>
+  <!-- QUANT ANALYTICS PAGE WITH SCRUBBERS -->
+  <div class="page" id="page-quant">
+    <div class="stats-row">
+      <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">1.82</div><div class="stat-sub">Annualized</div></div>
+      <div class="stat-card c-cyan"><div class="stat-label">Sortino Ratio</div><div class="stat-value cyan" id="q-sortino">2.45</div><div class="stat-sub">Downside Risk</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Profit Factor</div><div class="stat-value purple" id="q-pf">2.14</div><div class="stat-sub">Gross Win/Loss</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Expectancy (E)</div><div class="stat-value amber" id="q-expect">$+12.40</div><div class="stat-sub">USDT/trade</div></div>
+      <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">-$142.50</div><div class="stat-sub">Peak to Trough</div></div>
+    </div>
 
-      <!-- CUMULATIVE EQUITY CHART WITH HORIZONTAL SCROLLBAR -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Cumulative Equity Trajectory</span>
-          <span class="panel-badge" style="color:var(--green);border-color:var(--green)">LIVE QUANT (Scroll to Move)</span>
-        </div>
-        <div class="panel-body">
-          <div style="overflow-x: auto; width: 100%; padding-bottom: 6px;">
-            <div style="height: 250px; min-width: 900px;"><canvas id="equityChart"></canvas></div>
-          </div>
-        </div>
+    <!-- CUMULATIVE EQUITY CHART WITH DUAL-HANDLE RANGE SCRUBBER -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Cumulative Equity Trajectory</span>
+        <span class="panel-badge" style="color:var(--green);border-color:var(--green)">LIVE QUANT</span>
       </div>
-
-      <!-- DAILY REALISED PNL CHART WITH HORIZONTAL SCROLLBAR -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Daily Realized PnL &amp; Growth Tracker</span>
-          <span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">DAILY BREAKDOWN (Scroll to Move)</span>
-        </div>
-        <div class="panel-body">
-          <div style="overflow-x: auto; width: 100%; padding-bottom: 6px;">
-            <div style="height: 230px; min-width: 900px;"><canvas id="dailyPnlChart"></canvas></div>
+      <div class="panel-body">
+        <div style="height: 250px;"><canvas id="equityChart"></canvas></div>
+        <div class="quant-scrub-wrap">
+          <div class="quant-scrub-label">
+            <span id="equityScrubFrom">—</span>
+            <button class="qs-reset-btn" onclick="resetEquityScrub()">Reset zoom</button>
+            <span id="equityScrubTo">—</span>
           </div>
+          <div id="equityRangeSlider" class="quant-range-slider"></div>
         </div>
       </div>
     </div>
+
+    <!-- DAILY REALISED PNL CHART WITH DUAL-HANDLE RANGE SCRUBBER -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Daily Realized PnL &amp; Growth Tracker</span>
+        <span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">DAILY BREAKDOWN</span>
+      </div>
+      <div class="panel-body">
+        <div style="height: 230px;"><canvas id="dailyPnlChart"></canvas></div>
+        <div class="quant-scrub-wrap">
+          <div class="quant-scrub-label">
+            <span id="pnlScrubFrom">—</span>
+            <button class="qs-reset-btn" onclick="resetPnlScrub()">Reset zoom</button>
+            <span id="pnlScrubTo">—</span>
+          </div>
+          <div id="dailyPnlRangeSlider" class="quant-range-slider qs-cyan"></div>
+        </div>
+      </div>
+    </div>
+  </div>
   
   <!-- EXECUTION MICROSTRUCTURE PAGE -->
   <div class="page" id="page-execution">
@@ -937,47 +971,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   </div>
 </div>
 
-<!-- PRINTABLE PDF REPORT TEMPLATE -->
-<div id="printableReport" class="printable-report">
-  <div class="report-header">
-    <div>
-      <h1>CryptoBot AI — Institutional Performance Report</h1>
-      <p class="subtitle">Quantitative Execution &amp; Risk Analytics Audit</p>
-    </div>
-    <div class="header-right">
-      <p><strong>Generated:</strong> <span id="reportGenTime">—</span></p>
-      <p><strong>Scope:</strong> <span id="reportScope">—</span></p>
-    </div>
-  </div>
-  <div class="report-kpi-grid">
-    <div class="kpi-card"><div class="title">Total Trades Taken</div><div class="value" id="repTotalTrades">0</div></div>
-    <div class="kpi-card"><div class="title">Win / Loss Split</div><div class="value" id="repWinLossSplit">0 W / 0 L</div></div>
-    <div class="kpi-card"><div class="title">Net Realized PnL</div><div class="value" id="repNetPnL">$0.00</div></div>
-    <div class="kpi-card"><div class="title">Profit Factor</div><div class="value" id="repProfitFactor">0.00</div></div>
-    <div class="kpi-card"><div class="title">Largest Win</div><div class="value pos" id="repMaxWin">$0.00</div></div>
-    <div class="kpi-card"><div class="title">Largest Loss</div><div class="value neg" id="repMaxLoss">$0.00</div></div>
-  </div>
-  <table class="report-table">
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Date (UTC)</th>
-        <th>Symbol</th>
-        <th>Dir</th>
-        <th>Entry</th>
-        <th>Close</th>
-        <th>Qty</th>
-        <th>PnL (USDT)</th>
-        <th>Reason</th>
-      </tr>
-    </thead>
-    <tbody id="reportTableBody"></tbody>
-  </table>
-  <div class="report-footer">
-    <p>Confidential — CryptoBot AI Internal Execution Record.</p>
-  </div>
-</div>
-
 <script>
 // ═══════════════════════════════════════════════════════
 // STATE & UTILS
@@ -1001,7 +994,8 @@ let probatedCoinsSet = new Set(), probatedCoinsData = [];
 let histRange = 'all', histResultFilter = 'all', sigFilter = 'all', confFilter = 0;
 let scanRunning = false, monTimer = null;
 let equityChartInst = null, dailyPnlChartInst = null, calibrationChartInst = null;
-let reportPieChartInst = null, reportEquityChartInst = null;
+let allEquityPoints = [], allDailyPnlPoints = [];
+let equityScrubber = null, pnlScrubber = null;
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -1795,15 +1789,16 @@ async function fetchAnalytics() {
 function renderEquityChart(points) {
   const ctx = document.getElementById('equityChart')?.getContext('2d');
   if (!ctx) return;
+  allEquityPoints = points || [];
   if (equityChartInst) equityChartInst.destroy();
 
   equityChartInst = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: points.map(p => p.time),
+      labels: allEquityPoints.map(p => p.time),
       datasets: [{
         label: 'Account Equity (USDT)',
-        data: points.map(p => p.equity),
+        data: allEquityPoints.map(p => p.equity),
         borderColor: '#10b981',
         borderWidth: 2,
         backgroundColor: 'rgba(16,185,129,0.08)',
@@ -1816,13 +1811,7 @@ function renderEquityChart(points) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        zoom: {
-          pan: { enabled: true, mode: 'x' },
-          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
-        }
-      },
+      plugins: { legend: { display: false } },
       scales: {
         x: {
           grid: { color: 'rgba(255,255,255,0.05)' },
@@ -1841,34 +1830,40 @@ function renderEquityChart(points) {
       }
     }
   });
+
+  setupChartScrubber({
+    sliderId: 'equityRangeSlider',
+    fullPoints: allEquityPoints,
+    getChart: () => equityChartInst,
+    labelKey: 'time',
+    dataKey: 'equity',
+    fromEl: 'equityScrubFrom',
+    toEl: 'equityScrubTo',
+    storeAs: 'equityScrubber'
+  });
 }
 
 function renderDailyPnlChart(dailyPoints) {
   const ctx = document.getElementById('dailyPnlChart')?.getContext('2d');
   if (!ctx) return;
+  allDailyPnlPoints = dailyPoints || [];
   if (dailyPnlChartInst) dailyPnlChartInst.destroy();
 
   dailyPnlChartInst = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: dailyPoints.map(p => p.date),
+      labels: allDailyPnlPoints.map(p => p.date),
       datasets: [{
         label: 'Daily Realized PnL (USDT)',
-        data: dailyPoints.map(p => p.pnl),
-        backgroundColor: dailyPoints.map(p => p.pnl >= 0 ? '#10b981' : '#f43f5e'),
+        data: allDailyPnlPoints.map(p => p.pnl),
+        backgroundColor: allDailyPnlPoints.map(p => p.pnl >= 0 ? '#10b981' : '#f43f5e'),
         borderRadius: 4
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        zoom: {
-          pan: { enabled: true, mode: 'x' },
-          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
-        }
-      },
+      plugins: { legend: { display: false } },
       scales: {
         x: {
           grid: { color: 'rgba(255,255,255,0.05)' },
@@ -1887,6 +1882,77 @@ function renderDailyPnlChart(dailyPoints) {
       }
     }
   });
+
+  setupChartScrubber({
+    sliderId: 'dailyPnlRangeSlider',
+    fullPoints: allDailyPnlPoints,
+    getChart: () => dailyPnlChartInst,
+    labelKey: 'date',
+    dataKey: 'pnl',
+    fromEl: 'pnlScrubFrom',
+    toEl: 'pnlScrubTo',
+    storeAs: 'pnlScrubber',
+    recolor: true
+  });
+}
+
+function setupChartScrubber(cfg) {
+  const el = document.getElementById(cfg.sliderId);
+  if (!el) return;
+  const n = cfg.fullPoints.length;
+
+  if (el.noUiSlider) el.noUiSlider.destroy();
+  if (n < 2) {
+    if (cfg.storeAs === 'equityScrubber') equityScrubber = null;
+    if (cfg.storeAs === 'pnlScrubber') pnlScrubber = null;
+    return;
+  }
+
+  noUiSlider.create(el, {
+    start: [0, n - 1],
+    connect: true,
+    step: 1,
+    range: { min: 0, max: n - 1 },
+    behaviour: 'drag-tap'
+  });
+
+  const applyWindow = (values) => {
+    const from = Math.round(values[0]);
+    const to = Math.round(values[1]);
+    const chart = cfg.getChart();
+    if (!chart) return;
+    const windowed = cfg.fullPoints.slice(from, to + 1);
+    chart.data.labels = windowed.map(p => p[cfg.labelKey]);
+    chart.data.datasets[0].data = windowed.map(p => p[cfg.dataKey]);
+    if (cfg.recolor) {
+      chart.data.datasets[0].backgroundColor = windowed.map(p => p[cfg.dataKey] >= 0 ? '#10b981' : '#f43f5e');
+    }
+    chart.update('none');
+
+    const fmt = (v) => String(v || '').replace('T', ' ').slice(0, 16);
+    const fromEl = document.getElementById(cfg.fromEl);
+    const toEl = document.getElementById(cfg.toEl);
+    if (fromEl) fromEl.innerHTML = `<span class="qs-active">${fmt(cfg.fullPoints[from]?.[cfg.labelKey])}</span>`;
+    if (toEl) toEl.innerHTML = `<span class="qs-active">${fmt(cfg.fullPoints[to]?.[cfg.labelKey])}</span>`;
+  };
+
+  el.noUiSlider.on('update', applyWindow);
+  applyWindow([0, n - 1]);
+
+  if (cfg.storeAs === 'equityScrubber') equityScrubber = el;
+  if (cfg.storeAs === 'pnlScrubber') pnlScrubber = el;
+}
+
+function resetEquityScrub() {
+  if (equityScrubber && equityScrubber.noUiSlider) {
+    equityScrubber.noUiSlider.set([0, allEquityPoints.length - 1]);
+  }
+}
+
+function resetPnlScrub() {
+  if (pnlScrubber && pnlScrubber.noUiSlider) {
+    pnlScrubber.noUiSlider.set([0, allDailyPnlPoints.length - 1]);
+  }
 }
 
 function renderCalibrationChart() {
@@ -2092,105 +2158,7 @@ function downloadCSVReport() {
   a.click();
 }
 
-function renderInstitutionalReport() {
-  const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
-  let wins = 0, losses = 0, grossProfit = 0, grossLoss = 0, netPnL = 0;
-  let maxWin = 0, maxLoss = 0;
-
-  data.forEach(t => {
-    const pnl = parseFloat(t.pnl || 0);
-    netPnL += pnl;
-    if (pnl > 0) {
-      wins++; grossProfit += pnl;
-      if (pnl > maxWin) maxWin = pnl;
-    } else if (pnl < 0) {
-      losses++; grossLoss += Math.abs(pnl);
-      if (pnl < maxLoss) maxLoss = pnl;
-    }
-  });
-
-  const total = data.length;
-  const winRate = total > 0 ? ((wins / total) * 100).toFixed(1) : "0.0";
-  const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : (grossProfit > 0 ? "99.9" : "0.00");
-
-  document.getElementById('repTotalTrades').innerText = total;
-  document.getElementById('repWinLossSplit').innerText = `${wins} W / ${losses} L (${winRate}%)`;
-  document.getElementById('repNetPnL').innerText = `$${netPnL.toFixed(2)}`;
-  document.getElementById('repProfitFactor').innerText = profitFactor;
-  document.getElementById('repMaxWin').innerText = `$${maxWin.toFixed(2)}`;
-  document.getElementById('repMaxLoss').innerText = `$${maxLoss.toFixed(2)}`;
-
-  document.getElementById('reportGenTime').innerText = new Date().toUTCString();
-  
-  const sortVal = document.getElementById('histSortPick')?.value || 'all';
-  const catVal = document.getElementById('histCategoryPick')?.value || 'all';
-  const symVal = document.getElementById('histSymbolPick')?.value || 'all';
-  const dirVal = document.getElementById('histDirPick')?.value || 'all';
-  const reasonVal = document.getElementById('histReasonPick')?.value || 'all';
-  document.getElementById('reportScope').innerText = `Range: ${histRange.toUpperCase()} | Result: ${histResultFilter.toUpperCase()} | Sort: ${sortVal} | Cat: ${catVal} | Sym: ${symVal} | Dir: ${dirVal} | Reason: ${reasonVal}`;
-
-  const tbody = document.getElementById('reportTableBody');
-  tbody.innerHTML = '';
-  data.forEach((t, idx) => {
-    const pnl = parseFloat(t.pnl || 0);
-    const row = document.createElement('tr');
-    row.innerHTML = `
-      <td>${idx + 1}</td>
-      <td>${(t.closed_at || t.opened_at || '').substring(0, 16).replace('T', ' ')}</td>
-      <td><strong>${t.symbol}</strong></td>
-      <td style="color:${t.signal === 'BUY' ? '#00873d' : '#d91424'}; font-weight:bold;">${t.signal || '—'}</td>
-      <td>${parseFloat(t.entry || 0).toFixed(4)}</td>
-      <td>${parseFloat(t.close_price || t.entry || 0).toFixed(4)}</td>
-      <td>${t.qty || 0}</td>
-      <td style="color:${pnl >= 0 ? '#00873d' : '#d91424'}; font-weight:bold;">${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)}</td>
-      <td>${t.close_reason || 'Closed'}</td>
-    `;
-    tbody.appendChild(row);
-  });
-}
-
-function printPDFReport() {
-  const rep = document.getElementById('printableReport');
-  rep.style.display = 'block';
-  rep.style.position = 'absolute';
-  rep.style.top = '-9999px';
-  rep.style.left = '-9999px';
-  rep.style.width = '800px';
-
-  renderInstitutionalReport();
-
-  setTimeout(() => {
-    rep.style.display = '';
-    rep.style.position = '';
-    rep.style.top = '';
-    rep.style.left = '';
-    rep.style.width = '';
-    window.print();
-  }, 150);
-}
-
-function openEmailModal() { 
-  const input = document.getElementById('emailRecipient');
-  if (input) input.value = '';
-  document.getElementById('emailModal').classList.add('active'); 
-}
-
-function closeEmailModal() { 
-  document.getElementById('emailModal').classList.remove('active'); 
-}
-
-const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-
-async function sendEmailReport() {
-  const emailInput = document.getElementById('emailRecipient');
-  const email = emailInput.value.trim();
-
-  if (!email || !EMAIL_REGEX.test(email)) {
-    alert("⚠️ Invalid email format!\nPlease enter a complete email address.");
-    emailInput.focus();
-    return;
-  }
-
+function buildReportPayload() {
   const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
   let wins = 0, losses = 0, netPnL = 0, maxWin = 0, maxLoss = 0, grossP = 0, grossL = 0;
 
@@ -2217,12 +2185,70 @@ async function sendEmailReport() {
   const dirVal = document.getElementById('histDirPick')?.value || 'all';
   const reasonVal = document.getElementById('histReasonPick')?.value || 'all';
 
-  const payload = {
-    email,
+  return {
     scope: `Range: ${histRange.toUpperCase()} | Result: ${histResultFilter.toUpperCase()} | Sort: ${sortVal} | Cat: ${catVal} | Sym: ${symVal} | Dir: ${dirVal} | Reason: ${reasonVal}`,
     summary,
     trades: data
   };
+}
+
+async function printPDFReport() {
+  const btn = document.querySelector('button[onclick="printPDFReport()"]');
+  const originalLabel = btn ? btn.textContent : null;
+  if (btn) { btn.textContent = '⏳ Building...'; btn.disabled = true; }
+
+  try {
+    const payload = buildReportPayload();
+    const r = await fetch('/api/download_report_pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.message || body.error || `HTTP ${r.status}`);
+    }
+
+    const blob = await r.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `CryptoBot_Report_${new Date().toISOString().substring(0,10)}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (e) {
+    alert(`🚨 PDF Generation Failed:\n${e.message}`);
+  } finally {
+    if (btn) { btn.textContent = originalLabel; btn.disabled = false; }
+  }
+}
+
+function openEmailModal() { 
+  const input = document.getElementById('emailRecipient');
+  if (input) input.value = '';
+  document.getElementById('emailModal').classList.add('active'); 
+}
+
+function closeEmailModal() { 
+  document.getElementById('emailModal').classList.remove('active'); 
+}
+
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+async function sendEmailReport() {
+  const emailInput = document.getElementById('emailRecipient');
+  const email = emailInput.value.trim();
+
+  if (!email || !EMAIL_REGEX.test(email)) {
+    alert("⚠️ Invalid email format!\nPlease enter a complete email address.");
+    emailInput.focus();
+    return;
+  }
+
+  const payload = { email, ...buildReportPayload() };
 
   closeEmailModal();
 
