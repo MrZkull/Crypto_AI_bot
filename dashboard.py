@@ -1,4 +1,4 @@
-# dashboard.py — V5.2: Master Institutional Server with Resilient Proxies, SMTP Timeout & Probation API .
+# dashboard.py — V5.3: Master Institutional Server with EmailJS, Resilient Proxies & Auto-Probation API
 
 import os
 import json
@@ -12,7 +12,7 @@ import socket
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -57,7 +57,7 @@ def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
 
-# ── PDF Generation Helper (Type-Safe Protection Against None Values) ─────
+# ── PDF Generation Helper ──────────────────────────────────────────────
 
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     if not HAS_REPORTLAB:
@@ -67,7 +67,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     trades = trades or []
 
     buffer = BytesIO()
-    # Letter size: 612 x 792 pt. Margins: 36 pt (0.5 inch) -> Printable width = 540 pt
     doc = SimpleDocTemplate(
         buffer, 
         pagesize=letter, 
@@ -75,7 +74,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     )
     styles = getSampleStyleSheet()
     
-    # Custom Typography Styles
     title_style = ParagraphStyle(
         'RepTitle', parent=styles['Heading1'], 
         fontSize=14, leading=18, textColor=colors.HexColor('#0f172a'), spaceAfter=2, fontName='Helvetica-Bold'
@@ -103,19 +101,19 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     )
     header_cell = ParagraphStyle(
         'RepHeaderCell', parent=styles['Normal'], 
-        fontSize=7, leading=9, textColor=colors.white, fontName='Helvetica-Bold', alignment=1 # Center
+        fontSize=7, leading=9, textColor=colors.white, fontName='Helvetica-Bold', alignment=1
     )
 
     elements = []
 
-    # 1. Title & Metadata Banner
+    # 1. Title Banner
     elements.append(Paragraph("CryptoBot AI — Institutional Performance Report", title_style))
     elements.append(Paragraph("Quantitative Execution & Risk Analytics Audit", subtitle_style))
     
     meta_text = f"<b>Scope:</b> {scope} | <b>Generated:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
     elements.append(Paragraph(meta_text, ParagraphStyle('Meta', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor('#475569'), spaceAfter=8)))
 
-    # 2. Executive Summary KPI Table (2 columns x 3 rows = 6 key metrics)
+    # 2. KPI Summary Block
     pnl_val = float(summary.get('net_pnl') or 0)
     wins_val = int(summary.get('wins') or 0)
     losses_val = int(summary.get('losses') or 0)
@@ -124,6 +122,28 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     profit_factor_val = summary.get('profit_factor', '0.00')
     max_win_val = float(summary.get('max_win') or 0)
     max_loss_val = float(summary.get('max_loss') or 0)
+
+    win_pnls, loss_pnls, durations_min, symbol_pnl = [], [], [], {}
+    for t in trades:
+        t = t or {}
+        p = float(t.get('pnl') or 0)
+        if p > 0: win_pnls.append(p)
+        elif p < 0: loss_pnls.append(p)
+        sym = str(t.get('symbol') or '—')
+        symbol_pnl[sym] = symbol_pnl.get(sym, 0.0) + p
+        try:
+            if t.get('opened_at') and t.get('closed_at'):
+                o = datetime.fromisoformat(str(t['opened_at']).replace('Z', '+00:00'))
+                c = datetime.fromisoformat(str(t['closed_at']).replace('Z', '+00:00'))
+                durations_min.append((c - o).total_seconds() / 60.0)
+        except Exception:
+            pass
+
+    avg_win_val = (sum(win_pnls) / len(win_pnls)) if win_pnls else 0.0
+    avg_loss_val = (sum(loss_pnls) / len(loss_pnls)) if loss_pnls else 0.0
+    avg_hold_val = (sum(durations_min) / len(durations_min)) if durations_min else None
+    best_symbol = max(symbol_pnl.items(), key=lambda kv: kv[1]) if symbol_pnl else None
+    worst_symbol = min(symbol_pnl.items(), key=lambda kv: kv[1]) if symbol_pnl else None
 
     summary_table_data = [
         [
@@ -137,10 +157,21 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
         [
             Paragraph("<b>Largest Win:</b>", cell_style), Paragraph(f"${max_win_val:+.2f}", cell_green),
             Paragraph("<b>Largest Loss:</b>", cell_style), Paragraph(f"${max_loss_val:+.2f}", cell_red)
+        ],
+        [
+            Paragraph("<b>Avg Win / Avg Loss:</b>", cell_style),
+            Paragraph(f"${avg_win_val:+.2f} / ${avg_loss_val:+.2f}", cell_style),
+            Paragraph("<b>Avg Hold Time:</b>", cell_style),
+            Paragraph(f"{avg_hold_val:.0f} min" if avg_hold_val is not None else "—", cell_style)
+        ],
+        [
+            Paragraph("<b>Best Performing Symbol:</b>", cell_style),
+            Paragraph(f"{best_symbol[0]} (${best_symbol[1]:+.2f})" if best_symbol else "—", cell_green),
+            Paragraph("<b>Worst Performing Symbol:</b>", cell_style),
+            Paragraph(f"{worst_symbol[0]} (${worst_symbol[1]:+.2f})" if worst_symbol else "—", cell_red)
         ]
     ]
     
-    # Printable width = 540 pt. Col widths: 110, 160, 110, 160 = 540
     sum_table = Table(summary_table_data, colWidths=[110, 160, 110, 160])
     sum_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
@@ -182,7 +213,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
         ]
         trade_rows.append(row)
 
-    # Printable width = 540 pt. Sum of column widths = 538 pt.
     col_widths = [22, 85, 65, 32, 52, 52, 45, 65, 120]
     trade_table = Table(trade_rows, colWidths=col_widths, repeatRows=1)
     
@@ -194,7 +224,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]
     
-    # Zebra striping for data rows
     for r_idx in range(1, len(trade_rows)):
         if r_idx % 2 == 0:
             t_style.append(('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#f8fafc')))
@@ -204,7 +233,16 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     trade_table.setStyle(TableStyle(t_style))
     elements.append(trade_table)
 
-    doc.build(elements)
+    def _draw_footer(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        canvas_obj.setFont('Helvetica', 6.5)
+        canvas_obj.setFillColor(colors.HexColor('#94a3b8'))
+        disclaimer = "CryptoBot AI — Automated Report. Past performance is not indicative of future results."
+        canvas_obj.drawString(36, 24, disclaimer)
+        canvas_obj.drawRightString(letter[0] - 36, 24, f"Page {doc_obj.page}")
+        canvas_obj.restoreState()
+
+    doc.build(elements, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
     buffer.seek(0)
     return buffer.getvalue()
 
@@ -426,17 +464,45 @@ def api_log():
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
 
-# ── Probation & Cooldown Tracker Endpoint ─────────────────────────────
+# ── Probation & Cooldown Tracker Endpoint (Auto-Audits History) ─────────────
 
 @app.route("/api/probation")
 def api_probation():
     bust(RELIABILITY_FILE)
+    bust("trade_history.json")
+    
     rel = get(RELIABILITY_FILE, {})
+    if not isinstance(rel, dict):
+        rel = {}
+        
+    history = get("trade_history.json", [])
     now = time.time()
-    probated_coins = []
+    updated = False
+
+    # Audit trade history dynamically for 3 consecutive losses
+    symbols_in_history = set(t.get("symbol") for t in history if t.get("symbol"))
+    
+    for symbol in symbols_in_history:
+        s_trades = [t for t in history if t.get("symbol") == symbol and t.get("signal") != "RECOVERED"]
+        last_3 = s_trades[-3:] if len(s_trades) >= 3 else []
+        
+        if len(last_3) == 3 and all((float(t.get("pnl") or 0)) < 0 for t in last_3):
+            if symbol not in rel or not isinstance(rel[symbol], dict):
+                rel[symbol] = {}
+            if not rel[symbol].get("is_benched"):
+                rel[symbol]["is_benched"] = True
+                rel[symbol]["benched_at"] = now
+                rel[symbol]["probation_wins"] = 0
+                rel[symbol]["probation_consecutive_losses"] = 3
+                updated = True
+
+    if updated:
+        gh_push(RELIABILITY_FILE, rel)
+        _cache[RELIABILITY_FILE] = rel
 
     scan_mode = get("scan_mode.json", {})
     base_conf = float(scan_mode.get("min_confidence", 60.0))
+    probated_coins = []
 
     for symbol, data in rel.items():
         if isinstance(data, dict) and data.get("is_benched", False):
@@ -569,7 +635,7 @@ def api_monitor():
     })
 
 
-# ── Persistent Email Dispatch (Port 465 SSL + Dual-Port Fallback) ────────
+# ── Persistent Email Dispatch & PDF Download Routes ───────────────────────
 
 def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     bust(EMAIL_TRACKER_FILE)
@@ -590,6 +656,36 @@ def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     gh_push(EMAIL_TRACKER_FILE, logs)
 
 
+@app.route("/api/download_report_pdf", methods=["POST"])
+def api_download_report_pdf():
+    if not HAS_REPORTLAB:
+        return jsonify({
+            "ok": False, "error": "REPORTLAB_MISSING",
+            "message": "ReportLab is not installed on the server. Add 'reportlab' to requirements.txt."
+        }), 500
+
+    data = request.get_json() or {}
+    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
+    summary = data.get("summary") or {}
+    trades = data.get("trades") or []
+
+    try:
+        pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+    except Exception as e:
+        log.error(f"PDF generation failed: {e}")
+        return jsonify({"ok": False, "error": "PDF_GENERATION_FAILED", "message": str(e)}), 500
+
+    buffer = BytesIO(pdf_bytes)
+    buffer.seek(0)
+    filename = f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=filename
+    )
+
+
 @app.route("/api/send_report", methods=["POST"])
 def api_send_report():
     data = request.get_json() or {}
@@ -601,94 +697,97 @@ def api_send_report():
     if not recipient or not re.match(EMAIL_REGEX, recipient):
         return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
 
+    emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID", "").strip()
+    emailjs_template_id = os.getenv("EMAILJS_TEMPLATE_ID", "").strip()
+    emailjs_public_key = os.getenv("EMAILJS_PUBLIC_KEY", "").strip()
+    emailjs_private_key = os.getenv("EMAILJS_PRIVATE_KEY", "").strip()
+
+    brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
+    brevo_sender = os.getenv("BREVO_SENDER_EMAIL", "").strip()
     resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
 
-    # ── 1. RESEND HTTP API (PORT 443 - NEVER BLOCKED BY RENDER FIREWALL) ─────
-    if resend_api_key:
+    # ── 1. EMAILJS REST API (TOP PRIORITY - NO DOMAIN, NO PHONE, NO BLOCKED PORTS) ──
+    if emailjs_service_id and emailjs_template_id and emailjs_public_key:
         try:
-            pnl_val = float(summary.get('net_pnl') or 0)
-            pnl_color = '#00873d' if pnl_val >= 0 else '#d91424'
-
-            html_content = f"""
-            <html>
-            <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 20px; color: #333;">
-              <div style="max-width: 650px; margin: 0 auto; background: #ffffff; padding: 25px; border-radius: 8px; border: 1px solid #e0e0e0;">
-                <h2 style="color: #111; margin-bottom: 5px;">CryptoBot AI — Institutional Performance Report</h2>
-                <p style="color: #666; font-size: 12px; margin-top: 0;">Quantitative Execution & Risk Analytics Audit</p>
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
-                <p style="font-size: 13px;"><strong>Filter Scope:</strong> {scope}</p>
-                <p style="font-size: 13px;"><strong>Report Date:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</p>
-                <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 12px;">
-                  <tr style="background: #f9f9f9;">
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Total Trades:</strong> {summary.get('total_trades', 0)}</td>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Win/Loss Split:</strong> {summary.get('wins', 0)} W / {summary.get('losses', 0)} L ({summary.get('win_rate', '0%')})</td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Net Realized PnL:</strong> <span style="color: {pnl_color}; font-weight: bold;">${summary.get('net_pnl', 0)}</span></td>
-                    <td style="padding: 10px; border: 1px solid #ddd;"><strong>Profit Factor:</strong> {summary.get('profit_factor', '0.00')}</td>
-                  </tr>
-                </table>
-                <p style="font-size: 12px; color: #444; font-weight: bold; margin-top: 15px;">📎 PDF report document is attached to this email.</p>
-              </div>
-            </body>
-            </html>
-            """
-
             payload = {
-                "from": "CryptoBot AI <reports@alorix.io>",
-                "to": [recipient],
-                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-                "html": html_content
+                "service_id": emailjs_service_id,
+                "template_id": emailjs_template_id,
+                "user_id": emailjs_public_key,
+                "accessToken": emailjs_private_key,
+                "template_params": {
+                    "to_email": recipient,
+                    "scope": scope,
+                    "net_pnl": summary.get('net_pnl', 0),
+                    "total_trades": summary.get('total_trades', 0),
+                    "wins": summary.get('wins', 0),
+                    "losses": summary.get('losses', 0),
+                    "win_rate": summary.get('win_rate', '0%')
+                }
             }
 
-            # Attach PDF if ReportLab is installed
-            if HAS_REPORTLAB:
-                try:
-                    pdf_bytes = generate_pdf_bytes(scope, summary, trades)
-                    pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-                    payload["attachments"] = [{
-                        "filename": f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf",
-                        "content": pdf_b64
-                    }]
-                except Exception as pdf_err:
-                    log.warning(f"PDF attachment generation skipped: {pdf_err}")
-
             r = requests.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {resend_api_key}",
-                    "Content-Type": "application/json"
-                },
+                "https://api.emailjs.com/api/v1.0/email/send",
+                headers={"Content-Type": "application/json"},
                 json=payload,
                 timeout=12
             )
 
-            res_data = r.json() if "application/json" in r.headers.get("content-type", "") else {}
-
-            if r.ok:
-                log.info(f"Report emailed via Resend HTTP API to {recipient}")
-                _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
+            if r.ok or r.text == "OK":
+                log.info(f"Report emailed via EmailJS API to {recipient}")
+                _log_email_attempt(recipient, scope, summary, "SENT (EmailJS API)")
                 return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
             else:
-                err_msg = res_data.get("message") or res_data.get("name") or r.text
-                log.error(f"Resend API Error ({r.status_code}): {err_msg}")
-                _log_email_attempt(recipient, scope, summary, f"FAILED Resend API: {err_msg}")
-                return jsonify({
-                    "ok": False,
-                    "error": "RESEND_API_ERROR",
-                    "message": f"Resend API Error ({r.status_code}): {err_msg}"
-                }), 400
-
+                log.error(f"EmailJS API Error ({r.status_code}): {r.text}")
+                _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS API: {r.text}")
         except Exception as api_err:
-            log.error(f"Resend HTTP API Exception: {api_err}")
-            _log_email_attempt(recipient, scope, summary, f"FAILED Resend Exception: {api_err}")
-            return jsonify({
-                "ok": False,
-                "error": "RESEND_EXCEPTION",
-                "message": f"Resend Connection Error: {str(api_err)}"
-            }), 500
+            log.error(f"EmailJS Exception: {api_err}")
+            _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS Exception: {api_err}")
 
-    # ── 2. SMTP FALLBACK (ONLY EXECUTED IF NO RESEND API KEY IS SET) ──────────
+    # ── 2. BREVO HTTP API ─────────────────────────────────────────────────────
+    if brevo_api_key and brevo_sender:
+        try:
+            pdf_b64 = None
+            if HAS_REPORTLAB:
+                pdf_b64 = base64.b64encode(generate_pdf_bytes(scope, summary, trades)).decode("utf-8")
+
+            brevo_payload = {
+                "sender": {"name": "CryptoBot AI", "email": brevo_sender},
+                "to": [{"email": recipient}],
+                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                "htmlContent": f"<h3>CryptoBot AI Performance Report</h3><p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>"
+            }
+            if pdf_b64:
+                brevo_payload["attachment"] = [{"name": f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf", "content": pdf_b64}]
+
+            r = requests.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={"api-key": brevo_api_key, "Content-Type": "application/json"},
+                json=brevo_payload,
+                timeout=12
+            )
+            if r.ok:
+                _log_email_attempt(recipient, scope, summary, "SENT (Brevo API)")
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
+        except Exception as e:
+            log.error(f"Brevo API error: {e}")
+
+    # ── 3. RESEND HTTP API ────────────────────────────────────────────────────
+    if resend_api_key:
+        try:
+            payload = {
+                "from": os.getenv("RESEND_FROM", "CryptoBot AI <reports@alorix.io>"),
+                "to": [recipient],
+                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                "html": f"<p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>"
+            }
+            r = requests.post("https://api.resend.com/emails", headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"}, json=payload, timeout=12)
+            if r.ok:
+                _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
+        except Exception as e:
+            log.error(f"Resend API error: {e}")
+
+    # ── 4. SMTP FALLBACK ──────────────────────────────────────────────────────
     smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     smtp_user   = os.getenv("SMTP_USER", "").strip()
     smtp_pass   = os.getenv("SMTP_PASS", "").strip()
@@ -698,7 +797,7 @@ def api_send_report():
         return jsonify({
             "ok": False, 
             "error": "NOT_CONFIGURED", 
-            "message": "Missing RESEND_API_KEY or SMTP credentials in Render Environment Variables."
+            "message": "Missing EMAILJS_PUBLIC_KEY / SERVICE_ID or SMTP credentials in Render Environment Variables."
         }), 500
 
     socket.getaddrinfo = ipv4_only_getaddrinfo
@@ -710,32 +809,46 @@ def api_send_report():
         msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
         msg["From"] = smtp_user
         msg["To"] = recipient
-        msg.attach(MIMEText(f"Filter Scope: {scope}\nNet PnL: ${summary.get('net_pnl', 0)}", "plain"))
+        msg.attach(MIMEText(f"CryptoBot AI Report\nScope: {scope}\nNet PnL: ${summary.get('net_pnl', 0)}", "plain"))
 
-        with smtplib.SMTP_SSL(smtp_server, 465, timeout=6) as server:
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, recipient, msg.as_string())
-            sent = True
-    except Exception as e1:
-        last_err = f"Port 465: {e1}"
+        if HAS_REPORTLAB:
+            try:
+                pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+                pdf_part = MIMEApplication(pdf_bytes, _subtype="pdf")
+                pdf_part.add_header("Content-Disposition", "attachment", filename=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf")
+                msg.attach(pdf_part)
+            except Exception: pass
+
         try:
-            with smtplib.SMTP(smtp_server, 587, timeout=6) as server:
-                server.starttls()
+            with smtplib.SMTP_SSL(smtp_server, 465, timeout=10) as server:
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, recipient, msg.as_string())
                 sent = True
-        except Exception as e2:
-            last_err += f" | Port 587: {e2}"
-
-    socket.getaddrinfo = orig_getaddrinfo
+        except Exception as e1:
+            last_err = f"Port 465: {e1}"
+            try:
+                with smtplib.SMTP(smtp_server, 587, timeout=10) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
+                    server.sendmail(smtp_user, recipient, msg.as_string())
+                    sent = True
+            except Exception as e2:
+                last_err += f" | Port 587: {e2}"
+    finally:
+        socket.getaddrinfo = orig_getaddrinfo
 
     if sent:
         _log_email_attempt(recipient, scope, summary, "SENT (SMTP)")
         return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
     else:
         _log_email_attempt(recipient, scope, summary, f"FAILED: {last_err}")
-        return jsonify({"ok": False, "error": "DISPATCH_FAILED", "message": f"Cloud firewall blocked SMTP ports. Error: {last_err}"}), 500
-        
+        return jsonify({
+            "ok": False,
+            "error": "DISPATCH_FAILED",
+            "message": f"Cloud firewall blocked SMTP ports. Raw error: {last_err}. Please configure EMAILJS_PUBLIC_KEY in Render."
+        }), 500
+
+
 @app.route("/api/email_tracker")
 def api_email_tracker():
     bust(EMAIL_TRACKER_FILE)
