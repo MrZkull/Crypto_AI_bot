@@ -61,40 +61,6 @@
     "exchange": "deribit_testnet",
     "total_q": 0.2
   },
-  "BTCUSDT": {
-    "symbol": "BTCUSDT",
-    "signal": "SELL",
-    "entry": 63589.8490566,
-    "stop": 64008.0,
-    "tp1": 63004.5,
-    "tp2": 62335.5,
-    "qty": 0.0848,
-    "qty_tp1": 0.0508,
-    "qty_tp2": 0.034,
-    "risk_usd": 1477.6,
-    "balance_at_open": 107943.35,
-    "risk_mult": 1.3688674298797971,
-    "order_ids": {
-      "entry": "USDC-210049217279527039",
-      "stop_loss": "USDC-SLMB-31796",
-      "tp1": "USDC-210049217279530788",
-      "tp2": "USDC-210049217279531297"
-    },
-    "opened_at": "2026-08-12T14:46:35.805827+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 50.1,
-    "score": 4,
-    "reasons": [
-      "Strong ADX 41",
-      "1h confirms",
-      "4h trend aligns (RSI 40)",
-      "4h trend established (20h)"
-    ],
-    "tier": "\ud83d\udc51 Big Three",
-    "exchange": "deribit_testnet"
-  },
   "DOTUSDT": {
     "symbol": "DOTUSDT",
     "signal": "SELL",
@@ -164,6 +130,36 @@
       "4h trend established (20h)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "BTCUSDT": {
+    "symbol": "BTCUSDT",
+    "signal": "BUY",
+    "entry": 63372.18,
+    "stop": 63112.0,
+    "tp1": 63736.0,
+    "tp2": 64152.0,
+    "qty": 0.0845,
+    "qty_tp1": 0.0507,
+    "qty_tp2": 0.0338,
+    "risk_usd": 21.99,
+    "balance_at_open": 108047.78,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-31846",
+      "tp1": "USDC-210049217414572636",
+      "tp2": "USDC-210049217414573194"
+    },
+    "opened_at": "2026-08-13T02:39:25.662480+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\ud83d\udc51 Big Three",
     "exchange": "deribit_testnet"
   }
 }
