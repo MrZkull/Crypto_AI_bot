@@ -61,47 +61,11 @@
     "exchange": "deribit_testnet",
     "total_q": 17478.4
   },
-  "XRPUSDT": {
-    "symbol": "XRPUSDT",
-    "signal": "SELL",
-    "entry": 1.00684683,
-    "stop": 1.0109,
-    "tp1": 1.0011,
-    "tp2": 0.9946,
-    "qty": 5360,
-    "qty_tp1": 3210,
-    "qty_tp2": 2150,
-    "risk_usd": 2387.0,
-    "balance_at_open": 107943.49,
-    "risk_mult": 2.2113381060200816,
-    "order_ids": {
-      "entry": "USDC-210049217515876584",
-      "stop_loss": "USDC-SLMB-31907",
-      "tp1": "USDC-210049217515882069",
-      "tp2": "USDC-210049217515882596"
-    },
-    "opened_at": "2026-08-13T11:15:51.048014+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 55.4,
-    "score": 6,
-    "reasons": [
-      "Strong ADX 40",
-      "RSI not oversold (40)",
-      "EMA bearish",
-      "1h confirms",
-      "4h trend aligns (RSI 40)",
-      "4h trend established (20h)"
-    ],
-    "tier": "\ud83c\udfdb Institutional Alts",
-    "exchange": "deribit_testnet"
-  },
   "ALGOUSDT": {
     "symbol": "ALGOUSDT",
     "signal": "SELL",
     "entry": 0.0818,
-    "stop": 0.08278,
+    "stop": 0.08043,
     "tp1": 0.08043,
     "tp2": 0.07886,
     "qty": 40200,
@@ -111,12 +75,12 @@
     "balance_at_open": 107967.35,
     "risk_mult": 1.0,
     "order_ids": {
-      "stop_loss": "USDC-SLMB-31915",
+      "stop_loss": "USDC-SLMB-31918",
       "tp1": "USDC-210049217554703800",
       "tp2": "USDC-210049217554704273"
     },
     "opened_at": "2026-08-13T14:48:06.696072+00:00",
-    "tp1_hit": false,
+    "tp1_hit": true,
     "tp2_hit": false,
     "closed": false,
     "confidence": 60.0,
@@ -153,6 +117,72 @@
     "score": 3,
     "reasons": [
       "Adopted untracked position via [3c]"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "BCHUSDT": {
+    "symbol": "BCHUSDT",
+    "signal": "BUY",
+    "entry": 209.36,
+    "stop": 206.465,
+    "tp1": 213.413,
+    "tp2": 218.044,
+    "qty": 12.82,
+    "qty_tp1": 7.68,
+    "qty_tp2": 5.14,
+    "risk_usd": 37.11,
+    "balance_at_open": 108131.95,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-31919",
+      "tp1": "USDC-210049217565243616",
+      "tp2": "USDC-210049217565243749"
+    },
+    "opened_at": "2026-08-13T15:44:28.396337+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "DOTUSDT": {
+    "symbol": "DOTUSDT",
+    "signal": "SELL",
+    "entry": 0.77182705,
+    "stop": 0.7777,
+    "tp1": 0.7635,
+    "tp2": 0.7541,
+    "qty": 6994,
+    "qty_tp1": 4196,
+    "qty_tp2": 2798,
+    "risk_usd": 1271.68,
+    "balance_at_open": 108131.95,
+    "risk_mult": 1.1760476759535035,
+    "order_ids": {
+      "entry": "USDC-210049217565368082",
+      "stop_loss": "USDC-SLMB-31920",
+      "tp1": "USDC-210049217565371587",
+      "tp2": "USDC-210049217565372107"
+    },
+    "opened_at": "2026-08-13T15:45:11.021956+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 55.6,
+    "score": 6,
+    "reasons": [
+      "Strong ADX 32",
+      "RSI not oversold (55)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 34)",
+      "4h trend established (20h)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"

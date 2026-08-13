@@ -5888,5 +5888,80 @@
     "pnl": 0.0083,
     "closed_at": "2026-08-13T14:48:02.199298+00:00",
     "close_reason": "STOPPED OUT \u274c"
+  },
+  {
+    "symbol": "ALGOUSDT",
+    "signal": "SELL",
+    "entry": 0.0818,
+    "stop": 0.08278,
+    "tp1": 0.08043,
+    "tp2": 0.07886,
+    "qty": 24120.0,
+    "qty_tp1": 24120,
+    "qty_tp2": 16080,
+    "risk_usd": 39.4,
+    "balance_at_open": 107967.35,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMB-31915",
+      "tp1": "USDC-210049217554703800",
+      "tp2": "USDC-210049217554704273"
+    },
+    "opened_at": "2026-08-13T14:48:06.696072+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet",
+    "close_price": 0.08038995,
+    "pnl": 34.0104,
+    "closed_at": "2026-08-13T15:44:21.411122+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
+  },
+  {
+    "symbol": "XRPUSDT",
+    "signal": "SELL",
+    "entry": 1.00684683,
+    "stop": 1.0109,
+    "tp1": 1.0011,
+    "tp2": 0.9946,
+    "qty": 5360,
+    "qty_tp1": 3210,
+    "qty_tp2": 2150,
+    "risk_usd": 2387.0,
+    "balance_at_open": 107943.49,
+    "risk_mult": 2.2113381060200816,
+    "order_ids": {
+      "entry": "USDC-210049217515876584",
+      "stop_loss": "USDC-SLMB-31907",
+      "tp1": "USDC-210049217515882069",
+      "tp2": "USDC-210049217515882596"
+    },
+    "opened_at": "2026-08-13T11:15:51.048014+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 55.4,
+    "score": 6,
+    "reasons": [
+      "Strong ADX 40",
+      "RSI not oversold (40)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 40)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet",
+    "close_price": 1.0112,
+    "pnl": -23.333,
+    "closed_at": "2026-08-13T15:44:24.119904+00:00",
+    "close_reason": "SL hit"
   }
 ]
