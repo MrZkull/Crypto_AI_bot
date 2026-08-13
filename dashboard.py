@@ -9,6 +9,7 @@ import logging
 import requests
 import re
 import socket
+import uuid
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +49,27 @@ EMAIL_REGEX = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 _cache = {}
 _cache_ts = {}
 CACHE_TTL = 15
+
+# ── Temporary Report Link Store (for EmailJS PDF-link workaround) ──────
+# EmailJS free tier blocks binary attachments, so instead of attaching the
+# PDF to the outgoing email we generate it once, hold it in memory keyed
+# by a random id, and send a clickable download link in the email body.
+REPORT_STORE = {}
+REPORT_TTL_SECONDS = 60 * 60 * 48  # links stay valid for 48 hours
+
+
+def _cleanup_reports():
+    now = time.time()
+    expired = [k for k, v in REPORT_STORE.items() if now - v["created"] > REPORT_TTL_SECONDS]
+    for k in expired:
+        REPORT_STORE.pop(k, None)
+
+
+def _store_report(pdf_bytes: bytes) -> str:
+    _cleanup_reports()
+    rid = uuid.uuid4().hex
+    REPORT_STORE[rid] = {"data": pdf_bytes, "created": time.time()}
+    return rid
 
 
 # ── IPv4 Socket Resolution Helper (Fixes Render [Errno 101]) ────────────
@@ -686,6 +708,25 @@ def api_download_report_pdf():
     )
 
 
+@app.route("/api/report/<report_id>.pdf")
+def api_get_stored_report(report_id):
+    """Serves a PDF that was generated during /api/send_report.
+    This is the link EmailJS emails point to, since EmailJS's free tier
+    cannot carry a binary attachment."""
+    _cleanup_reports()
+    entry = REPORT_STORE.get(report_id)
+    if not entry:
+        return jsonify({
+            "ok": False, "error": "NOT_FOUND",
+            "message": "This report link has expired (links last 48h) or does not exist. Generate a new report from the History tab."
+        }), 404
+
+    buffer = BytesIO(entry["data"])
+    buffer.seek(0)
+    filename = f"CryptoBot_Report_{report_id[:8]}.pdf"
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+
 @app.route("/api/send_report", methods=["POST"])
 def api_send_report():
     data = request.get_json() or {}
@@ -696,6 +737,21 @@ def api_send_report():
 
     if not recipient or not re.match(EMAIL_REGEX, recipient):
         return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
+
+    # 0. Generate the PDF once up front and stash it behind a short-lived
+    #    download link. EmailJS's free tier strips binary attachments, so a
+    #    clickable link is the only reliable way to deliver the PDF itself
+    #    without a paid plan or a custom domain (Resend) or phone
+    #    verification (Brevo).
+    report_url = None
+    pdf_bytes = None
+    if HAS_REPORTLAB:
+        try:
+            pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+            rid = _store_report(pdf_bytes)
+            report_url = request.host_url.rstrip("/") + f"/api/report/{rid}.pdf"
+        except Exception as e:
+            log.warning(f"PDF pre-generation for email failed: {e}")
 
     # 1. Fetch Credentials
     emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID", "").strip()
@@ -722,7 +778,11 @@ def api_send_report():
                     "total_trades": summary.get('total_trades', 0),
                     "wins": summary.get('wins', 0),
                     "losses": summary.get('losses', 0),
-                    "win_rate": summary.get('win_rate', '0%')
+                    "win_rate": summary.get('win_rate', '0%'),
+                    # NEW: clickable PDF download link — add a {{report_url}}
+                    # variable/button to your EmailJS template so this
+                    # actually shows up in the email body.
+                    "report_url": report_url or "PDF unavailable — ReportLab not installed on server."
                 }
             }
 
@@ -736,7 +796,11 @@ def api_send_report():
             if r.ok or r.text.strip() == "OK":
                 log.info(f"Report emailed via EmailJS API to {recipient}")
                 _log_email_attempt(recipient, scope, summary, "SENT (EmailJS API)")
-                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
+                return jsonify({
+                    "ok": True, "recipient": recipient,
+                    "message": f"Report shared with {recipient}",
+                    "report_url": report_url
+                })
             else:
                 err_text = r.text
                 log.error(f"EmailJS API Error ({r.status_code}): {err_text}")
@@ -750,15 +814,14 @@ def api_send_report():
     # ── 2. BREVO HTTP API ─────────────────────────────────────────────────────
     if brevo_api_key and brevo_sender:
         try:
-            pdf_b64 = None
-            if HAS_REPORTLAB:
-                pdf_b64 = base64.b64encode(generate_pdf_bytes(scope, summary, trades)).decode("utf-8")
+            pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8") if pdf_bytes else None
 
+            link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
             brevo_payload = {
                 "sender": {"name": "CryptoBot AI", "email": brevo_sender},
                 "to": [{"email": recipient}],
                 "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-                "htmlContent": f"<h3>CryptoBot AI Performance Report</h3><p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>"
+                "htmlContent": f"<h3>CryptoBot AI Performance Report</h3><p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
             }
             if pdf_b64:
                 brevo_payload["attachment"] = [{"name": f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf", "content": pdf_b64}]
@@ -771,7 +834,7 @@ def api_send_report():
             )
             if r.ok:
                 _log_email_attempt(recipient, scope, summary, "SENT (Brevo API)")
-                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
             else:
                 return jsonify({"ok": False, "error": "BREVO_API_ERROR", "message": r.text}), 400
         except Exception as e:
@@ -781,16 +844,17 @@ def api_send_report():
     # ── 3. RESEND HTTP API ────────────────────────────────────────────────────
     if resend_api_key:
         try:
+            link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
             payload = {
                 "from": os.getenv("RESEND_FROM", "CryptoBot AI <reports@alorix.io>"),
                 "to": [recipient],
                 "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-                "html": f"<p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>"
+                "html": f"<p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
             }
             r = requests.post("https://api.resend.com/emails", headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"}, json=payload, timeout=12)
             if r.ok:
                 _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
-                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
             else:
                 return jsonify({"ok": False, "error": "RESEND_API_ERROR", "message": r.text}), 400
         except Exception as e:
