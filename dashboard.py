@@ -707,7 +707,7 @@ def api_send_report():
     brevo_sender = os.getenv("BREVO_SENDER_EMAIL", "").strip()
     resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
 
-    # ── 1. EMAILJS REST API (TOP PRIORITY - NO DOMAIN, NO PHONE, NO BLOCKED PORTS) ──
+    # ── 1. EMAILJS REST API (FAST, RELIABLE, OVER HTTPS PORT 443) ──
     if emailjs_service_id and emailjs_template_id and emailjs_public_key:
         try:
             payload = {
@@ -741,19 +741,11 @@ def api_send_report():
                 err_text = r.text
                 log.error(f"EmailJS API Error ({r.status_code}): {err_text}")
                 _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS API: {err_text}")
-                return jsonify({
-                    "ok": False,
-                    "error": "EMAILJS_API_ERROR",
-                    "message": f"EmailJS API Error ({r.status_code}): {err_text}"
-                }), 400
+                return jsonify({"ok": False, "error": "EMAILJS_API_ERROR", "message": f"EmailJS API Error: {err_text}"}), 400
         except Exception as api_err:
             log.error(f"EmailJS Exception: {api_err}")
             _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS Exception: {api_err}")
-            return jsonify({
-                "ok": False,
-                "error": "EMAILJS_EXCEPTION",
-                "message": f"EmailJS Connection Error: {str(api_err)}"
-            }), 500
+            return jsonify({"ok": False, "error": "EMAILJS_EXCEPTION", "message": str(api_err)}), 500
 
     # ── 2. BREVO HTTP API ─────────────────────────────────────────────────────
     if brevo_api_key and brevo_sender:
