@@ -61,43 +61,6 @@
     "exchange": "deribit_testnet",
     "total_q": 17478.4
   },
-  "DOTUSDT": {
-    "symbol": "DOTUSDT",
-    "signal": "SELL",
-    "entry": 0.78234731,
-    "stop": 0.7692,
-    "tp1": 0.7692,
-    "tp2": 0.7542,
-    "qty": 1.0,
-    "qty_tp1": 4130,
-    "qty_tp2": 2753,
-    "risk_usd": 812.2,
-    "balance_at_open": 107943.35,
-    "risk_mult": 0.7524292155079978,
-    "order_ids": {
-      "entry": "USDC-210049217279626845",
-      "stop_loss": "USDC-SLMB-31910",
-      "tp1": "USDC-210049217279630883",
-      "tp2": "USDC-210049217279631107"
-    },
-    "opened_at": "2026-08-12T14:47:08.308335+00:00",
-    "tp1_hit": true,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 58.4,
-    "score": 6,
-    "reasons": [
-      "Strong ADX 45",
-      "EMA bearish",
-      "1h confirms",
-      "4h trend aligns (RSI 37)",
-      "4h trend established (20h)",
-      "Volume surge 2.2\u00d7"
-    ],
-    "tier": "\ud83c\udfdb Institutional Alts",
-    "exchange": "deribit_testnet",
-    "total_q": 1.0
-  },
   "XRPUSDT": {
     "symbol": "XRPUSDT",
     "signal": "SELL",
@@ -130,6 +93,66 @@
       "1h confirms",
       "4h trend aligns (RSI 40)",
       "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "ALGOUSDT": {
+    "symbol": "ALGOUSDT",
+    "signal": "SELL",
+    "entry": 0.0818,
+    "stop": 0.08278,
+    "tp1": 0.08043,
+    "tp2": 0.07886,
+    "qty": 40200,
+    "qty_tp1": 24120,
+    "qty_tp2": 16080,
+    "risk_usd": 39.4,
+    "balance_at_open": 107967.35,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMB-31915",
+      "tp1": "USDC-210049217554703800",
+      "tp2": "USDC-210049217554704273"
+    },
+    "opened_at": "2026-08-13T14:48:06.696072+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "LTCUSDT": {
+    "symbol": "LTCUSDT",
+    "signal": "BUY",
+    "entry": 44.861,
+    "stop": 44.61,
+    "tp1": 45.21,
+    "tp2": 45.61,
+    "qty": 120.3,
+    "qty_tp1": 72.1,
+    "qty_tp2": 48.2,
+    "risk_usd": 30.2,
+    "balance_at_open": 107967.35,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-31916",
+      "tp1": "USDC-210049217554714202",
+      "tp2": "USDC-210049217554714392"
+    },
+    "opened_at": "2026-08-13T14:48:10.110307+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"
