@@ -697,6 +697,7 @@ def api_send_report():
     if not recipient or not re.match(EMAIL_REGEX, recipient):
         return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
 
+    # 1. Fetch Credentials
     emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID", "").strip()
     emailjs_template_id = os.getenv("EMAILJS_TEMPLATE_ID", "").strip()
     emailjs_public_key = os.getenv("EMAILJS_PUBLIC_KEY", "").strip()
@@ -732,16 +733,27 @@ def api_send_report():
                 timeout=12
             )
 
-            if r.ok or r.text == "OK":
+            if r.ok or r.text.strip() == "OK":
                 log.info(f"Report emailed via EmailJS API to {recipient}")
                 _log_email_attempt(recipient, scope, summary, "SENT (EmailJS API)")
                 return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
             else:
-                log.error(f"EmailJS API Error ({r.status_code}): {r.text}")
-                _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS API: {r.text}")
+                err_text = r.text
+                log.error(f"EmailJS API Error ({r.status_code}): {err_text}")
+                _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS API: {err_text}")
+                return jsonify({
+                    "ok": False,
+                    "error": "EMAILJS_API_ERROR",
+                    "message": f"EmailJS API Error ({r.status_code}): {err_text}"
+                }), 400
         except Exception as api_err:
             log.error(f"EmailJS Exception: {api_err}")
             _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS Exception: {api_err}")
+            return jsonify({
+                "ok": False,
+                "error": "EMAILJS_EXCEPTION",
+                "message": f"EmailJS Connection Error: {str(api_err)}"
+            }), 500
 
     # ── 2. BREVO HTTP API ─────────────────────────────────────────────────────
     if brevo_api_key and brevo_sender:
@@ -768,8 +780,11 @@ def api_send_report():
             if r.ok:
                 _log_email_attempt(recipient, scope, summary, "SENT (Brevo API)")
                 return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
+            else:
+                return jsonify({"ok": False, "error": "BREVO_API_ERROR", "message": r.text}), 400
         except Exception as e:
             log.error(f"Brevo API error: {e}")
+            return jsonify({"ok": False, "error": "BREVO_EXCEPTION", "message": str(e)}), 500
 
     # ── 3. RESEND HTTP API ────────────────────────────────────────────────────
     if resend_api_key:
@@ -784,70 +799,19 @@ def api_send_report():
             if r.ok:
                 _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
                 return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
+            else:
+                return jsonify({"ok": False, "error": "RESEND_API_ERROR", "message": r.text}), 400
         except Exception as e:
             log.error(f"Resend API error: {e}")
+            return jsonify({"ok": False, "error": "RESEND_EXCEPTION", "message": str(e)}), 500
 
-    # ── 4. SMTP FALLBACK ──────────────────────────────────────────────────────
-    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    smtp_user   = os.getenv("SMTP_USER", "").strip()
-    smtp_pass   = os.getenv("SMTP_PASS", "").strip()
-
-    if not smtp_user or not smtp_pass:
-        _log_email_attempt(recipient, scope, summary, "FAILED: Missing Credentials")
-        return jsonify({
-            "ok": False, 
-            "error": "NOT_CONFIGURED", 
-            "message": "Missing EMAILJS_PUBLIC_KEY / SERVICE_ID or SMTP credentials in Render Environment Variables."
-        }), 500
-
-    socket.getaddrinfo = ipv4_only_getaddrinfo
-    sent = False
-    last_err = ""
-
-    try:
-        msg = MIMEMultipart("mixed")
-        msg["Subject"] = f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-        msg["From"] = smtp_user
-        msg["To"] = recipient
-        msg.attach(MIMEText(f"CryptoBot AI Report\nScope: {scope}\nNet PnL: ${summary.get('net_pnl', 0)}", "plain"))
-
-        if HAS_REPORTLAB:
-            try:
-                pdf_bytes = generate_pdf_bytes(scope, summary, trades)
-                pdf_part = MIMEApplication(pdf_bytes, _subtype="pdf")
-                pdf_part.add_header("Content-Disposition", "attachment", filename=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf")
-                msg.attach(pdf_part)
-            except Exception: pass
-
-        try:
-            with smtplib.SMTP_SSL(smtp_server, 465, timeout=10) as server:
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, recipient, msg.as_string())
-                sent = True
-        except Exception as e1:
-            last_err = f"Port 465: {e1}"
-            try:
-                with smtplib.SMTP(smtp_server, 587, timeout=10) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_pass)
-                    server.sendmail(smtp_user, recipient, msg.as_string())
-                    sent = True
-            except Exception as e2:
-                last_err += f" | Port 587: {e2}"
-    finally:
-        socket.getaddrinfo = orig_getaddrinfo
-
-    if sent:
-        _log_email_attempt(recipient, scope, summary, "SENT (SMTP)")
-        return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}"})
-    else:
-        _log_email_attempt(recipient, scope, summary, f"FAILED: {last_err}")
-        return jsonify({
-            "ok": False,
-            "error": "DISPATCH_FAILED",
-            "message": f"Cloud firewall blocked SMTP ports. Raw error: {last_err}. Please configure EMAILJS_PUBLIC_KEY in Render."
-        }), 500
-
+    # ── 4. NO HTTP API LOADED ─────────────────────────────────────────────────
+    _log_email_attempt(recipient, scope, summary, "FAILED: No Active API Key")
+    return jsonify({
+        "ok": False, 
+        "error": "NOT_CONFIGURED", 
+        "message": "No active HTTP email service detected. Please verify EMAILJS_PUBLIC_KEY, EMAILJS_SERVICE_ID, and EMAILJS_TEMPLATE_ID are saved in Render Environment Variables and trigger a redeploy!"
+    }), 500
 
 @app.route("/api/email_tracker")
 def api_email_tracker():
