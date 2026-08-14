@@ -6172,5 +6172,81 @@
     "closed_at": "2026-08-14T03:02:36.456149+00:00",
     "close_reason": "TP1 hit [order]",
     "partial": true
+  },
+  {
+    "symbol": "DOTUSDT",
+    "signal": "SELL",
+    "entry": 0.77182705,
+    "stop": 0.7777,
+    "tp1": 0.7635,
+    "tp2": 0.7541,
+    "qty": 4196.0,
+    "qty_tp1": 4196,
+    "qty_tp2": 2798,
+    "risk_usd": 1271.68,
+    "balance_at_open": 108131.95,
+    "risk_mult": 1.1760476759535035,
+    "order_ids": {
+      "entry": "USDC-210049217565368082",
+      "stop_loss": "USDC-SLMB-31920",
+      "tp1": "USDC-210049217565371587",
+      "tp2": "USDC-210049217565372107"
+    },
+    "opened_at": "2026-08-13T15:45:11.021956+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 55.6,
+    "score": 6,
+    "reasons": [
+      "Strong ADX 32",
+      "RSI not oversold (55)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 34)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet",
+    "close_price": 0.7635,
+    "pnl": 34.9403,
+    "closed_at": "2026-08-14T04:58:25.269287+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
+  },
+  {
+    "symbol": "SOLUSDT",
+    "signal": "BUY",
+    "entry": 75.173,
+    "stop": 76.167,
+    "tp1": 76.167,
+    "tp2": 77.304,
+    "qty": 0.1,
+    "qty_tp1": 25.0,
+    "qty_tp2": 16.8,
+    "risk_usd": 29.68,
+    "balance_at_open": 108255.34,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-31962",
+      "tp1": "USDC-210049217575948921",
+      "tp2": "USDC-210049217575949956"
+    },
+    "opened_at": "2026-08-13T16:40:08.038397+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": true,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet",
+    "total_q": 0.1,
+    "close_price": 75.7918,
+    "pnl": 0.0619,
+    "closed_at": "2026-08-14T04:58:31.583028+00:00",
+    "close_reason": "STOPPED OUT \u274c"
   }
 ]
