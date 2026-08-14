@@ -69,7 +69,7 @@
     "symbol": "LTCUSDT",
     "signal": "SELL",
     "entry": 44.40367297,
-    "stop": 44.63,
+    "stop": 44.09,
     "tp1": 44.09,
     "tp2": 43.73,
     "qty": 121.7,
@@ -80,12 +80,12 @@
     "risk_mult": 2.2301126303532515,
     "order_ids": {
       "entry": "USDC-210049217811921195",
-      "stop_loss": "USDC-SLMB-32007",
+      "stop_loss": "USDC-SLMB-32009",
       "tp1": "USDC-210049217811924573",
       "tp2": "USDC-210049217811925092"
     },
     "opened_at": "2026-08-14T12:26:14.410471+00:00",
-    "tp1_hit": false,
+    "tp1_hit": true,
     "tp2_hit": false,
     "closed": false,
     "confidence": 84.1,
@@ -99,6 +99,43 @@
       "4h trend aligns (RSI 35)",
       "4h trend established (20h)",
       "Volume surge 3.1\u00d7"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
+  },
+  "XRPUSDT": {
+    "symbol": "XRPUSDT",
+    "signal": "SELL",
+    "entry": 1.0004,
+    "stop": 1.0063,
+    "tp1": 0.9922,
+    "tp2": 0.9827,
+    "qty": 5400,
+    "qty_tp1": 3240,
+    "qty_tp2": 2160,
+    "risk_usd": 2481.83,
+    "balance_at_open": 108224.27,
+    "risk_mult": 2.29322627344057,
+    "order_ids": {
+      "entry": "USDC-210049217838366687",
+      "stop_loss": "USDC-SLMB-32011",
+      "tp1": "USDC-210049217838370630",
+      "tp2": "USDC-210049217838371199"
+    },
+    "opened_at": "2026-08-14T15:03:09.482025+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 74.6,
+    "score": 7,
+    "reasons": [
+      "High conf (75%)",
+      "ADX 25",
+      "RSI not oversold (42)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 38)",
+      "4h trend established (20h)"
     ],
     "tier": "\ud83c\udfdb Institutional Alts",
     "exchange": "deribit_testnet"
