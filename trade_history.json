@@ -6598,5 +6598,80 @@
     "pnl": -31.86,
     "closed_at": "2026-08-14T16:01:44.877474+00:00",
     "close_reason": "SL hit"
+  },
+  {
+    "symbol": "ALGOUSDT",
+    "signal": "BUY",
+    "entry": 0.0784,
+    "stop": 0.07994,
+    "tp1": 0.07994,
+    "tp2": 0.08171,
+    "qty": 10.000000000000002,
+    "qty_tp1": 9640,
+    "qty_tp2": 6430,
+    "risk_usd": 17.68,
+    "balance_at_open": 108255.34,
+    "risk_mult": 1.0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-32017",
+      "tp1": "USDC-210049217575934874",
+      "tp2": "USDC-210049217575935056"
+    },
+    "opened_at": "2026-08-13T16:40:03.434124+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": true,
+    "confidence": 60.0,
+    "score": 3,
+    "reasons": [
+      "Adopted untracked position via [3c]"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet",
+    "total_q": 10.000000000000002,
+    "close_price": 0.07926,
+    "pnl": 0.0086,
+    "closed_at": "2026-08-14T19:18:16.175383+00:00",
+    "close_reason": "STOPPED OUT \u274c"
+  },
+  {
+    "symbol": "LINKUSDT",
+    "signal": "BUY",
+    "entry": 8.85797705,
+    "stop": 8.772,
+    "tp1": 8.979,
+    "tp2": 9.116,
+    "qty": 610,
+    "qty_tp1": 366,
+    "qty_tp2": 244,
+    "risk_usd": 1000.89,
+    "balance_at_open": 108159.15,
+    "risk_mult": 0.9253824687152216,
+    "order_ids": {
+      "entry": "USDC-210049217849125630",
+      "stop_loss": "USDC-SLMS-32018",
+      "tp1": "USDC-210049217849129120",
+      "tp2": "USDC-210049217849129486"
+    },
+    "opened_at": "2026-08-14T16:02:26.666595+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 50.5,
+    "score": 6,
+    "reasons": [
+      "Strong ADX 30",
+      "RSI not overbought (58)",
+      "EMA bullish",
+      "1h confirms",
+      "4h trend aligns (RSI 62)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet",
+    "close_price": 8.945,
+    "pnl": 53.084,
+    "closed_at": "2026-08-14T19:18:19.704573+00:00",
+    "close_reason": "Manual close (Profit)"
   }
 ]
