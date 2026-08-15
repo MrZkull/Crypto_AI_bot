@@ -488,6 +488,8 @@ def api_log():
 
 # ── Probation & Cooldown Tracker Endpoint (Auto-Audits History) ─────────────
 
+# ── Probation & Cooldown Tracker Endpoint (Self-Healing Auto-Audit) ───
+
 @app.route("/api/probation")
 def api_probation():
     bust(RELIABILITY_FILE)
@@ -501,31 +503,44 @@ def api_probation():
     now = time.time()
     updated = False
 
-    # Audit trade history dynamically for 3 consecutive losses
+    # 1. Dynamically audit trade history for 3 consecutive losses
     symbols_in_history = set(t.get("symbol") for t in history if t.get("symbol"))
     
     for symbol in symbols_in_history:
         s_trades = [t for t in history if t.get("symbol") == symbol and t.get("signal") != "RECOVERED"]
         last_3 = s_trades[-3:] if len(s_trades) >= 3 else []
         
-        if len(last_3) == 3 and all((float(t.get("pnl") or 0)) < 0 for t in last_3):
-            if symbol not in rel or not isinstance(rel[symbol], dict):
-                rel[symbol] = {}
+        has_3_losses = (len(last_3) == 3 and all((float(t.get("pnl") or 0)) < 0 for t in last_3))
+        
+        if symbol not in rel or not isinstance(rel[symbol], dict):
+            rel[symbol] = {}
+            
+        if has_3_losses:
+            # Genuine 3 consecutive losses -> Lock in probation
             if not rel[symbol].get("is_benched"):
                 rel[symbol]["is_benched"] = True
                 rel[symbol]["benched_at"] = now
                 rel[symbol]["probation_wins"] = 0
                 rel[symbol]["probation_consecutive_losses"] = 3
                 updated = True
+        else:
+            # 💡 SELF-HEALING: If coin has < 3 losses, automatically unbench it!
+            if rel[symbol].get("is_benched"):
+                rel[symbol]["is_benched"] = False
+                rel[symbol]["benched_at"] = 0
+                rel[symbol]["probation_consecutive_losses"] = len([t for t in s_trades if (float(t.get("pnl") or 0)) < 0])
+                updated = True
 
+    # 2. Push corrected state to GitHub so reliability.json stays clean
     if updated:
         gh_push(RELIABILITY_FILE, rel)
         _cache[RELIABILITY_FILE] = rel
 
-    scan_mode = get("scan_mode.json", {})
-    base_conf = float(scan_mode.get("min_confidence", 60.0))
-    probated_coins = []
+    # 3. Dynamic Base Confidence (50.0% Active Standard + 10.0% Premium = 60.0%)
+    base_conf = 50.0
 
+    # 4. Format and return probated coins for UI table
+    probated_coins = []
     for symbol, data in rel.items():
         if isinstance(data, dict) and data.get("is_benched", False):
             benched_at = data.get("benched_at", 0)
@@ -536,7 +551,7 @@ def api_probation():
                 "probation_wins": data.get("probation_wins", 0),
                 "probation_consecutive_losses": data.get("probation_consecutive_losses", 0),
                 "time_left_hrs": round(time_left_sec / 3600, 1),
-                "required_conf": base_conf + 10.0,
+                "required_conf": round(base_conf + 10.0, 1),  # Exactly 50.0 + 10.0 = 60.0%
                 "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
             })
 
