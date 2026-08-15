@@ -34,5 +34,75 @@
     ],
     "tier": "\ud83e\udd16 AI & Momentum",
     "exchange": "deribit_testnet"
+  },
+  "SOLUSDT": {
+    "symbol": "SOLUSDT",
+    "signal": "BUY",
+    "entry": 75.47112151,
+    "stop": 75.29,
+    "tp1": 75.725,
+    "tp2": 76.015,
+    "qty": 71.6,
+    "qty_tp1": 42.9,
+    "qty_tp2": 28.7,
+    "risk_usd": 2205.22,
+    "balance_at_open": 108098.92,
+    "risk_mult": 2.04,
+    "order_ids": {
+      "entry": "USDC-210049218142424783",
+      "stop_loss": "USDC-SLMS-32063",
+      "tp1": "USDC-210049218142430003",
+      "tp2": "USDC-210049218142430425"
+    },
+    "opened_at": "2026-08-15T14:34:47.901325+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 50.8,
+    "score": 6,
+    "reasons": [
+      "Strong ADX 39",
+      "RSI not overbought (59)",
+      "EMA bullish",
+      "4h trend aligns (RSI 48)",
+      "4h trend established (20h)",
+      "Volume surge 5.7\u00d7"
+    ],
+    "tier": "\u26a1 High-Liquidity L1s",
+    "exchange": "deribit_testnet"
+  },
+  "ALGOUSDT": {
+    "symbol": "ALGOUSDT",
+    "signal": "SELL",
+    "entry": 0.07978567,
+    "stop": 0.08027,
+    "tp1": 0.0791,
+    "tp2": 0.07832,
+    "qty": 67640,
+    "qty_tp1": 40580,
+    "qty_tp2": 27060,
+    "risk_usd": 1355.76,
+    "balance_at_open": 108098.92,
+    "risk_mult": 1.2541812069075815,
+    "order_ids": {
+      "entry": "USDC-210049218142572800",
+      "stop_loss": "USDC-SLMB-32064",
+      "tp1": "USDC-210049218142577714",
+      "tp2": "USDC-210049218142578246"
+    },
+    "opened_at": "2026-08-15T14:35:27.417844+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 56.2,
+    "score": 4,
+    "reasons": [
+      "Strong ADX 40",
+      "RSI not oversold (60)",
+      "4h trend aligns (RSI 48)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Institutional Alts",
+    "exchange": "deribit_testnet"
   }
 }
