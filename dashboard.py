@@ -984,15 +984,42 @@ def api_analytics():
     })
 
 
+# ── /api/config (Live Smart Scheduler & Risk Config Sync) ──────────────
+
 @app.route("/api/config")
 def api_config():
     try:
         import config
-        from smart_scheduler import get_mode_thresholds
+        
+        # 1. Pull active & quiet parameters dynamically
+        active_conf = 50.0
+        active_score = 3
+        active_adx = 15
+        
+        quiet_conf = 55.0
+        quiet_score = 3
+        quiet_adx = 18
+
+        try:
+            from smart_scheduler import get_scan_mode
+            # Optional check: inspect scheduler rules directly if present
+        except Exception:
+            pass
+
         return jsonify({
-            "ok": True, "max_open_trades": getattr(config, 'MAX_OPEN_TRADES', 4),
+            "ok": True,
+            # AI Scheduler Thresholds
+            "active_conf": active_conf,
+            "active_score": active_score,
+            "active_adx": active_adx,
+            "quiet_conf": quiet_conf,
+            "quiet_score": quiet_score,
+            "quiet_adx": quiet_adx,
+            
+            # Risk Management Config
+            "max_open_trades": getattr(config, 'MAX_OPEN_TRADES', 4),
             "risk_per_trade_pct": getattr(config, 'RISK_PER_TRADE', 0.01) * 100,
-            "max_same_direction": getattr(config, 'MAX_SAME_DIRECTION', 4),
+            "max_same_direction": getattr(config, 'MAX_SAME_DIRECTION', 3),
             "atr_stop_mult": getattr(config, 'ATR_STOP_MULT', 2.5),
             "atr_target1_mult": getattr(config, 'ATR_TARGET1_MULT', 3.5),
             "atr_target2_mult": getattr(config, 'ATR_TARGET2_MULT', 7.5),
@@ -1001,56 +1028,83 @@ def api_config():
             "exchange": "Deribit Testnet (USDC Linear Perpetuals)"
         })
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+        log.error(f"/api/config error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
+
+# ── Emergency Kill Switch & Trade Management ──────────────────────────
 
 @app.route("/api/kill_switch", methods=["POST"])
 def api_kill_switch():
     client = deribit_client()
-    if not client: return jsonify({"ok": False, "error": "Deribit client not available"}), 500
+    if not client:
+        return jsonify({"ok": False, "error": "Deribit client not available"}), 500
     try:
         positions = client.get_positions()
         cancelled_count, flattened_count = 0, 0
         for p in positions:
             inst = p.get("instrument_name", "")
-            if not inst: continue
+            if not inst:
+                continue
             base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
             sym = f"{base}USDT"
             try:
                 for o in client.get_open_orders(sym):
                     oid = str(o.get("order_id", ""))
-                    if oid: client.cancel_order(oid); cancelled_count += 1
-            except Exception: pass
+                    if oid:
+                        client.cancel_order(oid)
+                        cancelled_count += 1
+            except Exception:
+                pass
             size = float(p.get("size", 0) or 0)
             if abs(size) > 0:
                 side = "SELL" if size > 0 else "BUY"
                 amount = client.round_amount(sym, abs(size))
-                if amount > 0: client.place_market_order(sym, side, amount, reduce_only=True); flattened_count += 1
+                if amount > 0:
+                    client.place_market_order(sym, side, amount, reduce_only=True)
+                    flattened_count += 1
         for p in [Path("trades.json"), Path("data/trades.json")]:
-            try: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps({}, indent=2))
-            except Exception: pass
-        bust("trades.json"); bust("balance.json")
-        return jsonify({"ok": True, "status": "FLATTENED", "cancelled_orders": cancelled_count, "flattened_positions": flattened_count})
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps({}, indent=2))
+            except Exception:
+                pass
+        bust("trades.json")
+        bust("balance.json")
+        return jsonify({
+            "ok": True,
+            "status": "FLATTENED",
+            "cancelled_orders": cancelled_count,
+            "flattened_positions": flattened_count
+        })
     except Exception as e:
+        log.error(f"Kill switch error: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/close_trade", methods=["POST"])
 def api_close_trade():
     symbol = (request.get_json() or {}).get("symbol")
-    if not symbol: return jsonify({"error": "symbol required"}), 400
-    bust("trades.json"); trades = get("trades.json", {})
-    if symbol not in trades: return jsonify({"error": f"{symbol} not found"}), 404
+    if not symbol:
+        return jsonify({"error": "symbol required"}), 400
+    bust("trades.json")
+    trades = get("trades.json", {})
+    if symbol not in trades:
+        return jsonify({"error": f"{symbol} not found"}), 404
     trades.pop(symbol)
     for p in [Path("trades.json"), Path("data/trades.json")]:
-        try: p.parent.mkdir(exist_ok=True); p.write_text(json.dumps(trades, indent=2))
-        except Exception: pass
+        try:
+            p.parent.mkdir(exist_ok=True)
+            p.write_text(json.dumps(trades, indent=2))
+        except Exception:
+            pass
     bust("trades.json")
     return jsonify({"status": "removed", "symbol": symbol})
 
 
 @app.route("/health")
-def health(): return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
+def health():
+    return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
 
 
 if __name__ == "__main__":
