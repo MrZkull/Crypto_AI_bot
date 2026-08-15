@@ -2028,6 +2028,17 @@ async function fetchConfig() {
   if (!d || !d.ok) return;
 
   const bind = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  
+  // Live AI Scheduler Thresholds
+  bind('cfg-act-conf', (d.active_conf || 50) + '%');
+  bind('cfg-act-score', (d.active_score || 3) + ' / 6');
+  bind('cfg-act-adx', d.active_adx || 15);
+
+  bind('cfg-q-conf', (d.quiet_conf || 55) + '%');
+  bind('cfg-q-score', (d.quiet_score || 3) + ' / 6');
+  bind('cfg-q-adx', d.quiet_adx || 18);
+
+  // Live Risk Management Thresholds
   bind('cfg-risk-pct', d.risk_per_trade_pct.toFixed(1) + '% of balance');
   bind('cfg-max-open', d.max_open_trades + ' simultaneously');
   bind('cfg-max-dir',  d.max_same_direction + ' BUY or SELL');
