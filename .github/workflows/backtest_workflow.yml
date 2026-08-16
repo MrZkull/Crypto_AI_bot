@@ -1,9 +1,7 @@
 name: Backtest Model
 
 on:
-  # Runs automatically a few hours after the monthly training cron (02:00 UTC on
-  # the 1st) — gives the training + meta-training workflow time to finish and
-  # upload fresh models to the v2.0 release before this pulls them down.
+  # Runs automatically on the 1st of every month after retraining
   schedule:
     - cron: '0 6 1 * *'
   workflow_dispatch:
@@ -11,7 +9,24 @@ on:
       days:
         description: 'How many recent days to backtest'
         required: false
-        default: '20'
+        default: '30'
+      allow_historical:
+        description: 'Allow historical data? (true = test recent holdout, false = strict post-training OOS)'
+        type: boolean
+        required: false
+        default: true
+      equity:
+        description: 'Starting Equity in USD (e.g. 10.0 for ₹500 account, 100000 for institutional)'
+        required: false
+        default: '10.0'
+      risk_per_trade:
+        description: 'Risk Per Trade as Decimal (e.g. 0.03 for 3% / ₹15 risk, 0.01 for 1%)'
+        required: false
+        default: '0.03'
+      max_open:
+        description: 'Max Concurrent Open Trades (e.g. 2 for micro-capital, 10 for testnet)'
+        required: false
+        default: '2'
       tag:
         description: 'Label for this run (shows in the leaderboard)'
         required: false
@@ -38,7 +53,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -q pandas numpy scikit-learn xgboost joblib requests
+        run: pip install -q pandas numpy scikit-learn xgboost joblib requests ta
 
       - name: Download latest primary model
         run: |
@@ -49,18 +64,41 @@ jobs:
         run: |
           wget -q -O meta_pipeline.pkl "https://github.com/MrZkull/Crypto_AI_bot/releases/download/v2.0/meta_pipeline.pkl"
 
-      - name: Backtest — primary model alone
+      - name: Backtest — Primary model alone
         run: |
           echo "=== PRIMARY ONLY ==="
-          python backtest.py --days ${{ github.event.inputs.days || '20' }} --tag "${{ github.event.inputs.tag || 'scheduled' }}-primary"
+          HIST_FLAG=""
+          if [ "${{ github.event.inputs.allow_historical }}" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            HIST_FLAG="--allow-historical"
+          fi
+          
+          python backtest.py \
+            --days ${{ github.event.inputs.days || '30' }} \
+            --equity ${{ github.event.inputs.equity || '10.0' }} \
+            --risk-per-trade ${{ github.event.inputs.risk_per_trade || '0.03' }} \
+            --max-open ${{ github.event.inputs.max_open || '2' }} \
+            --tag "${{ github.event.inputs.tag || 'scheduled' }}-primary" \
+            $HIST_FLAG
 
-      - name: Backtest — primary + meta filter (if meta model was downloaded)
+      - name: Backtest — Primary + Meta filter (if meta model exists)
         run: |
           if [ -f meta_pipeline.pkl ]; then
             echo "=== PRIMARY + META ==="
-            python backtest.py --days ${{ github.event.inputs.days || '20' }} --use-meta --tag "${{ github.event.inputs.tag || 'scheduled' }}-meta"
+            HIST_FLAG=""
+            if [ "${{ github.event.inputs.allow_historical }}" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              HIST_FLAG="--allow-historical"
+            fi
+
+            python backtest.py \
+              --days ${{ github.event.inputs.days || '30' }} \
+              --equity ${{ github.event.inputs.equity || '10.0' }} \
+              --risk-per-trade ${{ github.event.inputs.risk_per_trade || '0.03' }} \
+              --max-open ${{ github.event.inputs.max_open || '2' }} \
+              --use-meta \
+              --tag "${{ github.event.inputs.tag || 'scheduled' }}-meta" \
+              $HIST_FLAG
           else
-            echo "No meta_pipeline.pkl available (not yet trained, or upload failed) — skipping meta comparison"
+            echo "No meta_pipeline.pkl available — skipping meta comparison"
           fi
 
       - name: Commit backtest history
@@ -68,7 +106,7 @@ jobs:
           git config user.name  "CryptoBot AI"
           git config user.email "bot@cryptobot.ai"
 
-          git add backtest_history.json || true
+          git add backtest_history.json backtest_results.json || true
           git commit -m "📊 Backtest run — $(date -u +%Y-%m-%d)" || echo "No changes to commit"
 
           git pull origin main --rebase --autostash
@@ -76,12 +114,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload backtest artifacts
+      - name: Upload backtest artifacts (Short 3-Day Retention)
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: backtest-results-${{ github.run_number }}
           path: |
             backtest_results.json
             backtest_history.json
-          retention-days: 90
+          retention-days: 3
           if-no-files-found: ignore
