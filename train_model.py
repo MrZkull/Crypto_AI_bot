@@ -1,4 +1,4 @@
-# train_model.py — Stable Core Reversion · Phase 3.4 (Leakage Fix + New Features)
+# train_model.py — Stable Core Reversion · Phase 3.5 (Leakage Fix + First-Touch Barrier + Per-Symbol Isolation)
 #
 # REVERT ACTION: Completely removed LABEL_MULT.
 # Target generation matches live execution 1:1.
@@ -10,10 +10,35 @@
 # PHASE 3.3: EV-based threshold selector to maximize actual R-yield.
 #
 # PHASE 3.4 CHANGES:
-#   FIX 1 — Calibration leakage: Dedicated, embargoed calibration split.
-#   FIX 2 — Overlapping-label leakage: Embargoes EMBARGO_BARS at split boundaries.
-#   NEW FEATURES — taker_buy_ratio (order flow), btc_corr_20 / btc_beta_20 / btc_rel_strength.
-#   UPDATE (Aug 2026): Added ENAUSDT (new micro-gem); verified AAVEUSDT, DOGEUSDT, HYPEUSDT.
+#   FIX 1 — Calibration leakage: isotonic calibration was previously fit AND
+#           evaluated on the same test set (Xte/y_test), inflating reported
+#           accuracy/confidence. Now uses a dedicated, embargoed calibration
+#           split (Xcal/y_calib) that the final test set never touches.
+#   FIX 2 — Overlapping-label leakage: each label looks 24 bars into the
+#           future, so rows within 24 bars of a split boundary leak info
+#           across train/calib/test. Now embargoes (drops) EMBARGO_BARS rows
+#           at every split boundary, and applies an approximate embargo gap
+#           inside the walk-forward loop too.
+#   NEW FEATURES — taker_buy_ratio (order flow), btc_corr_20 / btc_beta_20 /
+#           btc_rel_strength (cross-asset context vs BTC). These are computed
+#           directly in this file (feature_engineering.py is untouched) and
+#           appended to ALL_FEATURES via FULL_FEATURES.
+#
+# PHASE 3.5 CHANGES (this version):
+#   FIX A — True Per-Symbol Embargo Isolation: previous versions grouped by
+#           'regime' alone, which pooled 20+ symbols at identical timestamps,
+#           causing 24 dropped rows to represent only ~1 bar of real time.
+#           Now groups by ('symbol', 'regime') so EMBARGO_BARS (24) drops 24
+#           consecutive bars along each individual coin's timeline.
+#   FIX B — Path-Dependent First-Touch Triple Barrier: replaced rolling max/min
+#           with an exact chronological search for the first touched barrier.
+#           Trades that hit TP1 and later drop past SL are now correctly labeled BUY.
+#   FIX C — Binance Futures Klines Fallback: added /fapi/v1/klines fallback to
+#           fetch historical data for assets without Binance spot pairs (HYPEUSDT).
+#   FIX D — Independent Directional Thresholds: optimizes best_thresh_buy and
+#           best_thresh_sell independently based on directional Expected Value (EV).
+#   FIX E — Per-Symbol Held-Out Test Breakdown: prints precision/recall per
+#           symbol on the test set to monitor individual asset performance.
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -39,38 +64,46 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
 SYMBOLS = [
-    # ── Core Proven Testnet Winners ──
-    "XRPUSDT", "ALGOUSDT", "NEARUSDT", "DOTUSDT", "LTCUSDT", "UNIUSDT",
-    
-    # ── Micro-Granular Gems (Added ENAUSDT & AAVEUSDT) ──
-    "ENAUSDT", "AAVEUSDT", "DOGEUSDT", "HYPEUSDT",
-    
-    # ── Institutional Alts & Majors ──
-    "LINKUSDT", "AVAXUSDT", "BCHUSDT", "ETHUSDT", "BTCUSDT",
-    
-    # ── Reserve & High-Beta Coverage Pool ──
-    "BNBUSDT", "SOLUSDT", "TRXUSDT", "SUIUSDT", "APTUSDT", "ATOMUSDT",
-    "ADAUSDT", "FETUSDT", "RENDERUSDT", "XLMUSDT", "WLDUSDT", "VIRTUALUSDT",
+    # REMOVED 2026-07-10: MATICUSDT (Binance delisted Sep 2024, Deribit delisted Feb
+    # 2025 — dead on both data source and execution venue).
+    # RE-ADDED 2026-07-12: DOGEUSDT (confirmed tradeable live via Deribit) and
+    # HYPEUSDT (futures endpoint fallback enables full historical training).
+    # ADDED: FETUSDT, RENDERUSDT (already mapped in deribit_client.py).
+    # ADDED 2026-07-12: XLMUSDT, WLDUSDT, VIRTUALUSDT.
+    # ADDED 2026-08-16: ENAUSDT, AAVEUSDT (verified granular micro-capital gems).
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT", "NEARUSDT",
+    "TRXUSDT", "SUIUSDT", "APTUSDT", "ATOMUSDT", "LINKUSDT",
+    "DOTUSDT", "UNIUSDT", "XRPUSDT", "LTCUSDT", "BCHUSDT", "ALGOUSDT",
+    "AAVEUSDT", "ADAUSDT", "FETUSDT", "RENDERUSDT", "DOGEUSDT", "HYPEUSDT",
+    "XLMUSDT", "WLDUSDT", "VIRTUALUSDT", "ENAUSDT",
 ]
 
 TEST_SPLIT         = 0.20
-CALIB_SPLIT        = 0.15   # Dedicated calibration slice
-EMBARGO_BARS       = 24     # Matches label lookahead — dropped at split boundaries
+CALIB_SPLIT        = 0.15   # Dedicated calibration slice carved out of training data
+EMBARGO_BARS       = 24     # Matches label lookahead — dropped per (symbol, regime) boundary
 MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 
-# Strict 1.0 ratio ensures enough NO_TRADE samples exist to balance classes
+# Strict 1.0 ratio ensures enough NO_TRADE samples exist to correctly balance the classes
 UNDERSAMPLE_RATIO  = 1.0
 
-BINANCE_ENDPOINTS = [
+BINANCE_SPOT_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
     "https://api.binance.com/api/v3/klines",
+]
+BINANCE_FUTURES_ENDPOINTS = [
+    "https://fapi.binance.com/fapi/v1/klines",
 ]
 
 RECENT_CANDLES = 5000
 
 # ── A/B TESTING TOGGLE ──────────────────────────────────────────────────
+# RECENT_CANDLES pulls "the latest N candles as of right now" — which means every
+# retrain silently gets a DIFFERENT recent-data window (today's run drops the oldest
+# day and adds a new one). Set PINNED_RECENT_WINDOW below to fix the window to
+# specific dates so back-to-back runs are actually comparable. Leave as None for
+# normal ongoing production retraining (always-fresh data).
 PINNED_RECENT_WINDOW = None
 
 BEAR_WINDOWS = [
@@ -83,7 +116,9 @@ BEAR_WINDOWS = [
     {"label": "Recovery_Jan23",     "start_ms": 1672531200000, "end_ms": 1675209600000, "candles": 2880},
 ]
 
-# ── New Cross-Asset Technical Features ─────────────────────────────────
+# ── New engineered features (appended on top of feature_engineering.ALL_FEATURES) ──
+# NOTE: taker_buy_ratio + hour/dow cyclical features live in feature_engineering.py's
+# add_indicators() itself. Only BTC-benchmark features (needing external data) are computed here.
 NEW_FEATURES = [
     "btc_corr_20",          # rolling 20-bar correlation of returns vs BTC
     "btc_beta_20",          # rolling 20-bar beta vs BTC
@@ -107,8 +142,8 @@ def _raw_to_df(raw: list) -> pd.DataFrame:
     return df[keep].reset_index(drop=True)
 
 def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.DataFrame:
-    all_data = []
-    for url in BINANCE_ENDPOINTS:
+    endpoints = BINANCE_SPOT_ENDPOINTS + BINANCE_FUTURES_ENDPOINTS
+    for url in endpoints:
         all_data = []
         end_time = None
         try:
@@ -120,24 +155,22 @@ def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.
                 if r.status_code != 200:
                     break
                 batch = r.json()
-                if not batch:
+                if not batch or not isinstance(batch, list):
                     break
                 all_data = batch + all_data
                 end_time = batch[0][0] - 1
-                time.sleep(0.3)
+                time.sleep(0.2)
                 if len(all_data) >= limit:
                     break
             if all_data:
-                break
+                return _raw_to_df(all_data[-limit:])
         except Exception as e:
-            log.warning(f"  [{symbol}] recent fetch error on {url}: {e}")
-    if not all_data:
-        return pd.DataFrame()
-    return _raw_to_df(all_data[-limit:])
+            log.debug(f"  [{symbol}] fetch notice on {url}: {e}")
+    return pd.DataFrame()
 
-def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
-    all_data = []
-    for url in BINANCE_ENDPOINTS:
+def fetch_klines_window(symbol: str, interval: str, start_ms: int, end_ms: int, max_candles: int = 1440) -> pd.DataFrame:
+    endpoints = BINANCE_SPOT_ENDPOINTS + BINANCE_FUTURES_ENDPOINTS
+    for url in endpoints:
         all_data = []
         cursor = start_ms
         try:
@@ -151,20 +184,18 @@ def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
                 if r.status_code != 200:
                     break
                 batch = r.json()
-                if not batch:
+                if not batch or not isinstance(batch, list):
                     break
                 all_data.extend(batch)
                 cursor = batch[-1][0] + 1
-                time.sleep(0.3)
+                time.sleep(0.2)
                 if len(batch) < 1000:
                     break
             if all_data:
-                break
+                return _raw_to_df(all_data[:max_candles])
         except Exception as e:
-            log.warning(f"  [{symbol}] window fetch error on {url}: {e}")
-    if not all_data:
-        return pd.DataFrame()
-    return _raw_to_df(all_data[:max_candles])
+            log.debug(f"  [{symbol}] window fetch notice on {url}: {e}")
+    return pd.DataFrame()
 
 # ── Feature Alignment ──────────────────────────────────────────────────
 
@@ -315,25 +346,64 @@ def _add_extra_features(df15: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ── Path-Dependent First-Touch Triple-Barrier Labeling ─────────────────
+
 def make_targets(df: pd.DataFrame) -> pd.Series:
-    labels    = pd.Series("NO_TRADE", index=df.index)
+    """
+    Evaluates which barrier (TP or SL) is touched FIRST in chronological order.
+    Eliminates under-counting winners where price touched TP1 and drifted later.
+    """
+    n = len(df)
+    labels = np.full(n, "NO_TRADE", dtype=object)
     lookahead = 24
 
-    future_high = df["high"].shift(-1).rolling(lookahead).max().shift(-lookahead + 1)
-    future_low  = df["low"].shift(-1).rolling(lookahead).min().shift(-lookahead + 1)
+    highs = df["high"].values
+    lows  = df["low"].values
+    closes = df["close"].values
+    atrs  = df["atr"].values if "atr" in df.columns else np.zeros(n)
 
-    LABEL_TARGET_MULT = ATR_TARGET1_MULT * 1.0
+    target_mult = ATR_TARGET1_MULT
 
-    buy_tp  = df["close"] + (df["atr"] * LABEL_TARGET_MULT)
-    buy_sl  = df["close"] - (df["atr"] * ATR_STOP_MULT)
-    sell_tp = df["close"] - (df["atr"] * LABEL_TARGET_MULT)
-    sell_sl = df["close"] + (df["atr"] * ATR_STOP_MULT)
+    for i in range(n - lookahead):
+        entry = closes[i]
+        atr = atrs[i]
+        if atr <= 0 or np.isnan(atr):
+            continue
 
-    labels[(future_high >= buy_tp)  & (future_low  > buy_sl)]  = "BUY"
-    labels[(future_low  <= sell_tp) & (future_high < sell_sl)] = "SELL"
-    return labels
+        buy_tp = entry + (atr * target_mult)
+        buy_sl = entry - (atr * ATR_STOP_MULT)
+        sell_tp = entry - (atr * target_mult)
+        sell_sl = entry + (atr * ATR_STOP_MULT)
 
-def _process_segment(df15, df1h, df4h, regime, btc_df15=None):
+        # First-touch path evaluation for BUY
+        buy_success = False
+        for k in range(1, lookahead + 1):
+            idx = i + k
+            if lows[idx] <= buy_sl:
+                break
+            if highs[idx] >= buy_tp:
+                buy_success = True
+                break
+
+        # First-touch path evaluation for SELL
+        sell_success = False
+        for k in range(1, lookahead + 1):
+            idx = i + k
+            if highs[idx] >= sell_sl:
+                break
+            if lows[idx] <= sell_tp:
+                sell_success = True
+                break
+
+        if buy_success and not sell_success:
+            labels[i] = "BUY"
+        elif sell_success and not buy_success:
+            labels[i] = "SELL"
+
+    return pd.Series(labels, index=df.index)
+
+
+def _process_segment(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: pd.DataFrame, regime: str, btc_df15: pd.DataFrame = None):
     if df15.empty or len(df15) < MIN_BARS:
         return pd.DataFrame()
 
@@ -363,13 +433,15 @@ def _process_segment(df15, df1h, df4h, regime, btc_df15=None):
         df15["rsi_4h"] = 50.0
         df15["trend_4h"] = 0.0
 
-    # BTC benchmark alignment and derived features
     df15 = _align_btc_to_15m(btc_df15, df15)
     df15 = _add_extra_features(df15)
 
+    # Stamp symbol metadata for per-(symbol, regime) isolation
+    df15["symbol"] = symbol
     df15["target"] = make_targets(df15)
     df15["regime"] = regime
     return df15.iloc[:-24].copy()
+
 
 def _fetch_recent(symbol: str, interval: str, limit_divisor: int = 1) -> pd.DataFrame:
     if PINNED_RECENT_WINDOW is not None:
@@ -398,7 +470,7 @@ def build_dataset() -> pd.DataFrame:
         df1h_rec = _fetch_recent(symbol, "1h", 4)
         df4h_rec = _fetch_recent(symbol, "4h", 16)
 
-        seg = _process_segment(df15_rec, df1h_rec, df4h_rec, regime="recent_bull",
+        seg = _process_segment(symbol, df15_rec, df1h_rec, df4h_rec, regime="recent_bull",
                                 btc_df15=btc_df15_rec)
         if not seg.empty:
             symbol_segments.append(seg)
@@ -420,7 +492,7 @@ def build_dataset() -> pd.DataFrame:
                 )
             btc_bear_df15 = btc_bear_cache[bw["label"]]
 
-            seg = _process_segment(df15_bear, df1h_bear, df4h_bear, regime=bw["label"],
+            seg = _process_segment(symbol, df15_bear, df1h_bear, df4h_bear, regime=bw["label"],
                                     btc_df15=btc_bear_df15)
             if not seg.empty:
                 symbol_segments.append(seg)
@@ -456,6 +528,17 @@ def build_dataset() -> pd.DataFrame:
             sr = (ds[ds.regime == regime].target == "SELL").sum()
             log.info(f"  {regime:<32} {cnt:>7,} rows | SELL: {sr:,}")
     log.info(f"{'='*60}")
+
+    # Coverage diagnostic check
+    log.info("Engineered feature coverage check:")
+    if "taker_buy_ratio" in ds.columns:
+        tbr = ds["taker_buy_ratio"]
+        log.info(f"  taker_buy_ratio:  mean={tbr.mean():.3f}  std={tbr.std():.3f}  "
+                 f"at-default(0.5)={(tbr == 0.5).mean()*100:.1f}%")
+    if "btc_rel_strength" in ds.columns:
+        brs = ds["btc_rel_strength"]
+        log.info(f"  btc_rel_strength: mean={brs.mean():.3f}  std={brs.std():.3f}  "
+                 f"exactly-zero={(brs == 0.0).mean()*100:.1f}%")
 
     return ds
 
@@ -496,13 +579,9 @@ def undersample_no_trade(
     return X_out, y_out
 
 
-# ── Training ───────────────────────────────────────────────────────────
+# ── Training with True (Symbol, Regime) Embargo Isolation ───────────────
 
 def train(ds: pd.DataFrame) -> float:
-    if "open_time" in ds.columns:
-        ds = ds.sort_values("open_time").reset_index(drop=True)
-        log.info("Dataset sorted globally by open_time ✓")
-
     for f in FULL_FEATURES:
         if f not in ds.columns:
             ds[f] = 0.0
@@ -517,13 +596,11 @@ def train(ds: pd.DataFrame) -> float:
     buy_idx  = classes.index("BUY")      if "BUY"      in classes else 0
     sell_idx = classes.index("SELL")     if "SELL"     in classes else 2
 
-    if "regime" not in ds.columns:
-        ds["regime"] = "unknown"
-
+    # Group by (symbol, regime) to preserve individual timelines
     train_parts, calib_parts, test_parts = [], [], []
     dropped_total = 0
 
-    for regime, grp in ds.groupby("regime", sort=False):
+    for (sym, regime), grp in ds.groupby(["symbol", "regime"], sort=False):
         grp = grp.sort_values("open_time").reset_index(drop=True)
         n_r = len(grp)
 
@@ -537,27 +614,30 @@ def train(ds: pd.DataFrame) -> float:
 
         if train_end_r <= 0:
             train_parts.append(grp)
-            log.warning(f"  [{regime}] too small for embargoed split ({n_r:,} rows) — kept entirely in train")
             continue
 
         train_parts.append(grp.iloc[:train_end_r])
         calib_parts.append(grp.iloc[calib_start_r:calib_end_r])
         test_parts.append(grp.iloc[test_start_r:])
-        dropped_total += n_r - train_end_r - (calib_end_r - calib_start_r) - test_size_r
+        dropped_total += (n_r - train_end_r - (calib_end_r - calib_start_r) - test_size_r)
 
-    X_train_raw = pd.concat(train_parts, ignore_index=True)[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
-    y_train_raw = le.transform(pd.concat(train_parts, ignore_index=True)["target"])
+    train_df = pd.concat(train_parts, ignore_index=True)
+    calib_df = pd.concat(calib_parts, ignore_index=True) if calib_parts else train_df.iloc[:0]
+    test_df  = pd.concat(test_parts,  ignore_index=True) if test_parts  else train_df.iloc[:0]
 
-    X_calib = pd.concat(calib_parts, ignore_index=True)[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0) if calib_parts else X_train_raw.iloc[:0]
-    y_calib = le.transform(pd.concat(calib_parts, ignore_index=True)["target"]) if calib_parts else np.array([])
+    X_train_raw = train_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+    y_train_raw = le.transform(train_df["target"])
 
-    X_test = pd.concat(test_parts, ignore_index=True)[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0) if test_parts else X_train_raw.iloc[:0]
-    y_test = le.transform(pd.concat(test_parts, ignore_index=True)["target"]) if test_parts else np.array([])
+    X_calib = calib_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+    y_calib = le.transform(calib_df["target"]) if len(calib_df) > 0 else np.array([])
+
+    X_test = test_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+    y_test = le.transform(test_df["target"]) if len(test_df) > 0 else np.array([])
 
     log.info(
-        f"Per-regime split (embargo={EMBARGO_BARS} bars/boundary/regime): "
+        f"True (Symbol, Regime) Split (embargo={EMBARGO_BARS} bars/boundary): "
         f"train={len(X_train_raw):,}  calib={len(X_calib):,}  test={len(X_test):,}  "
-        f"(dropped ~{dropped_total:,} embargoed rows across regimes)"
+        f"(dropped ~{dropped_total:,} embargoed rows across all symbol timelines)"
     )
 
     log.info("Importance scan...")
@@ -620,6 +700,7 @@ def train(ds: pd.DataFrame) -> float:
     )
     ensemble.fit(Xtr, y_train)
 
+    # ── Walk-Forward Validation Probe Loop (Diagnostic Across Regime Blocks) ──
     log.info("\nRunning Walk-Forward Validation (4 chronological windows)...")
     wf_scores = []
     window = len(Xtr) // 5
@@ -643,6 +724,15 @@ def train(ds: pd.DataFrame) -> float:
     wf_std  = np.std(wf_scores) if wf_scores else 0.0
     log.info(f"  Walk-forward Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
 
+    # ── Pre-Calibration Raw Ensemble Performance Report ──
+    raw_pred   = ensemble.predict(Xte)
+    raw_report = classification_report(y_test, raw_pred, target_names=classes, output_dict=True, zero_division=0)
+    log.info("\n── Pre-calibration (raw ensemble) test performance ─────────")
+    for label in ["BUY", "SELL"]:
+        log.info(f"  {label:<5} precision: {raw_report.get(label, {}).get('precision', 0):.1%}  "
+                 f"recall: {raw_report.get(label, {}).get('recall', 0):.1%}  "
+                 f"f1: {raw_report.get(label, {}).get('f1-score', 0):.1%}")
+
     calibration_method = "isotonic"
     log.info(f"\nCalibrating probability estimates ({calibration_method}) on held-out calibration split...")
     calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method=calibration_method)
@@ -663,85 +753,88 @@ def train(ds: pd.DataFrame) -> float:
                  f"recall: {report.get(label, {}).get('recall', 0):.1%}  "
                  f"f1: {report.get(label, {}).get('f1-score', 0):.1%}")
 
+    # ── Per-Symbol Diagnostic Breakdown ───────────────────────────────
+    log.info("\n── Per-Symbol Diagnostic Breakdown (Held-Out Test Set) ──")
+    test_symbols = test_df["symbol"].values
+    for sym in np.unique(test_symbols):
+        mask = test_symbols == sym
+        if mask.sum() < 20: continue
+        sym_pred, sym_true = y_pred[mask], y_test[mask]
+        s_rep = classification_report(sym_true, sym_pred, target_names=classes, output_dict=True, zero_division=0)
+        log.info(f"  {sym:<12} (n={mask.sum():>4}) | BUY Prec: {s_rep.get('BUY',{}).get('precision',0):.1%} | SELL Prec: {s_rep.get('SELL',{}).get('precision',0):.1%}")
+
+    # ── Independent Directional Threshold Tuning (EV-Optimized) ───────
     probas    = ensemble.predict_proba(Xte)
     real_buy  = (y_test == buy_idx).sum()
     real_sell = (y_test == sell_idx).sum()
 
-    log.info("\n── Confidence Threshold Calibration ────────────────────")
-    best_thresh = 0.45
-    best_score  = 0.0
+    best_thresh_buy, best_score_buy   = 0.45, 0.0
+    best_thresh_sell, best_score_sell = 0.45, 0.0
 
+    log.info("\n── Independent Directional Threshold Tuning ──────────────")
     for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
-        yp = []
-        for prob in probas:
-            bc = np.argmax(prob)
-            if bc != nt_idx and prob[bc] < thresh:
-                yp.append(nt_idx)
-            else:
-                yp.append(bc)
+        yp = [np.argmax(p) if np.argmax(p) != nt_idx and p[np.argmax(p)] >= thresh else nt_idx for p in probas]
         yp = np.array(yp)
-        bm = yp == buy_idx
-        sm = yp == sell_idx
+        bm, sm = (yp == buy_idx), (yp == sell_idx)
 
         pb = (y_test[bm] == buy_idx).mean()  if bm.sum() > 0 else 0
         ps = (y_test[sm] == sell_idx).mean() if sm.sum() > 0 else 0
-        rb = (yp[y_test == buy_idx]  == buy_idx).mean()  if real_buy  > 0 else 0
+        rb = (yp[y_test == buy_idx] == buy_idx).mean()   if real_buy > 0 else 0
         rs = (yp[y_test == sell_idx] == sell_idx).mean() if real_sell > 0 else 0
-
-        avg_prec   = (pb + ps) / 2
-        avg_recall = (rb + rs) / 2
-        n_signals  = int((bm | sm).sum())
-        pnl        = n_signals * avg_prec * 200 - n_signals * (1 - avg_prec) * 100
 
         buy_ev  = pb * ATR_TARGET1_MULT - (1 - pb) * ATR_STOP_MULT
         sell_ev = ps * ATR_TARGET1_MULT - (1 - ps) * ATR_STOP_MULT
 
-        if buy_ev <= 0 or sell_ev <= 0:
-            score = 0.0
-        else:
-            score = (buy_ev + sell_ev) * avg_recall * np.sqrt(max(n_signals, 1))
+        buy_score  = buy_ev * rb * np.sqrt(max(bm.sum(), 1))  if buy_ev > 0 else 0.0
+        sell_score = sell_ev * rs * np.sqrt(max(sm.sum(), 1)) if sell_ev > 0 else 0.0
 
-        if score > best_score and n_signals > 20:
-            best_score  = score
-            best_thresh = thresh
+        if buy_score > best_score_buy and bm.sum() > 15:
+            best_score_buy, best_thresh_buy = buy_score, thresh
+        if sell_score > best_score_sell and sm.sum() > 15:
+            best_score_sell, best_thresh_sell = sell_score, thresh
 
-        log.info(f"  {thresh:.2f}    {n_signals:>7}    {pb:>7.1%}    {ps:>8.1%}   {avg_recall:>7.1%}   ${pnl:>8,.0f}")
+        log.info(f"  Thresh {thresh:.2f} | BUY: Prec={pb:>6.1%} Rec={rb:>6.1%} (n={bm.sum():>4}) | SELL: Prec={ps:>6.1%} Rec={rs:>6.1%} (n={sm.sum():>4})")
 
-    log.info(f"\n  → Best EV threshold: {best_thresh:.2f}")
+    log.info(f"\n  → Best Recommended BUY Threshold:  {best_thresh_buy:.2f}")
+    log.info(f"  → Best Recommended SELL Threshold: {best_thresh_sell:.2f}")
 
     pipeline = {
-        "ensemble":              ensemble,
-        "selector":              ImportanceSelector(selected),
-        "all_features":          FULL_FEATURES,
-        "best_features":         selected,
-        "label_map":             {i: c for i, c in enumerate(classes)},
-        "label_encoder":         le,
-        "accuracy":              round(acc * 100, 1),
-        "trained_at":            datetime.now(timezone.utc).isoformat(),
-        "symbols":               SYMBOLS,
-        "n_features":            len(FULL_FEATURES),
-        "recommended_threshold": best_thresh,
-        "calibrated":            True,
-        "calibration_method":    calibration_method,
-        "calibration_split":     "dedicated_embargoed",
+        "ensemble":                  ensemble,
+        "selector":                  ImportanceSelector(selected),
+        "all_features":              FULL_FEATURES,
+        "best_features":             selected,
+        "label_map":                 {i: c for i, c in enumerate(classes)},
+        "label_encoder":             le,
+        "accuracy":                  round(acc * 100, 1),
+        "trained_at":                datetime.now(timezone.utc).isoformat(),
+        "symbols":                   SYMBOLS,
+        "n_features":                len(FULL_FEATURES),
+        "recommended_threshold_buy":  best_thresh_buy,
+        "recommended_threshold_sell": best_thresh_sell,
+        "recommended_threshold":      max(best_thresh_buy, best_thresh_sell),
+        "calibrated":                True,
+        "calibration_method":        calibration_method,
+        "calibration_split":         "dedicated_embargoed_per_symbol",
     }
     joblib.dump(pipeline, MODEL_FILE)
     log.info(f"\n✅ Saved: {MODEL_FILE}")
 
     perf = {
-        "accuracy":        round(acc * 100, 1),
-        "wf_mean":         round(wf_mean * 100, 1),
-        "wf_std":          round(wf_std * 100, 1),
-        "n_train":         int(len(X_train_raw)),
-        "n_calib":         int(len(X_calib)),
-        "n_train_sampled": int(len(y_train)),
-        "n_test":          int(len(X_test)),
-        "features":        FULL_FEATURES,
-        "selected":        selected,
-        "buy_precision":   round(report.get("BUY",  {}).get("precision", 0), 4),
-        "sell_precision":  round(report.get("SELL", {}).get("precision", 0), 4),
-        "buy_recall":      round(report.get("BUY",  {}).get("recall",    0), 4),
-        "sell_recall":     round(report.get("SELL", {}).get("recall",    0), 4),
+        "accuracy":                  round(acc * 100, 1),
+        "wf_mean":                   round(wf_mean * 100, 1),
+        "wf_std":                    round(wf_std * 100, 1),
+        "n_train":                   int(len(X_train_raw)),
+        "n_calib":                   int(len(X_calib)),
+        "n_train_sampled":           int(len(y_train)),
+        "n_test":                    int(len(X_test)),
+        "features":                  FULL_FEATURES,
+        "selected":                  selected,
+        "recommended_threshold_buy":  best_thresh_buy,
+        "recommended_threshold_sell": best_thresh_sell,
+        "buy_precision":             round(report.get("BUY",  {}).get("precision", 0), 4),
+        "sell_precision":            round(report.get("SELL", {}).get("precision", 0), 4),
+        "buy_recall":                round(report.get("BUY",  {}).get("recall",    0), 4),
+        "sell_recall":               round(report.get("SELL", {}).get("recall",    0), 4),
     }
 
     with open("model_performance.json", "w") as f:
