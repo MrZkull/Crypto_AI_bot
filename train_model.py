@@ -1,4 +1,4 @@
-# train_model.py — Phase 3.6: Zero-Leak Threshold Tuning, Fee-Aware EV & Multi-Exchange Fallbacks
+# train_model.py — Stable Core Reversion · Phase 3.4 (Leakage Fix + New Features)
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -23,34 +23,26 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
-# Complete 26-Symbol Training Universe (Including all active micro-gems and reserve assets)
 SYMBOLS = [
-    "XRPUSDT", "ALGOUSDT", "NEARUSDT", "DOTUSDT", "LTCUSDT", "UNIUSDT",
-    "ENAUSDT", "AAVEUSDT", "DOGEUSDT", "HYPEUSDT", "LINKUSDT", "AVAXUSDT",
-    "BCHUSDT", "ETHUSDT", "BTCUSDT", "BNBUSDT", "SOLUSDT", "TRXUSDT",
-    "SUIUSDT", "APTUSDT", "ATOMUSDT", "ADAUSDT", "FETUSDT", "RENDERUSDT",
-    "XLMUSDT", "WLDUSDT", "VIRTUALUSDT",
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "AVAXUSDT", "NEARUSDT",
+    "TRXUSDT", "SUIUSDT", "APTUSDT", "ATOMUSDT", "LINKUSDT",
+    "DOTUSDT", "UNIUSDT", "XRPUSDT", "LTCUSDT", "BCHUSDT", "ALGOUSDT",
+    "AAVEUSDT", "ADAUSDT", "FETUSDT", "RENDERUSDT", "DOGEUSDT", "HYPEUSDT",
+    "XLMUSDT", "WLDUSDT", "VIRTUALUSDT", "ENAUSDT"
 ]
 
 TEST_SPLIT         = 0.20
-CALIB_SPLIT        = 0.15   # Dedicated split used for BOTH probability calibration AND threshold tuning
-EMBARGO_BARS       = 24     # Matches 24-bar lookahead — dropped per (symbol, regime) boundary
+CALIB_SPLIT        = 0.15
+EMBARGO_BARS       = 24
 MODEL_FILE         = "pro_crypto_ai_model.pkl"
 N_FEATURES         = 35
 MIN_BARS           = 100
 UNDERSAMPLE_RATIO  = 1.0
 
-# ── Fee & Friction Assumptions for EV Optimization ──
-ROUNDTRIP_FRICTION_PCT = 0.0020  # 0.20% = 0.05% taker + 0.05% maker/taker + 0.10% slippage/drag
-
-BINANCE_SPOT_ENDPOINTS = [
+BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
     "https://api.binance.com/api/v3/klines",
 ]
-BINANCE_FUTURES_ENDPOINTS = [
-    "https://fapi.binance.com/fapi/v1/klines",
-]
-DERIBIT_TV_ENDPOINT = "https://www.deribit.com/api/v2/public/get_tradingview_chart_data"
 
 RECENT_CANDLES = 5000
 PINNED_RECENT_WINDOW = None
@@ -72,8 +64,7 @@ NEW_FEATURES = [
 ]
 FULL_FEATURES = ALL_FEATURES + NEW_FEATURES
 
-
-# ── Multi-Exchange Data Fetching (Binance Spot + Futures + Deribit Fallback) ──
+# ── Data fetching ──────────────────────────────────────────────────────
 
 def _raw_to_df(raw: list) -> pd.DataFrame:
     df = pd.DataFrame(raw)
@@ -88,23 +79,21 @@ def _raw_to_df(raw: list) -> pd.DataFrame:
             if c in df.columns]
     return df[keep].reset_index(drop=True)
 
-
 def _fetch_deribit_klines(symbol: str, limit: int) -> pd.DataFrame:
-    """Fallback fetcher for Deribit Linear USDC instruments (e.g. HYPE_USDC-PERPETUAL)."""
     try:
-        base = symbol.replace("USDT", "").replace("-PERPETUAL", "").upper()
+        base = symbol.replace("USDT", "").upper()
         inst = f"{base}_USDC-PERPETUAL"
         now_ms = int(time.time() * 1000)
         start_ms = now_ms - (limit * 15 * 60 * 1000)
         r = requests.get(
-            DERIBIT_TV_ENDPOINT,
+            "https://www.deribit.com/api/v2/public/get_tradingview_chart_data",
             params={"instrument_name": inst, "resolution": "15", "start_timestamp": start_ms, "end_timestamp": now_ms},
             timeout=10
         )
         if r.status_code == 200:
             res = r.json().get("result", {})
             ticks = res.get("ticks", [])
-            if ticks and len(ticks) > 0:
+            if ticks:
                 df = pd.DataFrame({
                     "open_time": ticks,
                     "open": [float(x) for x in res.get("open", [])],
@@ -115,14 +104,13 @@ def _fetch_deribit_klines(symbol: str, limit: int) -> pd.DataFrame:
                     "taker_buy_base_vol": [float(x) * 0.5 for x in res.get("volume", [])]
                 })
                 return df.sort_values("open_time").reset_index(drop=True)
-    except Exception as e:
-        log.debug(f"Deribit klines fallback error for {symbol}: {e}")
+    except Exception:
+        pass
     return pd.DataFrame()
 
-
 def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.DataFrame:
-    endpoints = BINANCE_SPOT_ENDPOINTS + BINANCE_FUTURES_ENDPOINTS
-    for url in endpoints:
+    all_data = []
+    for url in BINANCE_ENDPOINTS:
         all_data = []
         end_time = None
         try:
@@ -134,7 +122,7 @@ def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.
                 if r.status_code != 200:
                     break
                 batch = r.json()
-                if not batch or not isinstance(batch, list):
+                if not batch:
                     break
                 all_data = batch + all_data
                 end_time = batch[0][0] - 1
@@ -146,7 +134,7 @@ def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.
         except Exception:
             pass
 
-    # Deribit Fallback
+    # Deribit fallback for symbols without Binance spot
     deribit_df = _fetch_deribit_klines(symbol, limit)
     if not deribit_df.empty:
         log.info(f"  [{symbol}] Fetched {len(deribit_df)} candles via Deribit fallback endpoint.")
@@ -154,10 +142,9 @@ def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.
 
     return pd.DataFrame()
 
-
-def fetch_klines_window(symbol: str, interval: str, start_ms: int, end_ms: int, max_candles: int = 1440) -> pd.DataFrame:
-    endpoints = BINANCE_SPOT_ENDPOINTS + BINANCE_FUTURES_ENDPOINTS
-    for url in endpoints:
+def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
+    all_data = []
+    for url in BINANCE_ENDPOINTS:
         all_data = []
         cursor = start_ms
         try:
@@ -171,7 +158,7 @@ def fetch_klines_window(symbol: str, interval: str, start_ms: int, end_ms: int, 
                 if r.status_code != 200:
                     break
                 batch = r.json()
-                if not batch or not isinstance(batch, list):
+                if not batch:
                     break
                 all_data.extend(batch)
                 cursor = batch[-1][0] + 1
@@ -184,59 +171,102 @@ def fetch_klines_window(symbol: str, interval: str, start_ms: int, end_ms: int, 
             pass
     return pd.DataFrame()
 
-
-# ── Feature Engineering & Alignment ───────────────────────────────────
+# ── Feature Alignment ──────────────────────────────────────────────────
 
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     _DEFAULTS = {"rsi_1h": 50.0, "adx_1h": 0.0, "trend_1h": 0.0}
+
+    def _apply_defaults(df):
+        for col, val in _DEFAULTS.items():
+            df[col] = val
+        return df
+
     if df1h.empty or len(df1h) < 5:
-        for c, v in _DEFAULTS.items(): df15[c] = v
-        return df15
+        return _apply_defaults(df15)
 
     required = ["open_time", "rsi", "adx", "trend"]
-    if not all(c in df1h.columns for c in required):
-        for c, v in _DEFAULTS.items(): df15[c] = v
-        return df15
+    missing  = [c for c in required if c not in df1h.columns]
+    if missing:
+        return _apply_defaults(df15)
 
     try:
-        df1h_slim = (df1h[required].dropna(subset=["open_time"])
-                     .assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time")
-                     .rename(columns={"rsi": "rsi_1h", "adx": "adx_1h", "trend": "trend_1h"}))
-        df15_work = (df15.drop(columns=list(_DEFAULTS.keys()), errors="ignore").dropna(subset=["open_time"])
-                     .assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time"))
+        df1h_slim = (
+            df1h[required]
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+            .rename(columns={"rsi": "rsi_1h", "adx": "adx_1h", "trend": "trend_1h"})
+        )
+
+        df15_work = (
+            df15
+            .drop(columns=["rsi_1h", "adx_1h", "trend_1h"], errors="ignore")
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+        )
+
         merged = pd.merge_asof(df15_work, df1h_slim, on="open_time", direction="backward")
+
         for col, default in _DEFAULTS.items():
-            merged[col] = merged[col].fillna(default) if col in merged.columns else default
+            if col in merged.columns:
+                merged[col] = merged[col].fillna(default)
+            else:
+                merged[col] = default
+
         return merged.reset_index(drop=True)
-    except Exception:
-        for c, v in _DEFAULTS.items(): df15[c] = v
-        return df15
+
+    except Exception as e:
+        log.warning(f"_align_1h_to_15m failed ({e}) — falling back to defaults")
+        return _apply_defaults(df15)
 
 
 def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     _DEFAULTS = {"rsi_4h": 50.0, "trend_4h": 0.0}
+
+    def _apply_defaults(df):
+        for col, val in _DEFAULTS.items():
+            df[col] = val
+        return df
+
     if df4h.empty or len(df4h) < 5:
-        for c, v in _DEFAULTS.items(): df15[c] = v
-        return df15
+        return _apply_defaults(df15)
 
     required = ["open_time", "rsi", "trend"]
-    if not all(c in df4h.columns for c in required):
-        for c, v in _DEFAULTS.items(): df15[c] = v
-        return df15
+    missing  = [c for c in required if c not in df4h.columns]
+    if missing:
+        return _apply_defaults(df15)
 
     try:
-        df4h_slim = (df4h[required].dropna(subset=["open_time"])
-                     .assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time")
-                     .rename(columns={"rsi": "rsi_4h", "trend": "trend_4h"}))
-        df15_work = (df15.drop(columns=list(_DEFAULTS.keys()), errors="ignore").dropna(subset=["open_time"])
-                     .assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time"))
+        df4h_slim = (
+            df4h[required]
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+            .rename(columns={"rsi": "rsi_4h", "trend": "trend_4h"})
+        )
+
+        df15_work = (
+            df15
+            .drop(columns=["rsi_4h", "trend_4h"], errors="ignore")
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+        )
+
         merged = pd.merge_asof(df15_work, df4h_slim, on="open_time", direction="backward")
+
         for col, default in _DEFAULTS.items():
-            merged[col] = merged[col].fillna(default) if col in merged.columns else default
+            if col in merged.columns:
+                merged[col] = merged[col].fillna(default)
+            else:
+                merged[col] = default
+
         return merged.reset_index(drop=True)
-    except Exception:
-        for c, v in _DEFAULTS.items(): df15[c] = v
-        return df15
+
+    except Exception as e:
+        log.warning(f"_align_4h_to_15m failed ({e}) — falling back to defaults")
+        return _apply_defaults(df15)
 
 
 def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
@@ -244,13 +274,23 @@ def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFram
         df15["btc_close"] = np.nan
         return df15
     try:
-        btc_slim = (btc_df15[["open_time", "close"]].rename(columns={"close": "btc_close"})
-                    .dropna(subset=["open_time"]).assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time"))
-        df15_work = (df15.drop(columns=["btc_close"], errors="ignore").dropna(subset=["open_time"])
-                     .assign(open_time=lambda d: d["open_time"].astype("int64")).sort_values("open_time"))
+        btc_slim = (
+            btc_df15[["open_time", "close"]]
+            .rename(columns={"close": "btc_close"})
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+        )
+        df15_work = (
+            df15.drop(columns=["btc_close"], errors="ignore")
+            .dropna(subset=["open_time"])
+            .assign(open_time=lambda d: d["open_time"].astype("int64"))
+            .sort_values("open_time")
+        )
         merged = pd.merge_asof(df15_work, btc_slim, on="open_time", direction="backward")
         return merged.reset_index(drop=True)
-    except Exception:
+    except Exception as e:
+        log.warning(f"_align_btc_to_15m failed ({e})")
         df15["btc_close"] = np.nan
         return df15
 
@@ -262,27 +302,30 @@ def _add_extra_features(df15: pd.DataFrame) -> pd.DataFrame:
         coin_ret = df["close"].pct_change()
         roll_cov = coin_ret.rolling(20, min_periods=10).cov(btc_ret)
         roll_var = btc_ret.rolling(20, min_periods=10).var()
-        df["btc_corr_20"]      = coin_ret.rolling(20, min_periods=10).corr(btc_ret).fillna(0.0).clip(-1, 1)
-        df["btc_beta_20"]      = (roll_cov / roll_var.replace(0, np.nan)).fillna(1.0).clip(-5, 5)
-        df["btc_rel_strength"] = ((df["close"].pct_change(6) - df["btc_close"].pct_change(6)) * 100).fillna(0.0).clip(-50, 50)
+        df["btc_corr_20"]      = coin_ret.rolling(20, min_periods=10).corr(btc_ret)
+        df["btc_beta_20"]      = roll_cov / roll_var.replace(0, np.nan)
+        df["btc_rel_strength"] = (df["close"].pct_change(6) - df["btc_close"].pct_change(6)) * 100
     else:
         df["btc_corr_20"]      = 0.0
         df["btc_beta_20"]      = 1.0
         df["btc_rel_strength"] = 0.0
+
+    df["btc_corr_20"]      = df["btc_corr_20"].fillna(0.0).clip(-1, 1)
+    df["btc_beta_20"]      = df["btc_beta_20"].fillna(1.0).clip(-5, 5)
+    df["btc_rel_strength"] = df["btc_rel_strength"].fillna(0.0).clip(-50, 50)
+
     return df
 
-
-# ── Path-Dependent First-Touch Triple-Barrier Labeling ─────────────────
 
 def make_targets(df: pd.DataFrame) -> pd.Series:
     n = len(df)
     labels = np.full(n, "NO_TRADE", dtype=object)
     lookahead = 24
 
-    highs  = df["high"].values
-    lows   = df["low"].values
+    highs = df["high"].values
+    lows  = df["low"].values
     closes = df["close"].values
-    atrs   = df["atr"].values if "atr" in df.columns else np.zeros(n)
+    atrs  = df["atr"].values if "atr" in df.columns else np.zeros(n)
 
     target_mult = ATR_TARGET1_MULT
 
@@ -297,7 +340,7 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
         sell_tp = entry - (atr * target_mult)
         sell_sl = entry + (atr * ATR_STOP_MULT)
 
-        # First-touch path evaluation for BUY
+        # Path search for BUY
         buy_success = False
         for k in range(1, lookahead + 1):
             idx = i + k
@@ -307,7 +350,7 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
                 buy_success = True
                 break
 
-        # First-touch path evaluation for SELL
+        # Path search for SELL
         sell_success = False
         for k in range(1, lookahead + 1):
             idx = i + k
@@ -325,25 +368,33 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
     return pd.Series(labels, index=df.index)
 
 
-def _process_segment(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: pd.DataFrame, regime: str, btc_df15: pd.DataFrame = None):
+def _process_segment(symbol, df15, df1h, df4h, regime, btc_df15=None):
     if df15.empty or len(df15) < MIN_BARS:
         return pd.DataFrame()
 
-    taker_col = df15[["open_time", "taker_buy_base_vol"]].copy() if "taker_buy_base_vol" in df15.columns else None
+    taker_col = None
+    if "taker_buy_base_vol" in df15.columns:
+        taker_col = df15[["open_time", "taker_buy_base_vol"]].copy()
+
     df15 = add_indicators(df15)
 
     if taker_col is not None and "taker_buy_base_vol" not in df15.columns:
         df15 = df15.merge(taker_col, on="open_time", how="left")
 
     if not df1h.empty:
-        df15 = _align_1h_to_15m(add_indicators(df1h), df15)
+        df1h_feat = add_indicators(df1h)
+        df15 = _align_1h_to_15m(df1h_feat, df15)
     else:
-        df15["rsi_1h"], df15["adx_1h"], df15["trend_1h"] = 50.0, 0.0, 0.0
+        df15["rsi_1h"] = 50.0
+        df15["adx_1h"] = 0.0
+        df15["trend_1h"] = 0.0
 
     if not df4h.empty:
-        df15 = _align_4h_to_15m(add_indicators(df4h), df15)
+        df4h_feat = add_indicators(df4h)
+        df15 = _align_4h_to_15m(df4h_feat, df15)
     else:
-        df15["rsi_4h"], df15["trend_4h"] = 50.0, 0.0
+        df15["rsi_4h"] = 50.0
+        df15["trend_4h"] = 0.0
 
     df15 = _align_btc_to_15m(btc_df15, df15)
     df15 = _add_extra_features(df15)
@@ -379,11 +430,12 @@ def build_dataset() -> pd.DataFrame:
         df1h_rec = _fetch_recent(symbol, "1h", 4)
         df4h_rec = _fetch_recent(symbol, "4h", 16)
 
-        seg = _process_segment(symbol, df15_rec, df1h_rec, df4h_rec, regime="recent_bull", btc_df15=btc_df15_rec)
+        seg = _process_segment(symbol, df15_rec, df1h_rec, df4h_rec, regime="recent_bull",
+                                btc_df15=btc_df15_rec)
         if not seg.empty:
             symbol_segments.append(seg)
         else:
-            log.warning(f"    [{symbol}] No data retrieved — skipping symbol.")
+            log.warning(f"    [{symbol}] No recent data — skipping symbol.")
             continue
 
         for bw in BEAR_WINDOWS:
@@ -394,10 +446,13 @@ def build_dataset() -> pd.DataFrame:
             df4h_bear = fetch_klines_window(symbol, "4h",  bw["start_ms"], bw["end_ms"], bw["candles"] // 16)
 
             if bw["label"] not in btc_bear_cache:
-                btc_bear_cache[bw["label"]] = fetch_klines_window("BTCUSDT", "15m", bw["start_ms"], bw["end_ms"], bw["candles"])
+                btc_bear_cache[bw["label"]] = fetch_klines_window(
+                    "BTCUSDT", "15m", bw["start_ms"], bw["end_ms"], bw["candles"]
+                )
             btc_bear_df15 = btc_bear_cache[bw["label"]]
 
-            seg = _process_segment(symbol, df15_bear, df1h_bear, df4h_bear, regime=bw["label"], btc_df15=btc_bear_df15)
+            seg = _process_segment(symbol, df15_bear, df1h_bear, df4h_bear, regime=bw["label"],
+                                    btc_df15=btc_bear_df15)
             if not seg.empty:
                 symbol_segments.append(seg)
 
@@ -408,13 +463,19 @@ def build_dataset() -> pd.DataFrame:
         raise ValueError("No data fetched for any symbol.")
 
     ds = pd.concat(all_rows, ignore_index=True)
-    n, b, s, nt = len(ds), (ds.target == "BUY").sum(), (ds.target == "SELL").sum(), (ds.target == "NO_TRADE").sum()
+    n  = len(ds)
+    b  = (ds.target == "BUY").sum()
+    s  = (ds.target == "SELL").sum()
+    nt = (ds.target == "NO_TRADE").sum()
 
-    log.info(f"\n{'='*60}\nDATASET SUMMARY: {n:,} rows | BUY: {b:,} ({b/n*100:.1f}%) | SELL: {s:,} ({s/n*100:.1f}%) | NO_TRADE: {nt:,}\n{'='*60}")
+    log.info(f"\n{'='*60}")
+    log.info(f"DATASET SUMMARY: {n:,} rows | BUY: {b:,} ({b/n*100:.1f}%) | SELL: {s:,} ({s/n*100:.1f}%) | NO_TRADE: {nt:,}")
+    log.info(f"{'='*60}")
+
     return ds
 
 
-# ── NO_TRADE Undersampling ─────────────────────────────────────────────
+# ── NO_TRADE undersampling ─────────────────────────────────────────────
 
 def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int, ratio: float = UNDERSAMPLE_RATIO) -> tuple:
     signal_mask  = y_train != nt_idx
@@ -429,7 +490,7 @@ def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int
     return X_train.iloc[keep].reset_index(drop=True), y_train[keep]
 
 
-# ── Training with True (Symbol, Regime) Isolation & Zero-Leak Thresholding ──
+# ── Training ───────────────────────────────────────────────────────────
 
 def train(ds: pd.DataFrame) -> float:
     for f in FULL_FEATURES:
@@ -440,11 +501,12 @@ def train(ds: pd.DataFrame) -> float:
     le.fit(ds["target"])
     classes = list(le.classes_)
 
+    log.info(f"Classes: {list(zip(range(len(classes)), classes))}")
+
     nt_idx   = classes.index("NO_TRADE") if "NO_TRADE" in classes else -1
     buy_idx  = classes.index("BUY")      if "BUY"      in classes else 0
     sell_idx = classes.index("SELL")     if "SELL"     in classes else 2
 
-    # Group by (symbol, regime) to preserve individual timelines
     train_parts, calib_parts, test_parts = [], [], []
     dropped_total = 0
 
@@ -482,20 +544,28 @@ def train(ds: pd.DataFrame) -> float:
     X_test = test_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_test = le.transform(test_df["target"]) if len(test_df) > 0 else np.array([])
 
-    log.info(f"True (Symbol, Regime) Split: train={len(X_train_raw):,} | calib={len(X_calib):,} | test={len(X_test):,} (embargoed {dropped_total:,} rows)")
+    log.info(
+        f"True (Symbol, Regime) Split (embargo={EMBARGO_BARS} bars/boundary): "
+        f"train={len(X_train_raw):,}  calib={len(X_calib):,}  test={len(X_test):,}  "
+        f"(dropped ~{dropped_total:,} embargoed rows across all symbol timelines)"
+    )
 
-    # Feature Importance Scan
+    log.info("Importance scan...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train_raw, y_train_raw)
-    top_idx = np.argsort(scanner.feature_importances_)[::-1]
+    top_idx  = np.argsort(scanner.feature_importances_)[::-1]
 
     essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"]
-    selected = [f for f in essential if f in FULL_FEATURES]
+    selected  = [f for f in essential if f in FULL_FEATURES]
+
     for i in top_idx:
         if FULL_FEATURES[i] not in selected:
             selected.append(FULL_FEATURES[i])
         if len(selected) >= N_FEATURES:
             break
+
+    log.info(f"Top {len(selected)} features selected.")
+    log.info(f"  New features included: {[f for f in NEW_FEATURES if f in selected]}")
 
     X_train_raw_sel = X_train_raw[selected]
     Xte             = X_test[selected].values
@@ -504,29 +574,72 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
-    # Train Models
+    log.info("Building sample weights for XGBoost...")
     sw_asym = np.ones(len(y_train))
     sw_asym[y_train == buy_idx]  = 2.0
     sw_asym[y_train == sell_idx] = 2.0
 
-    xgb = XGBClassifier(n_estimators=300, max_depth=6, learning_rate=0.03, subsample=0.85, colsample_bytree=0.85, min_child_weight=3, gamma=0.05, eval_metric="mlogloss", random_state=42, n_jobs=-1)
+    log.info("Training XGBoost...")
+    xgb = XGBClassifier(
+        n_estimators=300, max_depth=6, learning_rate=0.03,
+        subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
+        gamma=0.05, eval_metric="mlogloss", random_state=42, n_jobs=-1,
+    )
     xgb.fit(Xtr, y_train, sample_weight=sw_asym)
 
-    rf = RandomForestClassifier(n_estimators=300, max_depth=12, min_samples_leaf=3, max_features="sqrt", random_state=42, n_jobs=-1, class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0})
+    log.info("Training RandomForest...")
+    rf = RandomForestClassifier(
+        n_estimators=300, max_depth=12, min_samples_leaf=3,
+        max_features="sqrt", random_state=42, n_jobs=-1,
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
+    )
     rf.fit(Xtr, y_train)
 
-    gb = HistGradientBoostingClassifier(max_iter=200, max_depth=5, learning_rate=0.04, min_samples_leaf=3, random_state=42, class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0})
+    log.info("Training HistGradientBoosting...")
+    gb = HistGradientBoostingClassifier(
+        max_iter=200, max_depth=5, learning_rate=0.04,
+        min_samples_leaf=3, random_state=42,
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
+    )
     gb.fit(Xtr, y_train)
 
-    ensemble = VotingClassifier(estimators=[("xgb", xgb), ("rf", rf), ("gb", gb)], voting="soft", weights=[3, 2, 1])
+    log.info("Building ensemble [XGB×3, RF×2, GB×1]...")
+    ensemble = VotingClassifier(
+        estimators=[("xgb", xgb), ("rf", rf), ("gb", gb)],
+        voting="soft", weights=[3, 2, 1],
+    )
     ensemble.fit(Xtr, y_train)
 
-    # Dedicated Calibration
-    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
+    log.info("\nRunning Walk-Forward Validation (4 chronological windows)...")
+    wf_scores = []
+    window = len(Xtr) // 5
+    wf_embargo = min(EMBARGO_BARS, max(window // 10, 1))
+
+    for i in range(4):
+        wf_train_end  = (i + 1) * window
+        wf_test_start = wf_train_end + wf_embargo
+        wf_test_end   = wf_test_start + window
+
+        if wf_test_end > len(Xtr):
+            break
+
+        probe = XGBClassifier(n_estimators=100, random_state=42, eval_metric="mlogloss", n_jobs=-1)
+        probe.fit(Xtr[:wf_train_end], y_train[:wf_train_end])
+
+        acc_wf = accuracy_score(y_train[wf_test_start:wf_test_end], probe.predict(Xtr[wf_test_start:wf_test_end]))
+        wf_scores.append(acc_wf)
+
+    wf_mean = np.mean(wf_scores) if wf_scores else 0.0
+    wf_std  = np.std(wf_scores) if wf_scores else 0.0
+    log.info(f"  Walk-forward Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
+
+    calibration_method = "isotonic"
+    log.info(f"\nCalibrating probability estimates ({calibration_method}) on held-out calibration split...")
+    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method=calibration_method)
     calibrated_ensemble.fit(Xcal, y_calib)
     ensemble = calibrated_ensemble
 
-    # ── ZERO-LEAK THRESHOLD TUNING (TUNED ON CALIBRATION SPLIT, NOT TEST) ──
+    # ── Threshold tuning on calibration split ──
     calib_probas = ensemble.predict_proba(Xcal)
     calib_buy_n  = (y_calib == buy_idx).sum()
     calib_sell_n = (y_calib == sell_idx).sum()
@@ -534,7 +647,6 @@ def train(ds: pd.DataFrame) -> float:
     best_thresh_buy, best_score_buy   = 0.45, 0.0
     best_thresh_sell, best_score_sell = 0.45, 0.0
 
-    log.info("\n── Threshold Tuning on Calibration Split (Fee-Adjusted EV) ──")
     for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
         yp = [np.argmax(p) if np.argmax(p) != nt_idx and p[np.argmax(p)] >= thresh else nt_idx for p in calib_probas]
         yp = np.array(yp)
@@ -545,12 +657,8 @@ def train(ds: pd.DataFrame) -> float:
         rb = (yp[y_calib == buy_idx] == buy_idx).mean()   if calib_buy_n > 0 else 0
         rs = (yp[y_calib == sell_idx] == sell_idx).mean() if calib_sell_n > 0 else 0
 
-        # Net Fee-Adjusted Expected Value Calculation
-        net_target = ATR_TARGET1_MULT - (ROUNDTRIP_FRICTION_PCT * 100)
-        net_stop   = ATR_STOP_MULT + (ROUNDTRIP_FRICTION_PCT * 100)
-
-        buy_ev  = pb * net_target - (1 - pb) * net_stop
-        sell_ev = ps * net_target - (1 - ps) * net_stop
+        buy_ev  = pb * ATR_TARGET1_MULT - (1 - pb) * ATR_STOP_MULT
+        sell_ev = ps * ATR_TARGET1_MULT - (1 - ps) * ATR_STOP_MULT
 
         buy_score  = buy_ev * rb * np.sqrt(max(bm.sum(), 1))  if buy_ev > 0 else 0.0
         sell_score = sell_ev * rs * np.sqrt(max(sm.sum(), 1)) if sell_ev > 0 else 0.0
@@ -560,12 +668,10 @@ def train(ds: pd.DataFrame) -> float:
         if sell_score > best_score_sell and sm.sum() > 15:
             best_score_sell, best_thresh_sell = sell_score, thresh
 
-        log.info(f"  [Calib Sweep] Thresh {thresh:.2f} | BUY: Prec={pb:>6.1%} Rec={rb:>6.1%} (n={bm.sum():>4}) | SELL: Prec={ps:>6.1%} Rec={rs:>6.1%} (n={sm.sum():>4})")
+    log.info(f"\n  → Selected BUY Threshold:  {best_thresh_buy:.2f}")
+    log.info(f"  → Selected SELL Threshold: {best_thresh_sell:.2f}")
 
-    log.info(f"\n  → Selected BUY Threshold (from Calib):  {best_thresh_buy:.2f}")
-    log.info(f"  → Selected SELL Threshold (from Calib): {best_thresh_sell:.2f}")
-
-    # ── FINAL OUT-OF-SAMPLE TEST EVALUATION (AT SELECTED THRESHOLDS) ──
+    # ── Final evaluation on untouched test split ──
     probas = ensemble.predict_proba(Xte)
     y_pred_tuned = []
     for p in probas:
@@ -578,22 +684,17 @@ def train(ds: pd.DataFrame) -> float:
             y_pred_tuned.append(nt_idx)
     y_pred_tuned = np.array(y_pred_tuned)
 
-    acc = accuracy_score(y_test, y_pred_tuned)
+    acc    = accuracy_score(y_test, y_pred_tuned)
     report = classification_report(y_test, y_pred_tuned, target_names=classes, output_dict=True, zero_division=0)
 
-    log.info(f"\n{'='*60}\nUNTOUCHED HELD-OUT TEST EVALUATION (Tuned Thresholds):\n{'='*60}")
-    for label in ["BUY", "SELL"]:
-        log.info(f"  {label:<5} precision: {report.get(label, {}).get('precision', 0):.1%} | recall: {report.get(label, {}).get('recall', 0):.1%}")
+    log.info(f"\n{'='*60}")
+    log.info(f"RAW ACCURACY: {acc*100:.1f}%")
+    log.info(f"{'='*60}")
 
-    # ── Per-Symbol Diagnostic Breakdown ───────────────────────────────
-    log.info("\n── Per-Symbol Performance on Held-Out Test Set ──")
-    test_symbols = test_df["symbol"].values
-    for sym in np.unique(test_symbols):
-        mask = test_symbols == sym
-        if mask.sum() < 20: continue
-        sym_pred, sym_true = y_pred_tuned[mask], y_test[mask]
-        s_rep = classification_report(sym_true, sym_pred, target_names=classes, output_dict=True, zero_division=0)
-        log.info(f"  {sym:<12} (n={mask.sum():>4}) | BUY Prec: {s_rep.get('BUY',{}).get('precision',0):.1%} | SELL Prec: {s_rep.get('SELL',{}).get('precision',0):.1%}")
+    for label in ["BUY", "SELL"]:
+        log.info(f"  {label:<5} precision: {report.get(label, {}).get('precision', 0):.1%}  "
+                 f"recall: {report.get(label, {}).get('recall', 0):.1%}  "
+                 f"f1: {report.get(label, {}).get('f1-score', 0):.1%}")
 
     pipeline = {
         "ensemble":                  ensemble,
@@ -614,19 +715,29 @@ def train(ds: pd.DataFrame) -> float:
     joblib.dump(pipeline, MODEL_FILE)
     log.info(f"\n✅ Saved: {MODEL_FILE}")
 
+    # ── Write full metrics JSON for the GitHub summary box ──
+    perf = {
+        "accuracy":                  round(acc * 100, 1),
+        "wf_mean":                   round(wf_mean * 100, 1),
+        "wf_std":                    round(wf_std * 100, 1),
+        "n_train":                   int(len(X_train_raw)),
+        "n_calib":                   int(len(X_calib)),
+        "n_train_sampled":           int(len(y_train)),
+        "n_test":                    int(len(X_test)),
+        "features":                  FULL_FEATURES,
+        "selected":                  selected,
+        "recommended_threshold_buy":  best_thresh_buy,
+        "recommended_threshold_sell": best_thresh_sell,
+        "buy_precision":             round(report.get("BUY",  {}).get("precision", 0), 4),
+        "sell_precision":            round(report.get("SELL", {}).get("precision", 0), 4),
+        "buy_recall":                round(report.get("BUY",  {}).get("recall",    0), 4),
+        "sell_recall":               round(report.get("SELL", {}).get("recall",    0), 4),
+    }
+
     with open("model_performance.json", "w") as f:
-        json.dump({
-            "accuracy":                  round(acc * 100, 1),
-            "recommended_threshold_buy":  best_thresh_buy,
-            "recommended_threshold_sell": best_thresh_sell,
-            "buy_precision":             round(report.get("BUY",  {}).get("precision", 0), 4),
-            "sell_precision":            round(report.get("SELL", {}).get("precision", 0), 4),
-            "buy_recall":                round(report.get("BUY",  {}).get("recall",    0), 4),
-            "sell_recall":               round(report.get("SELL", {}).get("recall",    0), 4),
-        }, f, indent=2)
+        json.dump(perf, f, indent=2)
 
     return acc
-
 
 if __name__ == "__main__":
     t0  = time.time()
