@@ -1,0 +1,22 @@
+name: Run coin_screener
+
+on:
+  workflow_dispatch: # Allows manual trigger from GitHub web UI
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Run Screener
+        run: python coin_screener.py --max-risk-inr 15 --min-binance-24h-vol-usd 5000000
