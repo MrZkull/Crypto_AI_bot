@@ -1,7 +1,16 @@
-name: Run coin_screener
+name: Run Coin Screener
 
 on:
-  workflow_dispatch: # Allows manual trigger from GitHub web UI
+  workflow_dispatch:
+    inputs:
+      min_volume:
+        description: 'Minimum 24h Binance Volume in USD (Default: $2,000,000)'
+        required: false
+        default: '2000000'
+      max_risk_inr:
+        description: 'Max Risk per trade in INR (Default: ₹15)'
+        required: false
+        default: '15'
 
 jobs:
   screen:
@@ -19,4 +28,7 @@ jobs:
         run: pip install requests
 
       - name: Run Screener
-        run: python coin_screener.py --max-risk-inr 15 --min-binance-24h-vol-usd 5000000
+        run: |
+          python coin_screener.py \
+            --max-risk-inr ${{ github.event.inputs.max_risk_inr || '15' }} \
+            --min-binance-24h-vol-usd ${{ github.event.inputs.min_volume || '2000000' }}
