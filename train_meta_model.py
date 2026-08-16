@@ -1,4 +1,4 @@
-# train_meta_model.py — P1: Meta-labeling (López de Prado) Pipeline
+# train_meta_model.py — P1: Meta-labeling (López de Prado) with Multi-Symbol Embargo Protection
 
 import json, logging, time
 from datetime import datetime, timezone
@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
 META_MODEL_FILE = "meta_pipeline.pkl"
-N_META_FEATURES = 25  # Meta-model uses a focused subset of the most decisive features
+N_META_FEATURES = 25  # Meta-model uses a focused subset of features
 
 
 def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.DataFrame:
@@ -53,13 +53,13 @@ def build_meta_labels(ds: pd.DataFrame) -> pd.DataFrame:
     return directional
 
 
-def per_regime_split(ds: pd.DataFrame, test_split: float, calib_split: float, embargo: int):
-    """Embargoed per-regime split to prevent temporal data leakage."""
+def per_symbol_regime_split(ds: pd.DataFrame, test_split: float, calib_split: float, embargo: int):
+    """Embargoed per-(symbol, regime) split to prevent temporal and cross-symbol leakage."""
     train_parts, calib_parts, test_parts = [], [], []
-    if "regime" not in ds.columns:
-        ds["regime"] = "unknown"
+    if "regime" not in ds.columns: ds["regime"] = "unknown"
+    if "symbol" not in ds.columns: ds["symbol"] = "unknown"
 
-    for regime, grp in ds.groupby("regime", sort=False):
+    for (sym, regime), grp in ds.groupby(["symbol", "regime"], sort=False):
         grp = grp.sort_values("open_time").reset_index(drop=True)
         n_r = len(grp)
         test_size_r  = int(n_r * test_split)
@@ -94,11 +94,9 @@ def train_meta_model():
 
     log.info("Building dataset (same data & regimes as primary)...")
     ds = build_dataset()
-    ds = ds.sort_values("open_time").reset_index(drop=True)
 
-    # Reconstruct the exact held-out test split from the primary model
-    log.info("Isolating primary model's held-out test split to ensure leak-free evaluation...")
-    _, _, primary_test = per_regime_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
+    log.info("Isolating primary model's held-out test split via per-(symbol, regime) embargo...")
+    _, _, primary_test = per_symbol_regime_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
     log.info(f"Primary held-out test set: {len(primary_test):,} rows")
 
     log.info("Generating primary model calls on held-out test rows...")
@@ -116,7 +114,7 @@ def train_meta_model():
         log.error(f"Sample size too small ({n_dir} directional calls). Need at least 300 to train a meta-model.")
         return
 
-    train_df, calib_df, test_df = per_regime_split(directional, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
+    train_df, calib_df, test_df = per_symbol_regime_split(directional, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
     log.info(f"Meta Split: train={len(train_df):,} | calib={len(calib_df):,} | test={len(test_df):,}")
 
     for f in FULL_FEATURES:
