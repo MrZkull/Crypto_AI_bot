@@ -226,6 +226,7 @@ jobs:
 
       - name: Upload Performance JSON Artifacts (Quota-Safe)
         if: always()
+        continue-on-error: true    # 🛡️ Prevents quota lock from failing the run
         uses: actions/upload-artifact@v4
         with:
           name: model-metrics-${{ github.run_number }}
