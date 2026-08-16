@@ -5,7 +5,9 @@ Queries Deribit Linear USDC Perpetuals and cross-references against
 Binance Vision Public Market Data (bypassing US datacenter 451 geoblocks).
 
 Usage:
-    python coin_screener.py --max-risk-inr 15 --inr-usd 0.0116 --min-binance-24h-vol-usd 2000000
+    python coin_screener.py --max-risk-inr 15 --inr-usd 0.0116 --min-binance-24h-vol-usd 5000000
+    - name: Run Screener
+run: python coin_screener.py --max-risk-inr 15 --min-binance-24h-vol-usd 2000000
 """
 
 import argparse
