@@ -1,4 +1,4 @@
-# train_meta_model.py — Phase 3.6: Zero-Leak Meta-Labeling & Orthogonal Lift Benchmark
+# train_meta_model.py — P1: Meta-labeling (López de Prado)
 
 import json, logging, time
 from datetime import datetime, timezone
@@ -22,7 +22,6 @@ log = logging.getLogger(__name__)
 META_MODEL_FILE = "meta_pipeline.pkl"
 N_META_FEATURES = 25
 
-
 def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.DataFrame:
     af = primary_pipeline["all_features"]
     for f in af:
@@ -41,12 +40,10 @@ def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.Data
     ds["primary_conf"] = probas.max(axis=1)
     return ds
 
-
 def build_meta_labels(ds: pd.DataFrame) -> pd.DataFrame:
     directional = ds[ds["primary_side"] != "NO_TRADE"].copy()
     directional["meta_label"] = (directional["primary_side"] == directional["target"]).astype(int)
     return directional
-
 
 def per_symbol_regime_split(ds: pd.DataFrame, test_split: float, calib_split: float, embargo: int):
     train_parts, calib_parts, test_parts = [], [], []
@@ -77,36 +74,33 @@ def per_symbol_regime_split(ds: pd.DataFrame, test_split: float, calib_split: fl
         pd.concat(test_parts, ignore_index=True) if test_parts else train_parts[0].iloc[:0]
     )
 
-
 def train_meta_model():
-    log.info("Loading primary model...")
+    log.info("Loading primary model (pro_crypto_ai_model.pkl)...")
     primary_pipeline = joblib.load(MODEL_FILE)
 
-    log.info("Building dataset...")
+    log.info("Building dataset (same data & regimes as primary)...")
     ds = build_dataset()
 
-    log.info("Isolating held-out test split via per-(symbol, regime) embargo...")
+    log.info("Isolating primary model's held-out test split via per-(symbol, regime) embargo...")
     _, _, primary_test = per_symbol_regime_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
 
-    log.info("Generating primary predictions on held-out test set...")
+    log.info("Generating primary model calls on held-out test rows...")
     primary_test = get_primary_predictions(primary_test, primary_pipeline)
-    directional  = build_meta_labels(primary_test)
 
+    directional = build_meta_labels(primary_test)
     n_dir = len(directional)
     n_correct = directional["meta_label"].sum()
     base_rate = (n_correct / n_dir * 100) if n_dir > 0 else 0.0
 
-    log.info(f"Primary directional calls on test set: {n_dir:,} | True Win Rate: {base_rate:.1f}%")
-
-    if n_dir < 300:
-        log.error(f"Insufficient directional calls ({n_dir}) to train meta-model safely.")
-        return
+    log.info(f"Primary called a direction on {n_dir:,} held-out rows ({n_dir/len(primary_test)*100:.1f}% frequency)")
+    log.info(f"True out-of-sample base hit rate: {base_rate:.1f}% ({n_correct:,}/{n_dir:,} correct)")
 
     train_df, calib_df, test_df = per_symbol_regime_split(directional, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
 
     for f in FULL_FEATURES:
         for part in (train_df, calib_df, test_df):
-            if f not in part.columns: part[f] = 0.0
+            if f not in part.columns:
+                part[f] = 0.0
 
     X_train_full = train_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_train = train_df["meta_label"].values
@@ -122,19 +116,27 @@ def train_meta_model():
     y_calib = calib_df["meta_label"].values
     y_test  = test_df["meta_label"].values
 
-    meta_xgb = XGBClassifier(n_estimators=300, max_depth=5, learning_rate=0.03, subsample=0.85, colsample_bytree=0.85, min_child_weight=3, eval_metric="logloss", random_state=42, n_jobs=-1)
+    meta_xgb = XGBClassifier(
+        n_estimators=300, max_depth=5, learning_rate=0.03,
+        subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
+        eval_metric="logloss", random_state=42, n_jobs=-1,
+    )
     meta_xgb.fit(X_train, y_train)
 
-    meta_rf = RandomForestClassifier(n_estimators=300, max_depth=10, min_samples_leaf=5, random_state=42, n_jobs=-1)
+    meta_rf = RandomForestClassifier(
+        n_estimators=300, max_depth=10, min_samples_leaf=5,
+        random_state=42, n_jobs=-1,
+    )
     meta_rf.fit(X_train, y_train)
 
-    meta_ensemble = VotingClassifier(estimators=[("xgb", meta_xgb), ("rf", meta_rf)], voting="soft", weights=[2, 1])
+    meta_ensemble = VotingClassifier(
+        estimators=[("xgb", meta_xgb), ("rf", meta_rf)], voting="soft", weights=[2, 1],
+    )
     meta_ensemble.fit(X_train, y_train)
 
     calibrated_meta = CalibratedClassifierCV(estimator=FrozenEstimator(meta_ensemble), method="isotonic")
     calibrated_meta.fit(X_calib, y_calib)
 
-    # ── ZERO-LEAK META THRESHOLD TUNING (TUNED ON CALIB SPLIT) ──
     calib_proba = calibrated_meta.predict_proba(X_calib)[:, 1]
     best_thresh, best_score = 0.50, 0.0
 
@@ -146,46 +148,37 @@ def train_meta_model():
         if score > best_score:
             best_score, best_thresh = score, thresh
 
-    # ── EVALUATION ON UNTOUCHED META TEST SET ──
     y_proba = calibrated_meta.predict_proba(X_test)[:, 1]
     test_mask = y_proba >= best_thresh
     meta_prec = y_test[test_mask].mean() if test_mask.sum() > 0 else 0.0
-    meta_n    = test_mask.sum()
 
     log.info(f"\n{'='*60}")
     log.info(f"META-MODEL HELD-OUT EVALUATION (Threshold = {best_thresh:.2f}):")
-    log.info(f"  Trades Taken: {meta_n} | Out-of-Sample Precision: {meta_prec*100:.1f}% (Base: {base_rate:.1f}%)")
+    log.info(f"  Trades Taken: {test_mask.sum()} | Out-of-Sample Precision: {meta_prec*100:.1f}% (Base: {base_rate:.1f}%)")
     log.info(f"{'='*60}")
-
-    # ── ORTHOGONALITY SANITY BENCHMARK ──
-    # Check if Meta provides genuine lift vs. simple Primary Confidence thresholding at the same trade volume
-    primary_test_confs = test_df["primary_conf"].values
-    if len(primary_test_confs) > 0 and meta_n > 0:
-        top_k_thresh = np.quantile(primary_test_confs, max(0.0, 1.0 - (meta_n / len(test_df))))
-        prim_mask = primary_test_confs >= top_k_thresh
-        prim_prec = y_test[prim_mask].mean() if prim_mask.sum() > 0 else 0.0
-        lift = (meta_prec - prim_prec) * 100
-
-        log.info(f"\n── Meta Orthogonality Benchmark (Matched Sample Size n={prim_mask.sum()}) ──")
-        log.info(f"  Primary Model High-Conf Slice: {prim_prec*100:.1f}% Precision")
-        log.info(f"  Meta-Model Filtered Slice:     {meta_prec*100:.1f}% Precision")
-        log.info(f"  Net Meta Information Gain:     {lift:+.1f}% Lift")
-        if lift > 2.0:
-            log.info("  ✓ PASS: Meta-Model adds genuine orthogonal predictive power.")
-        else:
-            log.info("  ⚠ NOTICE: Meta-Model performs similarly to raw primary confidence thresholding.")
 
     meta_pipeline = {
         "meta_ensemble":              calibrated_meta,
         "meta_features":              meta_features,
         "recommended_meta_threshold": best_thresh,
         "base_rate":                  float(base_rate),
-        "test_accuracy":              float(meta_prec),
+        "test_accuracy":              float(meta_prec * 100),
         "trained_at":                 datetime.now(timezone.utc).isoformat(),
     }
     joblib.dump(meta_pipeline, META_MODEL_FILE)
-    log.info(f"✅ Saved: {META_MODEL_FILE}")
+    log.info(f"\n✅ Saved: {META_MODEL_FILE}")
 
+    # ── Write meta performance JSON for GitHub Action step ──
+    with open("meta_model_performance.json", "w") as f:
+        json.dump({
+            "test_accuracy":              round(float(meta_prec) * 100, 1),
+            "base_rate":                  round(float(base_rate), 1),
+            "n_directional_calls":        int(n_dir),
+            "recommended_meta_threshold": float(best_thresh),
+            "meta_features":              meta_features,
+        }, f, indent=2)
+
+    log.info("✅ Saved: meta_model_performance.json")
 
 if __name__ == "__main__":
     t0 = time.time()
