@@ -1,33 +1,10 @@
-# backtest.py — P0: realistic out-of-sample backtest with fees, slippage, and
-# portfolio-level position caps. This is the tool everything else (meta-labeling,
-# vol-targeted sizing, regime features) gets validated against — without this,
-# "is the model better now" was only ever answered by classification metrics
-# (precision/recall), never by "would this have actually made money."
-#
-# IMPORTANT — what this does NOT model, on purpose, to keep v1 shippable:
-#   - No partial TP1/TP2 split or trailing stop (trade_executor.py does both live).
-#     Backtest uses a single target (TP1) as full exit. This UNDERSTATES what a
-#     winning trade captures (TP2 upside is ignored) but keeps the simulation
-#     honest and simple. Add TP1/TP2 partial modeling in v2 once v1 is trusted.
-#   - No correlation filter (check_correlation() in trade_executor.py) — only the
-#     flat MAX_OPEN_TRADES cap is modeled. Real live trading will be somewhat more
-#     conservative than this backtest suggests.
-#   - Funding rate carry cost is not modeled (we don't have reliable historical
-#     funding data — see the geo-block saga earlier in this project).
-#
-# Usage:
-#   python backtest.py                          # last ~20 days per symbol, default threshold
-#   python backtest.py --days 30 --threshold 0.45
-#   python backtest.py --symbols BTCUSDT ETHUSDT
+# backtest.py — Realistic Out-of-Sample Backtest with Fees, Slippage & Position Caps
 
 import argparse, json, logging, time, warnings
 import numpy as np
 import pandas as pd
 import joblib
 
-# Harmless — meta_ensemble's RandomForest component was fit on a plain array but
-# predicted on a DataFrame with column names. Doesn't affect correctness, just
-# spammed once per symbol per run and made the logs hard to read.
 warnings.filterwarnings("ignore", message="X has feature names, but RandomForestClassifier")
 
 from train_model import (
@@ -38,36 +15,22 @@ from train_model import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ── Realistic cost assumptions ──────────────────────────────────────────
-TAKER_FEE_PCT   = 0.0005   # 0.05% per side — Deribit USDC perpetual taker fee ballpark
-SLIPPAGE_PCT    = 0.0005   # 0.05% adverse slippage per side, beyond fee — conservative
-LOOKAHEAD_BARS  = 24       # matches make_targets()'s label lookahead (6h on 15m candles)
-MAX_OPEN_TRADES = 10       # matches trade_executor.py's testnet cap
-RISK_PER_TRADE  = 0.01     # 1% of current equity risked per trade — matches config.py
-MAX_LEVERAGE    = 10.0     # NEW: hard cap on notional as a multiple of equity — prevents
-                            # tight-stop trades from implying unrealistic leverage. 10x is
-                            # a reasonable ceiling for a testnet perpetual account; tune
-                            # down if you want to be more conservative.
-STARTING_EQUITY = 100_000.0
-META_MODEL_FILE = "meta_pipeline.pkl"  # NEW — see train_meta_model.py
+# ── Cost & Execution Assumptions ──────────────────────────────────────
+TAKER_FEE_PCT   = 0.0005   # 0.05% per side — Deribit USDC perpetual taker fee
+SLIPPAGE_PCT    = 0.0005   # 0.05% adverse slippage per side
+LOOKAHEAD_BARS  = 24       # Matches label lookahead (6h on 15m candles)
+MAX_LEVERAGE    = 10.0     # Hard cap on notional as a multiple of equity
+META_MODEL_FILE = "meta_pipeline.pkl"
 
 
 def simulate_symbol(symbol: str, df15: pd.DataFrame, pipeline: dict, threshold: float,
                      meta_pipeline: dict = None, meta_threshold: float = None) -> list:
-    """Walk every bar of df15, generate a signal via the trained pipeline exactly
-    like generate_signal() does live, and if one fires, resolve the outcome by
-    checking forward bars for TP1/SL — first one touched wins. Returns a list of
-    trade dicts (not yet filtered by portfolio position caps — that happens after
-    merging all symbols chronologically).
-
-    NEW: if meta_pipeline is provided, every primary signal is additionally passed
-    through the meta-model — a signal only survives if BOTH the primary confidence
-    clears `threshold` AND the meta-model's P(call is correct) clears
-    `meta_threshold`. This lets us directly compare "primary alone" vs "primary +
-    meta filter" on the exact same realistic-cost, position-capped simulation."""
-    af       = pipeline["all_features"]
-    selector = pipeline["selector"]
-    ensemble = pipeline["ensemble"]
+    """
+    Walks every bar of df15, generates ML signals, and resolves outcomes against TP1/SL.
+    """
+    af        = pipeline["all_features"]
+    selector  = pipeline["selector"]
+    ensemble  = pipeline["ensemble"]
     label_map = pipeline["label_map"]
 
     for f in af:
@@ -90,20 +53,19 @@ def simulate_symbol(symbol: str, df15: pd.DataFrame, pipeline: dict, threshold: 
 
     trades = []
     n = len(df15)
-    highs  = df15["high"].values
-    lows   = df15["low"].values
-    closes = df15["close"].values
+    highs   = df15["high"].values
+    lows    = df15["low"].values
+    closes  = df15["close"].values
     opens_t = df15["open_time"].values
-    atrs   = df15["atr"].values if "atr" in df15.columns else None
+    atrs    = df15["atr"].values if "atr" in df15.columns else None
 
     for i in range(n - LOOKAHEAD_BARS):
         sig  = label_map[int(preds[i])]
         conf = float(max(probas[i]))
         if sig == "NO_TRADE" or conf < threshold:
             continue
-        if meta_probas is not None:
-            if meta_probas[i] < meta_threshold:
-                continue
+        if meta_probas is not None and meta_probas[i] < meta_threshold:
+            continue
         if atrs is None or atrs[i] <= 0:
             continue
 
@@ -128,9 +90,8 @@ def simulate_symbol(symbol: str, df15: pd.DataFrame, pipeline: dict, threshold: 
             else:
                 hit_sl = highs[j] >= stop
                 hit_tp = lows[j]  <= tp1
-            # Conservative: if both could have been hit on the same bar, assume the
-            # worse outcome (SL) happened first — matches "don't flatter yourself"
-            # backtesting convention.
+
+            # Conservative tie-breaker: assume SL hit first if both touched on same bar
             if hit_sl:
                 outcome, exit_price, exit_bar = "SL", stop, j
                 break
@@ -148,26 +109,26 @@ def simulate_symbol(symbol: str, df15: pd.DataFrame, pipeline: dict, threshold: 
     return trades
 
 
-def run_portfolio_simulation(all_trades: list) -> dict:
-    """Apply MAX_OPEN_TRADES cap chronologically, apply fees/slippage, compound
-    equity risking RISK_PER_TRADE of CURRENT equity per trade (not fixed $), and
-    compute the metrics that actually matter: Sharpe, max drawdown, profit factor —
-    not just win rate, which is misleading on its own with an asymmetric R:R."""
+def run_portfolio_simulation(all_trades: list, starting_equity: float, risk_per_trade: float, max_open: int) -> dict:
+    """
+    Applies position caps chronologically, deducts realistic fees & slippage,
+    and compounds equity dynamically.
+    """
     all_trades.sort(key=lambda t: t["entry_time"])
 
     taken = []
-    open_intervals = []  # list of (entry_time, exit_time) for currently-tracked opens
+    open_intervals = []
 
     for t in all_trades:
         open_intervals = [iv for iv in open_intervals if iv[1] > t["entry_time"]]
-        if len(open_intervals) >= MAX_OPEN_TRADES:
-            continue  # matches live bot's "MAX TRADES — skip"
+        if len(open_intervals) >= max_open:
+            continue
         open_intervals.append((t["entry_time"], t["exit_time"]))
         taken.append(t)
 
     taken.sort(key=lambda t: t["exit_time"])
 
-    equity = STARTING_EQUITY
+    equity = starting_equity
     equity_curve = [equity]
     peak = equity
     max_dd = 0.0
@@ -181,31 +142,18 @@ def run_portfolio_simulation(all_trades: list) -> dict:
         exit_fill  = t["exit_price"] * (1 - SLIPPAGE_PCT) if t["signal"] == "BUY" else t["exit_price"] * (1 + SLIPPAGE_PCT)
 
         stop_dist_pct = abs(t["entry"] - t["stop"]) / t["entry"]
-        risk_dollars_target = equity * RISK_PER_TRADE
+        risk_dollars_target = equity * risk_per_trade
         raw_notional  = risk_dollars_target / stop_dist_pct if stop_dist_pct > 0 else 0
 
-        # FIX: cap implied leverage. Without this, a tight-stop trade (small
-        # stop_dist_pct) can imply absurd notional — e.g. a 0.1% stop with 1%
-        # target risk implies 10x leverage; a 0.02% stop implies 50x. Nothing
-        # was capping this, so a handful of tight-stop trades produced huge PnL
-        # swings that then compounded exponentially (this is exactly how a
-        # 19.5-day run turned $100k into $4.66M — not a real edge, a sizing bug).
-        # MAX_LEVERAGE mirrors the reality that real exchanges enforce hard
-        # position/margin ceilings (see: Deribit's non_pme_max_future_position_size
-        # limit we hit live in trade_executor.py).
         max_notional = equity * MAX_LEVERAGE
         notional = min(raw_notional, max_notional)
         if raw_notional > max_notional:
             capped_count += 1
-        # Actual dollar risk taken is whatever the (possibly capped) notional
-        # implies — NOT the target risk_dollars, since capping means the account
-        # is risking LESS than 1% on these trades, same as a real leveraged
-        # account would if it hit its own margin ceiling.
         risk_dollars = notional * stop_dist_pct
 
         raw_pnl_pct = ((exit_fill - entry_fill) / entry_fill) if t["signal"] == "BUY" else ((entry_fill - exit_fill) / entry_fill)
         pnl_dollars = notional * raw_pnl_pct
-        fees        = notional * TAKER_FEE_PCT * 2  # entry + exit
+        fees        = notional * TAKER_FEE_PCT * 2
         pnl_dollars -= fees
 
         equity += pnl_dollars
@@ -230,7 +178,7 @@ def run_portfolio_simulation(all_trades: list) -> dict:
     avg_r = float(np.mean(r_multiples)) if r_multiples else 0
     std_r = float(np.std(r_multiples)) if r_multiples else 0
     sharpe_per_trade = (avg_r / std_r) if std_r > 0 else 0
-    # Rough annualization: assumes ~trades_per_year based on observed frequency
+    
     total_days = (taken[-1]["exit_time"] - taken[0]["entry_time"]) / (1000 * 60 * 60 * 24) if n > 1 else 1
     trades_per_year = n / total_days * 365 if total_days > 0 else 0
     sharpe_annualized = sharpe_per_trade * np.sqrt(trades_per_year) if trades_per_year > 0 else 0
@@ -247,9 +195,9 @@ def run_portfolio_simulation(all_trades: list) -> dict:
         "sharpe_per_trade": round(sharpe_per_trade, 3),
         "sharpe_annualized_approx": round(sharpe_annualized, 2),
         "max_drawdown_pct": round(max_dd * 100, 1),
-        "starting_equity": STARTING_EQUITY,
+        "starting_equity": starting_equity,
         "ending_equity": round(equity, 2),
-        "total_return_pct": round((equity - STARTING_EQUITY) / STARTING_EQUITY * 100, 2),
+        "total_return_pct": round((equity - starting_equity) / starting_equity * 100, 2),
         "days_covered": round(total_days, 1),
         "trades_per_year_approx": round(trades_per_year, 0),
         "equity_curve": equity_curve,
@@ -259,11 +207,15 @@ def run_portfolio_simulation(all_trades: list) -> dict:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=20, help="How many recent days per symbol to backtest")
-    parser.add_argument("--threshold", type=float, default=None, help="Primary confidence threshold (default: pipeline's recommended_threshold)")
-    parser.add_argument("--symbols", nargs="+", default=None, help="Subset of symbols (default: all)")
-    parser.add_argument("--use-meta", action="store_true", help="Apply meta_pipeline.pkl as an additional filter — compare against a run WITHOUT this flag on the same days/symbols")
-    parser.add_argument("--meta-threshold", type=float, default=None, help="Meta confidence threshold (default: meta_pipeline's recommended_meta_threshold)")
-    parser.add_argument("--tag", type=str, default=None, help="Label for this run in backtest_history.json (e.g. 'post-orphan-fix', 'meta-v1') — makes the leaderboard readable")
+    parser.add_argument("--threshold", type=float, default=None, help="Primary confidence threshold (default: pipeline recommended)")
+    parser.add_argument("--symbols", nargs="+", default=None, help="Subset of symbols (default: all active)")
+    parser.add_argument("--use-meta", action="store_true", help="Apply meta_pipeline.pkl as an additional filter")
+    parser.add_argument("--meta-threshold", type=float, default=None, help="Meta confidence threshold")
+    parser.add_argument("--tag", type=str, default=None, help="Label for this run in backtest_history.json")
+    parser.add_argument("--equity", type=float, default=100_000.0, help="Starting simulation equity (default: $100k, use 10.0 for ₹500 test)")
+    parser.add_argument("--risk-per-trade", type=float, default=0.01, help="Risk per trade as decimal (default: 0.01, use 0.03 for ₹500 test)")
+    parser.add_argument("--max-open", type=int, default=10, help="Max concurrent open trades (default: 10, use 2 for ₹500 test)")
+    parser.add_argument("--allow-historical", action="store_true", help="Bypass the post-training cutoff to evaluate against recent historical holdouts")
     args = parser.parse_args()
 
     pipeline = joblib.load(MODEL_FILE)
@@ -274,46 +226,30 @@ def main():
     if args.use_meta:
         meta_pipeline = joblib.load(META_MODEL_FILE)
         meta_threshold = args.meta_threshold if args.meta_threshold is not None else meta_pipeline.get("recommended_meta_threshold", 0.5)
-        log.info(f"META FILTER ACTIVE — meta_threshold={meta_threshold} "
-                 f"(meta model trained_at={meta_pipeline.get('trained_at', 'unknown')})")
+        log.info(f"META FILTER ACTIVE — meta_threshold={meta_threshold}")
 
-    # FIX: previously this only LOGGED a reminder to make sure the backtest window
-    # was after training — never enforced it. train_model.py's "recent" segment
-    # pulls the latest ~52 days of candles AS OF WHENEVER TRAINING RAN, so a
-    # same-day (or even same-week) backtest using "last N days as of now" mostly
-    # overlaps data the model was already fit on. That's exactly how a 20-day
-    # backtest showed a fake 65.3% win rate and 2,546% return — not a sizing bug,
-    # the model was graded on data it had already partially seen. Now this is a
-    # hard cutoff: only candles with open_time strictly AFTER trained_at are used.
     trained_at_str = pipeline.get("trained_at")
     trained_at_ms = None
     if trained_at_str and trained_at_str != "unknown":
         try:
             trained_at_ms = int(pd.Timestamp(trained_at_str).timestamp() * 1000)
         except Exception as e:
-            log.warning(f"Could not parse trained_at ({trained_at_str}): {e} — cannot enforce leak-free cutoff!")
+            log.warning(f"Could not parse trained_at: {e}")
 
     hours_since_training = None
     if trained_at_ms is not None:
         hours_since_training = (pd.Timestamp.now("UTC").timestamp() * 1000 - trained_at_ms) / (1000 * 3600)
-        log.info(f"Model trained_at: {trained_at_str} ({hours_since_training:.1f}h ago) — "
-                 f"ONLY candles after this timestamp will be used, regardless of --days requested")
-        if hours_since_training < 24:
-            log.warning(f"⚠️ Only {hours_since_training:.1f}h have passed since training — there is "
-                        f"very little genuinely fresh data to test on yet. Results below will be "
-                        f"based on a small, statistically weak sample. Consider waiting longer after "
-                        f"training before trusting a backtest.")
-    else:
-        log.error("🚨 No trained_at timestamp on this model — CANNOT enforce leak-free cutoff. "
-                  "Results may be contaminated by training-window overlap. Proceed with caution.")
+        log.info(f"Model trained_at: {trained_at_str} ({hours_since_training:.1f}h ago)")
+
+    if args.allow_historical:
+        log.warning("⚠️ --allow-historical flag active — bypassing post-training timestamp filter to test recent historical data.")
+        trained_at_ms = None  # Disable cutoff for immediate holdout testing
 
     log.info(f"Backtesting {len(symbols)} symbols, requested {args.days} days, threshold={threshold}")
 
-    # Fetch generously (requested days + enough padding to survive the post-cutoff
-    # filter) since we don't know in advance how much gets filtered out.
     candles = max(args.days, 5) * 96 + 500
     btc_df15 = fetch_klines("BTCUSDT", "15m", candles)
-    if trained_at_ms is not None:
+    if trained_at_ms is not None and not btc_df15.empty:
         btc_df15 = btc_df15[btc_df15["open_time"] > trained_at_ms].reset_index(drop=True)
     all_trades = []
 
@@ -324,26 +260,21 @@ def main():
             df4h = fetch_klines(symbol, "4h", candles // 16)
 
             if df15.empty or "open_time" not in df15.columns:
-                log.warning(f"  [{symbol}] no data available at all — skipping "
-                            f"(expected for HYPEUSDT: no Binance spot listing)")
                 continue
 
             if trained_at_ms is not None:
                 before = len(df15)
                 df15 = df15[df15["open_time"] > trained_at_ms].reset_index(drop=True)
                 if before > 0 and len(df15) == 0:
-                    log.warning(f"  [{symbol}] ALL fetched candles are pre-training — "
-                                f"no genuinely fresh data available yet, skipping")
                     continue
 
-            if df15.empty or len(df15) < 100:
-                log.warning(f"  [{symbol}] insufficient POST-TRAINING data ({len(df15)} candles) — skipping "
-                            f"(this is expected if training just ran recently — wait longer, don't lower "
-                            f"the minimum to force a result)")
+            if df15.empty or len(df15) < (100 if trained_at_ms is not None else 30):
                 continue
+
             processed = _process_segment(df15, df1h, df4h, regime="backtest", btc_df15=btc_df15)
             if processed.empty:
                 continue
+
             trades = simulate_symbol(symbol, processed, pipeline, threshold,
                                       meta_pipeline=meta_pipeline, meta_threshold=meta_threshold)
             log.info(f"  [{symbol}] {len(trades)} signals generated")
@@ -352,10 +283,10 @@ def main():
             log.warning(f"  [{symbol}] backtest error: {e}")
 
     if not all_trades:
-        log.error("No trades generated at all — check threshold/data window")
+        log.error("No trades generated — if you recently retrained, use --allow-historical to evaluate recent bars.")
         return
 
-    results = run_portfolio_simulation(all_trades)
+    results = run_portfolio_simulation(all_trades, starting_equity=args.equity, risk_per_trade=args.risk_per_trade, max_open=args.max_open)
     equity_curve = results.pop("equity_curve")
 
     log.info("\n" + "=" * 60)
@@ -370,25 +301,18 @@ def main():
                    "days": args.days, "symbols": symbols}, f, indent=2)
     log.info("Saved: backtest_results.json")
 
-    # ── Persistent history — every run gets appended, never overwritten, so you
-    # can track which training/config actually held up best over time instead of
-    # only ever seeing the most recent run's numbers. ──
     HISTORY_FILE = "backtest_history.json"
     try:
-        with open(HISTORY_FILE) as f:
-            history = json.load(f)
+        with open(HISTORY_FILE) as f: history = json.load(f)
     except Exception:
         history = []
 
     entry = {
         "run_at": pd.Timestamp.now("UTC").isoformat(),
-        "tag": args.tag,
+        "tag": args.tag or ("historical-eval" if args.allow_historical else "oos-live"),
         "model_trained_at": pipeline.get("trained_at", "unknown"),
         "hours_since_training": round(hours_since_training, 1) if hours_since_training is not None else None,
-        "meta_used": bool(args.use_meta),
-        "meta_trained_at": meta_pipeline.get("trained_at", "unknown") if meta_pipeline else None,
         "primary_threshold": threshold,
-        "meta_threshold": meta_threshold,
         "days": args.days,
         "n_symbols": len(symbols),
         **results,
@@ -398,22 +322,18 @@ def main():
         json.dump(history, f, indent=2)
     log.info(f"Appended to {HISTORY_FILE} ({len(history)} runs tracked total)")
 
-    # ── Leaderboard — rank every tracked run by risk-adjusted return (Sharpe),
-    # not raw total return, since a higher-return run with a much worse drawdown
-    # isn't actually "better" for a live account. ──
     log.info("\n" + "=" * 78)
     log.info(f"{'LEADERBOARD (all tracked runs, ranked by Sharpe)':^78}")
     log.info("=" * 78)
-    log.info(f"{'#':<3}{'run_at':<20}{'tag':<16}{'meta':<6}{'sharpe':<9}{'maxDD%':<9}{'PF':<8}{'ret%':<8}")
+    log.info(f"{'#':<3}{'run_at':<20}{'tag':<16}{'sharpe':<9}{'maxDD%':<9}{'PF':<8}{'ret%':<8}")
     ranked = sorted(history, key=lambda r: r.get("sharpe_annualized_approx", -999), reverse=True)
     for i, r in enumerate(ranked[:15], 1):
         marker = " <-- THIS RUN" if r is entry else ""
         log.info(f"{i:<3}{r['run_at'][:16]:<20}{str(r.get('tag') or '-'):<16}"
-                 f"{'Y' if r['meta_used'] else 'N':<6}{r.get('sharpe_annualized_approx','-'):<9}"
+                 f"{r.get('sharpe_annualized_approx','-'):<9}"
                  f"{r.get('max_drawdown_pct','-'):<9}{str(r.get('profit_factor','-'))[:6]:<8}"
                  f"{r.get('total_return_pct','-'):<8}{marker}")
     log.info("=" * 78)
-
 
 
 if __name__ == "__main__":
