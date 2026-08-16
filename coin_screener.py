@@ -1,14 +1,3 @@
-"""
-coin_screener.py — Cloud-Resilient Cross-Exchange Screener
-
-Queries Deribit Linear USDC Perpetuals and cross-references against 
-Binance Vision Public Market Data (bypassing US datacenter 451 geoblocks).
-
-"""
-Usage:
-    python coin_screener.py --max-risk-inr 15 --inr-usd 0.0116 --min-binance-24h-vol-usd 2000000
-"""
-
 import argparse
 import requests
 import sys
@@ -89,8 +78,6 @@ def screen(max_risk_inr: float, inr_to_usd: float, min_binance_24h_vol_usd: floa
             continue
 
         min_lot_notional_usd = min_trade_amount * live_price
-        
-        # Sizing check: 1 minimum lot notional should be compatible with ₹15 risk (headroom check)
         risk_compatible = min_lot_notional_usd <= (risk_usd * 20)
 
         results.append({
@@ -104,7 +91,6 @@ def screen(max_risk_inr: float, inr_to_usd: float, min_binance_24h_vol_usd: floa
         })
         seen_symbols.add(binance_symbol)
 
-    # Sort descending by 24h trading volume
     results.sort(key=lambda r: -r["binance_24h_volume_usd"])
     return results
 
@@ -113,7 +99,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-risk-inr", type=float, default=15.0)
     parser.add_argument("--inr-usd", type=float, default=0.0116)
-    parser.add_argument("--min-binance-24h-vol-usd", type=float, default=5_000_000)
+    parser.add_argument("--min-binance-24h-vol-usd", type=float, default=2_000_000)
     args = parser.parse_args()
 
     rows = screen(args.max_risk_inr, args.inr_usd, args.min_binance_24h_vol_usd)
