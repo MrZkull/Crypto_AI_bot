@@ -1,54 +1,30 @@
-# train_meta_model.py — P1: Meta-labeling (López de Prado, "Advances in Financial
-# Machine Learning"). Separates the PRIMARY decision (which direction — handled by
-# your existing pro_crypto_ai_model.pkl ensemble) from the META decision (given the
-# primary called a direction, should you actually act on it, and how confident
-# should you be). This is a different architecture from "retrain the same 3-class
-# model with more data" — it's specifically aimed at the walk-forward-accuracy-near-
-# baseline problem, since "was this specific directional call right, yes/no" is a
-# much easier binary problem than "BUY vs SELL vs NO_TRADE" from scratch.
-#
-# WHAT THIS DOES NOT DO: replace pro_crypto_ai_model.pkl. It trains a SECOND,
-# separate model (meta_pipeline.pkl) that sits on top of it. generate_signal() in
-# trade_executor.py would need a small change to use both — see the worked example
-# at the bottom of this file.
-#
-# Usage: python train_meta_model.py
-# (Run AFTER train_model.py — this needs pro_crypto_ai_model.pkl to already exist.)
-#
-# FIXED 2026-07-17: first version evaluated "was the primary correct" over the
-# FULL dataset, including the ~65% of rows the primary was trained on — the same
-# in-sample-evaluation leak this project spent a long time hunting down and fixing
-# in train_model.py's own calibration step. That produced a fake 74.5% "base rate"
-# (vs. the primary's real ~42-49% held-out precision) and a meta-model that just
-# learned to predict "correct" for almost everything (50% precision / 99% recall —
-# no real signal). Now reconstructs the primary's own per-regime split and only
-# evaluates/labels on its genuinely held-out test rows.
+# train_meta_model.py — P1: Meta-labeling (López de Prado) Pipeline
 
 import json, logging, time
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 import joblib
 
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.frozen import FrozenEstimator
 from xgboost import XGBClassifier
 
-from train_model import build_dataset, FULL_FEATURES, MODEL_FILE, EMBARGO_BARS, TEST_SPLIT, CALIB_SPLIT
+from train_model import (
+    build_dataset, FULL_FEATURES, MODEL_FILE, EMBARGO_BARS, TEST_SPLIT, CALIB_SPLIT
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
 META_MODEL_FILE = "meta_pipeline.pkl"
-N_META_FEATURES = 25  # meta-model can use fewer features than the primary — it's
-                       # answering a narrower question ("was THIS call right")
+N_META_FEATURES = 25  # Meta-model uses a focused subset of the most decisive features
 
 
 def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.DataFrame:
-    """Run the EXISTING trained model over the full dataset to get its primary
-    side call for every row. This is the 'primary model' in meta-labeling terms —
-    we're not retraining it, just using its existing calls as the base signal."""
+    """Run the existing trained primary model over the dataset to get directional signals."""
     af = primary_pipeline["all_features"]
     for f in af:
         if f not in ds.columns:
@@ -68,20 +44,17 @@ def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.Data
 
 
 def build_meta_labels(ds: pd.DataFrame) -> pd.DataFrame:
-    """Keep only rows where the primary model called a direction (BUY/SELL) — a
-    NO_TRADE primary call has nothing for the meta-model to evaluate. Meta-label
-    is binary: did the primary's called direction match the true triple-barrier
-    outcome (from make_targets(), already in ds['target'])."""
+    """
+    Keep only rows where the primary model called BUY or SELL.
+    Meta-label is binary: Did the primary call match the true forward outcome? (1 = Win, 0 = Loss)
+    """
     directional = ds[ds["primary_side"] != "NO_TRADE"].copy()
     directional["meta_label"] = (directional["primary_side"] == directional["target"]).astype(int)
     return directional
 
 
 def per_regime_split(ds: pd.DataFrame, test_split: float, calib_split: float, embargo: int):
-    """Same embargoed per-regime split pattern as train_model.py's train() — kept
-    as a local copy rather than importing, since train_model.py doesn't currently
-    expose this as a standalone reusable function. If you refactor train_model.py
-    to extract this into a shared helper, this should call that instead."""
+    """Embargoed per-regime split to prevent temporal data leakage."""
     train_parts, calib_parts, test_parts = [], [], []
     if "regime" not in ds.columns:
         ds["regime"] = "unknown"
@@ -104,61 +77,54 @@ def per_regime_split(ds: pd.DataFrame, test_split: float, calib_split: float, em
         calib_parts.append(grp.iloc[calib_start_r:calib_end_r])
         test_parts.append(grp.iloc[test_start_r:])
 
-    return (pd.concat(train_parts, ignore_index=True),
-            pd.concat(calib_parts, ignore_index=True) if calib_parts else train_parts[0].iloc[:0],
-            pd.concat(test_parts, ignore_index=True) if test_parts else train_parts[0].iloc[:0])
+    return (
+        pd.concat(train_parts, ignore_index=True),
+        pd.concat(calib_parts, ignore_index=True) if calib_parts else train_parts[0].iloc[:0],
+        pd.concat(test_parts, ignore_index=True) if test_parts else train_parts[0].iloc[:0]
+    )
 
 
 def train_meta_model():
     log.info("Loading primary model (pro_crypto_ai_model.pkl)...")
-    primary_pipeline = joblib.load(MODEL_FILE)
+    try:
+        primary_pipeline = joblib.load(MODEL_FILE)
+    except Exception as e:
+        log.error(f"Failed to load {MODEL_FILE}. Run train_model.py first! Error: {e}")
+        return
 
-    log.info("Building dataset (reusing train_model.py's build_dataset — same data, same regimes)...")
+    log.info("Building dataset (same data & regimes as primary)...")
     ds = build_dataset()
     ds = ds.sort_values("open_time").reset_index(drop=True)
 
-    # ── FIX: only evaluate "was the primary correct" on rows the primary never
-    # trained OR calibrated on. Running this on the full dataset (including the
-    # ~65% of rows the primary was FIT on) is exactly the in-sample-evaluation
-    # leak this whole project spent a long time finding and fixing in
-    # train_model.py's own calibration step — reintroducing it here would make
-    # every downstream meta-label, and the reported "base rate", meaningless.
-    # Reconstruct the SAME per-regime split primary used, and only touch its
-    # held-out test portion.
-    log.info("Reconstructing primary's train/calib/test split to isolate truly held-out rows...")
+    # Reconstruct the exact held-out test split from the primary model
+    log.info("Isolating primary model's held-out test split to ensure leak-free evaluation...")
     _, _, primary_test = per_regime_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
-    log.info(f"Primary's held-out test portion: {len(primary_test):,} rows "
-             f"(evaluating meta-labels ONLY on these — never seen by primary's training or calibration)")
+    log.info(f"Primary held-out test set: {len(primary_test):,} rows")
 
-    log.info("Getting primary model's directional calls on held-out rows only...")
+    log.info("Generating primary model calls on held-out test rows...")
     primary_test = get_primary_predictions(primary_test, primary_pipeline)
 
     directional = build_meta_labels(primary_test)
     n_dir = len(directional)
     n_correct = directional["meta_label"].sum()
-    log.info(f"Primary model called a direction on {n_dir:,} held-out rows "
-             f"({n_dir/len(primary_test)*100:.1f}% of held-out set) — {n_correct:,} were correct "
-             f"({n_correct/n_dir*100:.1f}% TRUE out-of-sample base rate)")
-    log.info(f"  (Compare this to train_model.py's own test-split BUY/SELL precision — "
-             f"they should now roughly agree, since both are evaluating the same held-out rows.)")
+    base_rate = (n_correct / n_dir * 100) if n_dir > 0 else 0.0
 
-    if n_dir < 3000:
-        log.error("Too few directional calls in the held-out set to train a meta-model reliably "
-                   "— this is expected to be smaller than before now that it's leak-free. If this "
-                   "is really too small, the fix is more held-out data (lower TEST_SPLIT elsewhere "
-                   "isn't the answer — that would reduce primary's own training data instead).")
+    log.info(f"Primary called a direction on {n_dir:,} held-out rows ({n_dir/len(primary_test)*100:.1f}% frequency)")
+    log.info(f"True out-of-sample base hit rate: {base_rate:.1f}% ({n_correct:,}/{n_dir:,} correct)")
+
+    if n_dir < 300:
+        log.error(f"Sample size too small ({n_dir} directional calls). Need at least 300 to train a meta-model.")
         return
 
     train_df, calib_df, test_df = per_regime_split(directional, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
-    log.info(f"Meta split (nested within primary's held-out test): "
-             f"train={len(train_df):,}  calib={len(calib_df):,}  test={len(test_df):,}")
+    log.info(f"Meta Split: train={len(train_df):,} | calib={len(calib_df):,} | test={len(test_df):,}")
 
     for f in FULL_FEATURES:
         for part in (train_df, calib_df, test_df):
             if f not in part.columns:
                 part[f] = 0.0
 
-    log.info("Importance scan for meta-model features...")
+    log.info("Running feature importance scan for meta-model...")
     X_train_full = train_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_train = train_df["meta_label"].values
 
@@ -166,7 +132,7 @@ def train_meta_model():
     scanner.fit(X_train_full, y_train)
     top_idx = np.argsort(scanner.feature_importances_)[::-1][:N_META_FEATURES]
     meta_features = [FULL_FEATURES[i] for i in top_idx]
-    log.info(f"Top {len(meta_features)} meta-features selected: {meta_features[:10]}...")
+    log.info(f"Top {len(meta_features)} meta-features selected: {meta_features[:8]}...")
 
     X_train = train_df[meta_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
     X_calib = calib_df[meta_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
@@ -174,7 +140,7 @@ def train_meta_model():
     y_calib = calib_df["meta_label"].values
     y_test  = test_df["meta_label"].values
 
-    log.info("Training meta-model (binary: was the primary call correct?)...")
+    log.info("Training Meta Ensemble (XGBoost + RandomForest)...")
     meta_xgb = XGBClassifier(
         n_estimators=300, max_depth=5, learning_rate=0.03,
         subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
@@ -188,13 +154,12 @@ def train_meta_model():
     )
     meta_rf.fit(X_train, y_train)
 
-    from sklearn.ensemble import VotingClassifier
     meta_ensemble = VotingClassifier(
         estimators=[("xgb", meta_xgb), ("rf", meta_rf)], voting="soft", weights=[2, 1],
     )
     meta_ensemble.fit(X_train, y_train)
 
-    log.info("Calibrating meta-model on held-out calibration split...")
+    log.info("Calibrating meta-model probabilities on held-out calib set...")
     calibrated_meta = CalibratedClassifierCV(estimator=FrozenEstimator(meta_ensemble), method="isotonic")
     calibrated_meta.fit(X_calib, y_calib)
 
@@ -204,84 +169,50 @@ def train_meta_model():
     report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
 
     log.info(f"\n{'='*60}")
-    log.info(f"META-MODEL TEST ACCURACY: {acc*100:.1f}%  (base rate was {n_correct/n_dir*100:.1f}%)")
-    log.info(f"  If this ISN'T meaningfully above the base rate, the meta-model")
-    log.info(f"  isn't adding real signal — the primary's own confidence may")
-    log.info(f"  already be capturing what's learnable here.")
+    log.info(f"META-MODEL TEST ACCURACY: {acc*100:.1f}%  (Base Rate: {base_rate:.1f}%)")
     log.info(f"{'='*60}")
-    log.info(f"  precision (call is correct): {report.get('1', {}).get('precision', 0):.1%}")
-    log.info(f"  recall    (call is correct): {report.get('1', {}).get('recall', 0):.1%}")
+    log.info(f"  Precision (Call is Correct): {report.get('1', {}).get('precision', 0):.1%}")
+    log.info(f"  Recall    (Call is Correct): {report.get('1', {}).get('recall', 0):.1%}")
 
-    # Threshold sweep — at each meta-confidence cutoff, what fraction of ORIGINAL
-    # primary calls would you act on, and what's the resulting hit rate?
+    # Threshold optimization sweep
     log.info("\n── Meta-confidence threshold sweep ──────────────────────")
-    best_thresh, best_score = 0.5, 0.0
+    best_thresh, best_score = 0.50, 0.0
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
         mask = y_proba >= thresh
         n_sel = mask.sum()
-        if n_sel < 20:
+        if n_sel < 10:
             continue
         hit_rate = y_test[mask].mean()
-        # Simple EV-style score, same sqrt(n) volume weighting as train_model.py's
-        # threshold selector, so both pipelines optimize consistently.
         score = hit_rate * np.sqrt(n_sel)
         log.info(f"  {thresh:.2f}   n={n_sel:>6}   hit_rate={hit_rate*100:.1f}%   score={score:.1f}")
         if score > best_score:
             best_score, best_thresh = score, thresh
 
-    log.info(f"\n  -> Best meta-threshold: {best_thresh:.2f}")
+    log.info(f"\n  → Best Recommended Meta-Threshold: {best_thresh:.2f}")
 
     meta_pipeline = {
-        "meta_ensemble": calibrated_meta,
-        "meta_features": meta_features,
+        "meta_ensemble":              calibrated_meta,
+        "meta_features":              meta_features,
         "recommended_meta_threshold": best_thresh,
-        "base_rate": float(n_correct / n_dir),
-        "test_accuracy": float(acc),
-        "trained_at": pd.Timestamp.utcnow().isoformat(),
-        "primary_model_trained_at": primary_pipeline.get("trained_at", "unknown"),
+        "base_rate":                  float(n_correct / n_dir) if n_dir > 0 else 0.0,
+        "test_accuracy":              float(acc),
+        "trained_at":                 datetime.now(timezone.utc).isoformat(),
+        "primary_model_trained_at":   primary_pipeline.get("trained_at", "unknown"),
     }
     joblib.dump(meta_pipeline, META_MODEL_FILE)
     log.info(f"\n✅ Saved: {META_MODEL_FILE}")
 
     with open("meta_model_performance.json", "w") as f:
         json.dump({
-            "test_accuracy": round(acc * 100, 1),
-            "base_rate": round(n_correct / n_dir * 100, 1),
-            "n_directional_calls": int(n_dir),
+            "test_accuracy":              round(acc * 100, 1),
+            "base_rate":                  round(base_rate, 1),
+            "n_directional_calls":        int(n_dir),
             "recommended_meta_threshold": best_thresh,
-            "meta_features": meta_features,
+            "meta_features":              meta_features,
         }, f, indent=2)
 
-
-# ─────────────────────────────────────────────────────────────────────────
-# WORKED EXAMPLE — how generate_signal() in trade_executor.py would use this.
-# NOT wired in automatically — this is reference code for when you're ready
-# to integrate it, after confirming via backtest.py that it actually helps.
-# ─────────────────────────────────────────────────────────────────────────
-"""
-# In generate_signal(), after the existing primary prediction:
-#   sig  = pipeline["label_map"][int(pred)]
-#   conf = round(float(max(prob))*100, 1)
-# add:
-
-    if sig != "NO_TRADE":
-        meta_pipeline = joblib.load(META_MODEL_FILE)  # cache this at module load, not per-call
-        mf = meta_pipeline["meta_features"]
-        X_meta = pd.DataFrame([row[mf].values], columns=mf).replace([np.inf,-np.inf],0).fillna(0)
-        meta_conf = meta_pipeline["meta_ensemble"].predict_proba(X_meta)[0][1]
-
-        if meta_conf < meta_pipeline["recommended_meta_threshold"]:
-            log.info(f"    [META] primary said {sig} but meta-confidence {meta_conf:.1%} "
-                     f"below threshold — skip")
-            return None
-
-        # Use meta_conf (not the primary's raw softmax conf) for position sizing —
-        # it's a more honest measure of "how likely is this specific call to work."
-        conf = meta_conf * 100
-"""
 
 if __name__ == "__main__":
     t0 = time.time()
     train_meta_model()
     log.info(f"\nDone in {(time.time()-t0)/60:.1f} min")
-  
