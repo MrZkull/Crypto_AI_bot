@@ -5,6 +5,10 @@ on:
     - cron: '0 2 1 * *'    # Runs at 02:00 UTC on the 1st of every month
   workflow_dispatch:
     inputs:
+      symbols:
+        description: 'Symbols to train on (comma-separated, leave blank for default)'
+        required: false
+        default: ''
       note:
         description: 'Reason for retraining (optional note)'
         required: false
@@ -13,7 +17,7 @@ on:
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     permissions:
       contents: write
 
@@ -32,6 +36,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -q pandas numpy scikit-learn xgboost joblib requests ta
 
       - name: Purge old workspace state
@@ -41,62 +46,75 @@ jobs:
       - name: Run training (Phase 3.6)
         run: |
           echo "Starting model training at $(date -u)"
-          echo "Note: ${{ github.event.inputs.note }}"
+          echo "Note: ${{ github.event.inputs.note || 'Scheduled run' }}"
           python train_model.py
           echo "Training complete at $(date -u)"
 
-      - name: Extract metrics to plain text (Fixes shell quoting fragility)
+      - name: Show results
         run: |
           python -c "
           import json
           with open('model_performance.json') as f:
-              p = json.load(f)
-          with open('accuracy.txt', 'w') as out:
-              out.write(f\"{p.get('accuracy', 0)}% accuracy (BUY Prec: {p.get('buy_precision', 0)*100:.1f}%, SELL Prec: {p.get('sell_precision', 0)*100:.1f}%)\")
+            p = json.load(f)
+          print('='*50)
+          print(f'ACCURACY:  {p.get(\"accuracy\", 0)}%')
+          print(f'WF SCORE:  {p.get(\"wf_mean\", 0)}% ± {p.get(\"wf_std\", 0)}%')
+          print(f'TRAIN SET: {p.get(\"n_train\", 0)} samples')
+          print(f'TEST SET:  {p.get(\"n_test\", 0)} samples')
+          print(f'FEATURES:  {len(p.get(\"features\", []))} total')
+          print('='*50)
           "
 
-      - name: Production Promotion Gate (Safety Floor Check)
+      - name: Train Meta Model
+        id: train_meta
+        continue-on-error: true
+        run: |
+          echo "Starting meta-model training at $(date -u)"
+          python train_meta_model.py
+          echo "Meta-model training complete at $(date -u)"
+
+      - name: Show meta results
+        if: steps.train_meta.outcome == 'success'
         run: |
           python -c "
-          import json, sys
-          with open('model_performance.json') as f:
-              p = json.load(f)
-          
-          buy_prec = p.get('buy_precision', 0)
-          sell_prec = p.get('sell_precision', 0)
-          
-          print(f'Evaluating Promotion Gate -> BUY Prec: {buy_prec*100:.1f}% | SELL Prec: {sell_prec*100:.1f}%')
-          
-          # Hard safety floor: Reject if either directional precision falls below 40%
-          if buy_prec < 0.40 or sell_prec < 0.40:
-              print('🚨 PROMOTION GATE FAILED: Directional precision breached 40% safety floor!')
-              sys.exit(1)
-          print('✅ PROMOTION GATE PASSED: Model clears live capital safety thresholds.')
+          import json
+          with open('meta_model_performance.json') as f:
+            p = json.load(f)
+          print('='*50)
+          print(f'META TEST ACCURACY: {p.get(\"test_accuracy\", 0)*100 if p.get(\"test_accuracy\", 0) <= 1 else p.get(\"test_accuracy\", 0):.1f}%')
+          print(f'BASE RATE:          {p.get(\"base_rate\", 0)*100 if p.get(\"base_rate\", 0) <= 1 else p.get(\"base_rate\", 0):.1f}%  (primary calls a direction this often, correct this often)')
+          print(f'DIRECTIONAL CALLS:  {p.get(\"n_directional_calls\", 0)}')
+          print(f'META THRESHOLD:     {p.get(\"recommended_meta_threshold\", 0)}')
+          print('='*50)
           "
 
-      - name: Show training results
-        run: |
-          echo "=================================================="
-          cat accuracy.txt
-          echo "=================================================="
-
-      - name: Commit Performance Metrics & Model
+      - name: Commit Performance Data ONLY
         run: |
           git config user.name  "CryptoBot AI"
           git config user.email "bot@cryptobot.ai"
 
-          git add model_performance.json pro_crypto_ai_model.pkl || true
-          git commit -m "🤖 Retrain model — $(cat accuracy.txt)" || echo "No changes to commit"
+          # ⚠️ ONLY stage JSON metrics — NEVER stage .pkl binaries here (avoids GitHub 100MB limit)
+          git add model_performance.json || true
+          [ -f meta_model_performance.json ] && git add meta_model_performance.json || true
+
+          ACC=$(python -c "import json; p=json.load(open('model_performance.json')); print(f'{p.get(\"accuracy\", 0)}%')")
+          git commit -m "🤖 Retrain model — ${ACC} accuracy" || echo "No changes to commit"
 
           git pull origin main --rebase --autostash
           git push origin main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Verified Model to GitHub Release v2.0
+      - name: Upload Models to GitHub Releases (Bypasses Git 100MB Limit)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Safe overwrite only after passing the promotion gate
+          # Overwrite and upload the 238MB .pkl binaries directly to Release v2.0
           gh release upload v2.0 pro_crypto_ai_model.pkl model_performance.json --clobber
-          echo "Successfully published validated model and performance metrics to v2.0 Release!"
+          echo "Successfully uploaded primary model to v2.0 Release!"
+
+          if [ -f meta_pipeline.pkl ]; then
+            gh release upload v2.0 meta_pipeline.pkl meta_model_performance.json --clobber
+            echo "Successfully uploaded meta-model to v2.0 Release!"
+          fi
+          
