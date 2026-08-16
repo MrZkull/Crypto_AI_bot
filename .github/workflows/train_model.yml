@@ -2,7 +2,7 @@ name: Train ML Model
 
 on:
   schedule:
-    - cron: '0 2 1 * *'    # Runs at 02:00 UTC on the 1st of every month
+    - cron: '0 2 1 * *'   # Runs at 02:00 UTC on the 1st of every month
   workflow_dispatch:
     inputs:
       symbols:
@@ -13,11 +13,17 @@ on:
         description: 'Reason for retraining (optional note)'
         required: false
         default: 'Manual retrain'
+      force_promote:
+        description: 'Promote to v2.0 even if the promotion gate would otherwise block it'
+        required: false
+        default: 'false'
+        type: choice
+        options: [ 'false', 'true' ]
 
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 45
     permissions:
       contents: write
 
@@ -36,36 +42,53 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -q pandas numpy scikit-learn xgboost joblib requests ta
 
-      - name: Purge old workspace state
+      - name: Clean stale artifacts from any previous run
         run: |
-          rm -f pro_crypto_ai_model.pkl model_performance.json meta_pipeline.pkl meta_model_performance.json accuracy.txt
+          rm -f pro_crypto_ai_model.pkl meta_pipeline.pkl
+          rm -f model_performance.json meta_model_performance.json accuracy.txt
+          rm -f current_live_performance.json
 
-      - name: Run training (Phase 3.6)
+      - name: Run training
         run: |
           echo "Starting model training at $(date -u)"
-          echo "Note: ${{ github.event.inputs.note || 'Scheduled run' }}"
+          echo "Note: ${{ github.event.inputs.note }}"
           python train_model.py
           echo "Training complete at $(date -u)"
+
+      - name: Verify training actually produced fresh outputs
+        run: |
+          test -f pro_crypto_ai_model.pkl || { echo "::error::pro_crypto_ai_model.pkl was not produced — aborting."; exit 1; }
+          test -f model_performance.json || { echo "::error::model_performance.json was not produced — aborting."; exit 1; }
 
       - name: Show results
         run: |
           python -c "
           import json
           with open('model_performance.json') as f:
-            p = json.load(f)
+              p = json.load(f)
           print('='*50)
           print(f'ACCURACY:  {p.get(\"accuracy\", 0)}%')
-          print(f'WF SCORE:  {p.get(\"wf_mean\", 0)}% ± {p.get(\"wf_std\", 0)}%')
+          print(f'WF SCORE:  {p.get(\"wf_mean\", 0)}% +/- {p.get(\"wf_std\", 0)}%')
           print(f'TRAIN SET: {p.get(\"n_train\", 0)} samples')
           print(f'TEST SET:  {p.get(\"n_test\", 0)} samples')
           print(f'FEATURES:  {len(p.get(\"features\", []))} total')
+          print(f'BUY  precision: {p.get(\"buy_precision\", 0)}')
+          print(f'SELL precision: {p.get(\"sell_precision\", 0)}')
           print('='*50)
           "
 
-      - name: Train Meta Model
+      - name: Write plain-text accuracy note
+        run: |
+          python -c "
+          import json
+          p = json.load(open('model_performance.json'))
+          with open('accuracy.txt', 'w') as f:
+              f.write(f'{p.get(\"accuracy\", 0)}% accuracy')
+          "
+
+      - name: Train Meta Model (research only — not shipped)
         id: train_meta
         continue-on-error: true
         run: |
@@ -73,48 +96,142 @@ jobs:
           python train_meta_model.py
           echo "Meta-model training complete at $(date -u)"
 
+      - name: Verify meta-model outputs are fresh
+        id: meta_check
+        run: |
+          if [ -f meta_model_performance.json ] && [ -f meta_pipeline.pkl ]; then
+            echo "has_meta=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_meta=false" >> "$GITHUB_OUTPUT"
+            echo "No fresh meta-model outputs this run — skipping meta result display."
+          fi
+
       - name: Show meta results
-        if: steps.train_meta.outcome == 'success'
+        if: steps.meta_check.outputs.has_meta == 'true'
         run: |
           python -c "
           import json
-          with open('meta_model_performance.json') as f:
-            p = json.load(f)
+          p = json.load(open('meta_model_performance.json'))
           print('='*50)
-          print(f'META TEST ACCURACY: {p.get(\"test_accuracy\", 0)*100 if p.get(\"test_accuracy\", 0) <= 1 else p.get(\"test_accuracy\", 0):.1f}%')
-          print(f'BASE RATE:          {p.get(\"base_rate\", 0)*100 if p.get(\"base_rate\", 0) <= 1 else p.get(\"base_rate\", 0):.1f}%  (primary calls a direction this often, correct this often)')
+          print(f'META TEST ACCURACY: {p.get(\"test_accuracy\", 0)}%')
+          print(f'BASE RATE:          {p.get(\"base_rate\", 0)}%')
           print(f'DIRECTIONAL CALLS:  {p.get(\"n_directional_calls\", 0)}')
           print(f'META THRESHOLD:     {p.get(\"recommended_meta_threshold\", 0)}')
+          print('(Research metric only — meta-model is not currently shipped to production.)')
           print('='*50)
           "
+
+      - name: Fetch currently-live model performance for comparison
+        id: fetch_live_perf
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -f current_live_performance.json
+          gh release download v2.0 -p "model_performance.json" -O current_live_performance.json 2>/dev/null || true
+          
+          if [ -s current_live_performance.json ]; then
+            echo "found_live=true" >> "$GITHUB_OUTPUT"
+            echo "✓ Found existing live baseline."
+          else
+            rm -f current_live_performance.json
+            echo "found_live=false" >> "$GITHUB_OUTPUT"
+            echo "No existing valid live performance file found — treating this as first release."
+          fi
+
+      - name: Evaluate promotion gate
+        id: gate
+        run: |
+          python - <<'PYEOF'
+          import json, os, sys
+
+          new = json.load(open("model_performance.json"))
+          new_buy  = new.get("buy_precision", 0.0)
+          new_sell = new.get("sell_precision", 0.0)
+
+          gh_out = os.environ["GITHUB_OUTPUT"]
+
+          # Hard Safety Floor: must meet at least 40% precision
+          if new_buy < 0.40 or new_sell < 0.40:
+              print(f"🚨 Candidate precision breached 40% floor: BUY={new_buy:.3f}, SELL={new_sell:.3f}")
+              with open(gh_out, "a") as f:
+                  f.write("promote=false\n")
+              sys.exit(0)
+
+          if not os.path.exists("current_live_performance.json") or os.path.getsize("current_live_performance.json") == 0:
+              print("No live baseline to compare against — allowing promotion (cleared hard floor).")
+              with open(gh_out, "a") as f:
+                  f.write("promote=true\n")
+              sys.exit(0)
+
+          try:
+              live = json.load(open("current_live_performance.json"))
+              live_buy  = live.get("buy_precision", 0.0)
+              live_sell = live.get("sell_precision", 0.0)
+          except Exception as e:
+              print(f"⚠️ Baseline unreadable ({e}) — allowing promotion based on hard floor alone.")
+              with open(gh_out, "a") as f:
+                  f.write("promote=true\n")
+              sys.exit(0)
+
+          TOLERANCE = 0.02  # Allow up to 2 percentage points of noise variance
+          buy_ok  = new_buy  >= (live_buy  - TOLERANCE)
+          sell_ok = new_sell >= (live_sell - TOLERANCE)
+
+          print(f"Live model:  BUY precision={live_buy:.3f}  SELL precision={live_sell:.3f}")
+          print(f"New model:   BUY precision={new_buy:.3f}  SELL precision={new_sell:.3f}")
+          print(f"Tolerance:   {TOLERANCE:.3f}")
+
+          promote = buy_ok and sell_ok
+          print(f"Gate result: {'PASS — promoting' if promote else 'FAIL — blocking promotion'}")
+
+          with open(gh_out, "a") as f:
+              f.write(f"promote={'true' if promote else 'false'}\n")
+          PYEOF
 
       - name: Commit Performance Data ONLY
         run: |
           git config user.name  "CryptoBot AI"
           git config user.email "bot@cryptobot.ai"
 
-          # ⚠️ ONLY stage JSON metrics — NEVER stage .pkl binaries here (avoids GitHub 100MB limit)
           git add model_performance.json || true
           [ -f meta_model_performance.json ] && git add meta_model_performance.json || true
 
-          ACC=$(python -c "import json; p=json.load(open('model_performance.json')); print(f'{p.get(\"accuracy\", 0)}%')")
-          git commit -m "🤖 Retrain model — ${ACC} accuracy" || echo "No changes to commit"
+          ACCURACY_NOTE="$(cat accuracy.txt)"
+          git commit -m "🤖 Retrain model — ${ACCURACY_NOTE}" || echo "No changes to commit"
 
           git pull origin main --rebase --autostash
-          git push origin main
+          git push origin main || { git pull --rebase origin main && git push origin main; }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Models to GitHub Releases (Bypasses Git 100MB Limit)
+      - name: Upload Model to Releases (Bypass LFS)
+        if: steps.gate.outputs.promote == 'true' || github.event.inputs.force_promote == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Overwrite and upload the 238MB .pkl binaries directly to Release v2.0
-          gh release upload v2.0 pro_crypto_ai_model.pkl model_performance.json --clobber
-          echo "Successfully uploaded primary model to v2.0 Release!"
-
-          if [ -f meta_pipeline.pkl ]; then
-            gh release upload v2.0 meta_pipeline.pkl meta_model_performance.json --clobber
-            echo "Successfully uploaded meta-model to v2.0 Release!"
+          if [ "${{ github.event.inputs.force_promote }}" = "true" ] && [ "${{ steps.gate.outputs.promote }}" != "true" ]; then
+            echo "::warning::Promotion gate FAILED but force_promote=true — overriding and shipping anyway."
           fi
+          gh release upload v2.0 pro_crypto_ai_model.pkl --clobber
+          gh release upload v2.0 model_performance.json --clobber
+          echo "Successfully uploaded new model to v2.0 Release!"
+
+      - name: Promotion blocked — explain why
+        if: steps.gate.outputs.promote != 'true' && github.event.inputs.force_promote != 'true'
+        run: |
+          echo "::error::New model did not clear the promotion gate (see 'Evaluate promotion gate' step above for numbers)."
+          echo "The currently-live v2.0 release was left unchanged."
+          echo "Re-run this workflow manually with force_promote=true if you want to ship it anyway."
+          exit 1
+
+      - name: Upload Performance JSON Artifacts (Quota-Safe)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-metrics-${{ github.run_number }}
+          path: |
+            model_performance.json
+            meta_model_performance.json
+          retention-days: 3
+          if-no-files-found: ignore
           
