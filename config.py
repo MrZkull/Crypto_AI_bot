@@ -20,8 +20,8 @@ FEATURES = [
 # ETH unlocked (0.0001 min lot); BTC & BNB preserved for ₹5,000+ capital
 TIER_BIG3 = [
     "ETHUSDT",
-    # "BTCUSDT",  # 🔒 UNCOMMENT WHEN CAPITAL >= ₹5,000 ($58+) (Min Lot: 0.0001 BTC ≈ $6.30)
-    # "BNBUSDT",  # 🔒 UNCOMMENT WHEN CAPITAL >= ₹5,000 (Min Lot: 0.001 BNB)
+    "BTCUSDT",  # 🔒 UNCOMMENT WHEN CAPITAL >= ₹5,000 ($58+) (Min Lot: 0.0001 BTC ≈ $6.30)
+    "BNBUSDT",  # 🔒 UNCOMMENT WHEN CAPITAL >= ₹5,000 (Min Lot: 0.001 BNB)
 ]
 
 # 🏆 Tier 2: Core Proven Testnet Winners (High Win Rate + Granular)
@@ -52,9 +52,9 @@ TIER_MAJORS_ALTS = [
 # ⚠️ Tier 5: Preserved Altcoins (Commented for ₹500, easily enabled later)
 TIER_EXPANSION_RESERVE = [
     # "SOLUSDT",   # 🔒 High intraday whipsaws on 15m; re-test when Capital >= ₹5,000
-    # "ADAUSDT",   # 🔒 Low testnet momentum (25% WR); re-test when Capital >= ₹5,000
+    "ADAUSDT",   # 🔒 Low testnet momentum (25% WR); re-test when Capital >= ₹5,000
     # "TRXUSDT",   # 🔒 Flat volatility / spread friction; re-test when Capital >= ₹5,000
-    # "SUIUSDT",   # 🔒 Preserved for future Deribit listing additions
+    "SUIUSDT",   # 🔒 Preserved for future Deribit listing additions
     # "APTUSDT",   # 🔒 Preserved for future Deribit listing additions
     # "ATOMUSDT",  # 🔒 Preserved for future Deribit listing additions
     # "FETUSDT",   # 🔒 Preserved for future Deribit listing additions
