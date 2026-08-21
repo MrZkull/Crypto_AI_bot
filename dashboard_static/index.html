@@ -1813,6 +1813,31 @@ async function fetchAnalytics() {
   renderDailyPnlChart(d.daily_pnl || []);
 }
 
+// ── 1. Straight Vertical Line Crosshair Plugin ────────────────────────
+const verticalLinePlugin = {
+  id: 'verticalCrosshair',
+  afterDraw: (chart) => {
+    if (chart.tooltip?._active && chart.tooltip._active.length) {
+      const activePoint = chart.tooltip._active[0];
+      const ctx = chart.ctx;
+      const x = activePoint.element.x;
+      const topY = chart.scales.y.top;
+      const bottomY = chart.scales.y.bottom;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(x, topY);
+      ctx.lineTo(x, bottomY);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#10b981'; // Vibrant green tracking line
+      ctx.setLineDash([4, 4]);     // Clean dashed guide line
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+};
+
+// ── 2. Updated Cumulative Equity Chart ───────────────────────────────
 function renderEquityChart(points) {
   const ctx = document.getElementById('equityChart')?.getContext('2d');
   if (!ctx) return;
@@ -1824,52 +1849,61 @@ function renderEquityChart(points) {
     data: {
       labels: allEquityPoints.map(p => p.time),
       datasets: [{
-        label: 'Account Equity (USDT)',
+        label: 'Equity (USDT)',
         data: allEquityPoints.map(p => p.equity),
         borderColor: '#10b981',
         borderWidth: 2,
         backgroundColor: 'rgba(16,185,129,0.08)',
         fill: true,
-        tension: 0.2,
-        pointRadius: 3,
-        pointHoverRadius: 6
+        tension: 0.15,
+        pointRadius: 2,
+        pointHoverRadius: 7,
+        pointHoverBackgroundColor: '#10b981',
+        pointHoverBorderColor: '#fff',
+        pointHoverBorderWidth: 2
       }]
     },
+    plugins: [verticalLinePlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      interaction: {
+        mode: 'index',
+        intersect: false, // 🎯 Allows smooth continuous tracking across the entire chart
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          enabled: true,
+          mode: 'index',
+          intersect: false,
+          backgroundColor: '#0c1018',
+          titleColor: '#94a3b8',
+          bodyColor: '#10b981',
+          borderColor: '#1a2535',
+          borderWidth: 1,
+          padding: 10,
+          displayColors: false,
+          callbacks: {
+            label: (ctx) => ` Equity: $${Number(ctx.raw).toLocaleString('en', {minimumFractionDigits: 2})}`
+          }
+        }
+      },
       scales: {
         x: {
-          grid: { color: 'rgba(255,255,255,0.05)' },
-          ticks: {
-            color: '#94a3b8',
-            font: { family: 'JetBrains Mono', size: 9 },
-            maxTicksLimit: 10,
-            maxRotation: 45,
-            minRotation: 45
-          }
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 10 }
         },
         y: {
-          grid: { color: 'rgba(255,255,255,0.05)' },
+          grid: { color: 'rgba(255,255,255,0.04)' },
           ticks: { color: '#10b981', font: { family: 'JetBrains Mono', size: 10 } }
         }
       }
     }
   });
-
-  setupChartScrubber({
-    sliderId: 'equityRangeSlider',
-    fullPoints: allEquityPoints,
-    getChart: () => equityChartInst,
-    labelKey: 'time',
-    dataKey: 'equity',
-    fromEl: 'equityScrubFrom',
-    toEl: 'equityScrubTo',
-    storeAs: 'equityScrubber'
-  });
 }
 
+// ── 3. Updated Daily Realized PnL Chart ──────────────────────────────
 function renderDailyPnlChart(dailyPoints) {
   const ctx = document.getElementById('dailyPnlChart')?.getContext('2d');
   if (!ctx) return;
@@ -1881,45 +1915,47 @@ function renderDailyPnlChart(dailyPoints) {
     data: {
       labels: allDailyPnlPoints.map(p => p.date),
       datasets: [{
-        label: 'Daily Realized PnL (USDT)',
+        label: 'Realized PnL',
         data: allDailyPnlPoints.map(p => p.pnl),
         backgroundColor: allDailyPnlPoints.map(p => p.pnl >= 0 ? '#10b981' : '#f43f5e'),
         borderRadius: 4
       }]
     },
+    plugins: [verticalLinePlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          enabled: true,
+          mode: 'index',
+          intersect: false,
+          backgroundColor: '#0c1018',
+          borderColor: '#1a2535',
+          borderWidth: 1,
+          padding: 10,
+          displayColors: false,
+          callbacks: {
+            label: (ctx) => ` PnL: ${ctx.raw >= 0 ? '+' : ''}$${Number(ctx.raw).toFixed(2)} USDT`
+          }
+        }
+      },
       scales: {
         x: {
-          grid: { color: 'rgba(255,255,255,0.05)' },
-          ticks: {
-            color: '#94a3b8',
-            font: { family: 'JetBrains Mono', size: 9 },
-            maxTicksLimit: 12,
-            maxRotation: 45,
-            minRotation: 45
-          }
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 12 }
         },
         y: {
-          grid: { color: 'rgba(255,255,255,0.05)' },
+          grid: { color: 'rgba(255,255,255,0.04)' },
           ticks: { color: '#cbd5e1', font: { family: 'JetBrains Mono', size: 10 } }
         }
       }
     }
-  });
-
-  setupChartScrubber({
-    sliderId: 'dailyPnlRangeSlider',
-    fullPoints: allDailyPnlPoints,
-    getChart: () => dailyPnlChartInst,
-    labelKey: 'date',
-    dataKey: 'pnl',
-    fromEl: 'pnlScrubFrom',
-    toEl: 'pnlScrubTo',
-    storeAs: 'pnlScrubber',
-    recolor: true
   });
 }
 
