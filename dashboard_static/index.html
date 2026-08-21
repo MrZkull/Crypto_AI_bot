@@ -1330,17 +1330,44 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
 }
 
 async function closeTrade(symbol) {
-  if (!confirm(`Remove ${symbol} from dashboard?`)) return;
-  const r = await apiFetch('/api/close_trade', {ok:false}, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({symbol})
+  if (!confirm(`🚨 Are you sure you want to COMPLETELY CLOSE ${symbol}?\n\nThis will cancel all SL/TP orders on Deribit and execute a reduce-only market close immediately.`)) {
+    return;
+  }
+
+  // Find the button and show loading state
+  const buttons = document.querySelectorAll('.btn-close-trade');
+  buttons.forEach(b => {
+    if (b.getAttribute('onclick')?.includes(symbol)) {
+      b.disabled = true;
+      b.textContent = '⏳ Closing...';
+    }
   });
-  if (r && (r.status === 'removed' || r.ok)) {
+
+  try {
+    const r = await apiFetch('/api/close_trade', { ok: false }, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol })
+    });
+
+    if (r && (r.ok || r.status === 'closed')) {
+      const pnlSign = (r.pnl || 0) >= 0 ? '+' : '';
+      alert(`✅ ${symbol} Closed Successfully!\nRealized PnL: ${pnlSign}${(r.pnl || 0).toFixed(4)} USDT\nCancelled Orders: ${r.cancelled_orders || 0}`);
+      
+      // Refresh all state immediately
+      await Promise.all([
+        fetchOpenTrades(),
+        fetchStatus(),
+        fetchBalance(),
+        fetchHistory()
+      ]);
+    } else {
+      alert('🚨 Close Failed: ' + (r?.error || r?.message || 'Unknown server error'));
+      fetchOpenTrades();
+    }
+  } catch (err) {
+    alert('🚨 Connection Error: ' + err.message);
     fetchOpenTrades();
-    fetchStatus();
-  } else {
-    alert('Error: ' + (r?.error || 'Unknown error'));
   }
 }
 
