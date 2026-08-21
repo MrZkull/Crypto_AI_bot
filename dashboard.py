@@ -1097,24 +1097,138 @@ def api_kill_switch():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ── Institutional Manual Close Endpoint ────────────────────────────────
+
+def _send_telegram(text: str):
+    tok = os.getenv("TELEGRAM_TOKEN", "").strip()
+    cid = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not tok or not cid:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{tok}/sendMessage",
+            data={"chat_id": cid, "text": text, "parse_mode": "Markdown"},
+            timeout=8
+        )
+    except Exception as e:
+        log.warning(f"Telegram notification failed: {e}")
+
+
 @app.route("/api/close_trade", methods=["POST"])
 def api_close_trade():
-    symbol = (request.get_json() or {}).get("symbol")
+    data = request.get_json() or {}
+    symbol = str(data.get("symbol", "")).strip().upper()
     if not symbol:
-        return jsonify({"error": "symbol required"}), 400
+        return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
     bust("trades.json")
+    bust("trade_history.json")
+    bust("balance.json")
+
     trades = get("trades.json", {})
-    if symbol not in trades:
-        return jsonify({"error": f"{symbol} not found"}), 404
-    trades.pop(symbol)
+    trade = trades.get(symbol, {})
+    entry_price = float(trade.get("entry", 0) or 0)
+    sig = trade.get("signal", "BUY")
+    recorded_qty = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
+
+    client = deribit_client()
+    actual_close_price = entry_price
+    cancelled_orders = 0
+    flattened_size = 0.0
+
+    # 1. Exchange Teardown on Deribit
+    if client:
+        try:
+            # Cancel all active open bracket orders (TP1, TP2, SL)
+            open_orders = client.get_open_orders(symbol)
+            for o in open_orders:
+                oid = str(o.get("order_id", ""))
+                if oid:
+                    try:
+                        client.cancel_order(oid)
+                        cancelled_orders += 1
+                    except Exception:
+                        pass
+
+            # Query real exchange position size
+            real_pos = client.get_position_size(symbol)
+            if abs(real_pos) > 0.0001:
+                close_side = "SELL" if real_pos > 0 else "BUY"
+                close_amount = client.round_amount(symbol, abs(real_pos))
+                if close_amount > 0:
+                    client.place_market_order(symbol, close_side, close_amount, reduce_only=True)
+                    flattened_size = close_amount
+
+            live_p = client.get_live_price(symbol)
+            if live_p > 0:
+                actual_close_price = live_p
+        except Exception as ex_err:
+            log.error(f"Deribit exchange close error for {symbol}: {ex_err}")
+
+    # 2. PnL Calculation
+    calc_qty = flattened_size if flattened_size > 0 else (recorded_qty if recorded_qty > 0 else 1.0)
+    if sig == "BUY":
+        pnl = round((actual_close_price - entry_price) * calc_qty, 4) if entry_price > 0 else 0.0
+    else:
+        pnl = round((entry_price - actual_close_price) * calc_qty, 4) if entry_price > 0 else 0.0
+
+    # 3. Save to Trade History
+    history = get("trade_history.json", [])
+    history_record = {
+        **trade,
+        "symbol": symbol,
+        "signal": sig,
+        "entry": entry_price,
+        "close_price": actual_close_price,
+        "qty": calc_qty,
+        "pnl": pnl,
+        "opened_at": trade.get("opened_at", datetime.now(timezone.utc).isoformat()),
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "close_reason": "Manual Close (Dashboard)",
+        "closed": True
+    }
+    history.append(history_record)
+
+    for p in [Path("trade_history.json"), Path("data/trade_history.json")]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(history, indent=2))
+        except Exception:
+            pass
+    gh_push("trade_history.json", history)
+
+    # 4. Remove from Active Trades
+    trades.pop(symbol, None)
     for p in [Path("trades.json"), Path("data/trades.json")]:
         try:
-            p.parent.mkdir(exist_ok=True)
+            p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(trades, indent=2))
         except Exception:
             pass
+    gh_push("trades.json", trades)
+
+    # 5. Telegram Notification
+    dec = 4 if actual_close_price < 10 else 2
+    pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+    _send_telegram(
+        f"✋ *MANUAL CLOSE (DASHBOARD) — {symbol}*\n"
+        f"Side: `{sig}` | Closed @ `${actual_close_price:.{dec}f}`\n"
+        f"Realized PnL: `{pnl:+.4f} USDT` {pnl_emoji}\n"
+        f"Cancelled {cancelled_orders} bracket order(s) on exchange ✓"
+    )
+
     bust("trades.json")
-    return jsonify({"status": "removed", "symbol": symbol})
+    bust("trade_history.json")
+    bust("balance.json")
+
+    return jsonify({
+        "ok": True,
+        "status": "closed",
+        "symbol": symbol,
+        "close_price": actual_close_price,
+        "pnl": pnl,
+        "cancelled_orders": cancelled_orders
+    })
 
 
 @app.route("/health")
