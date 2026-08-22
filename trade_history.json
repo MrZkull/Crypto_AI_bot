@@ -7643,5 +7643,44 @@
     "closed_at": "2026-08-22T05:36:17.981024+00:00",
     "close_reason": "TP1 hit [order]",
     "partial": true
+  },
+  {
+    "symbol": "HYPEUSDT",
+    "signal": "SELL",
+    "entry": 82.135,
+    "stop": 78.722,
+    "tp1": 78.722,
+    "tp2": 74.821,
+    "qty": 65.42,
+    "qty_tp1": 32.71,
+    "qty_tp2": 32.71,
+    "risk_usd": 646.61,
+    "balance_at_open": 107768.98,
+    "risk_mult": 0.2,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049220203842572",
+      "stop_loss": "USDC-SLMB-32921",
+      "tp1": "USDC-210049220203851223",
+      "tp2": "USDC-210049220203851753"
+    },
+    "opened_at": "2026-08-22T03:29:36.136838+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": true,
+    "confidence": 52.0,
+    "score": 4,
+    "reasons": [
+      "Valid conf (52%)",
+      "Strong ADX 60",
+      "RSI not oversold (84)",
+      "Volume surge 3.6\u00d7"
+    ],
+    "tier": "\ud83d\udc8e Micro-Granular Gems",
+    "exchange": "deribit_testnet",
+    "close_price": 78.194,
+    "pnl": 257.8202,
+    "closed_at": "2026-08-22T09:36:16.721742+00:00",
+    "close_reason": "STOPPED OUT \u274c"
   }
 ]
