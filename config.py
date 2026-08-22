@@ -85,7 +85,7 @@ LIVE_LIMIT        = 300
 SCAN_INTERVAL_MIN = 15
 
 # ── Strategy & Filter Baselines ───────────────────────────────────────
-MIN_CONFIDENCE    = 40.0  # Fallback baseline if model has no threshold
+MIN_CONFIDENCE    = 45.0  # Fallback baseline if model has no threshold
 MIN_ADX           = 15.0  # Minimum trend strength
 MIN_SCORE         = 3     # Minimum score (out of 6)
 
