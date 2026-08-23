@@ -1937,6 +1937,8 @@ async function triggerScan() {
   }
 }
 
+// ── DYNAMIC CONFIGURATION & TIERS SYNC (index.html) ──────────────────
+
 async function fetchConfig() {
   const d = await apiFetch('/api/config', null);
   if (!d || !d.ok) return;
@@ -1947,7 +1949,7 @@ async function fetchConfig() {
   buildCoinChips();
   populateDynamicPicklists();
 
-  const bind = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
+  const bind = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   
   bind('cfg-act-conf', `${d.active_conf}%`);
   bind('cfg-act-score', `${d.active_score} / 6`);
@@ -1968,7 +1970,6 @@ async function fetchConfig() {
   bind('v-maxage', `${d.max_trade_age_hours}h without TP1`);
   bind('cfgTiersHeader', `Active Monitored Asset Tiers (${ALL_COINS.length} Pairs Across ${Object.keys(COIN_TIERS_MAP).length} Tiers)`);
 
-  // Render Tiers configuration breakdown dynamically
   const tierGrid = document.getElementById('cfgTiersDynamicGrid');
   if (tierGrid && Object.keys(COIN_TIERS_MAP).length) {
     tierGrid.innerHTML = Object.entries(COIN_TIERS_MAP).map(([k, t]) => `
