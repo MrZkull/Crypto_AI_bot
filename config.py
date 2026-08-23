@@ -103,8 +103,8 @@ MIN_SCORE         = 3
 
 # ── Risk Management Parameters ────────────────────────────────────────
 RISK_PER_TRADE     = 0.03   # 3.0% of equity
-MAX_OPEN_TRADES    = 5      # Max 2 concurrent positions
-MAX_SAME_DIRECTION = 2      # Max 2 BUY or 2 SELL
+MAX_OPEN_TRADES    = 8      # Max 2 concurrent positions
+MAX_SAME_DIRECTION = 4      # Max 2 BUY or 2 SELL
 ATR_STOP_MULT      = 2.5    # SL = entry ± 2.5 × ATR
 ATR_TARGET1_MULT   = 3.5    # TP1 = entry ± 3.5 × ATR (50% position exit)
 ATR_TARGET2_MULT   = 7.5    # TP2 = entry ± 7.5 × ATR (50% runner exit)
