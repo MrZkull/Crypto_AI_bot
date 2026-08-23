@@ -1,4 +1,4 @@
-# train_meta_model.py — Original Meta-Labeling Logging Pipeline
+# train_meta_model.py — Research Pipeline: Meta-Labeling & Signal Filter Evaluation
 
 import json, logging, time
 from datetime import datetime, timezone
@@ -32,8 +32,8 @@ def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.Data
     X  = ds[af].replace([np.inf, -np.inf], np.nan).fillna(0)
     Xs = primary_pipeline["selector"].transform(X)
 
-    preds  = primary_pipeline["ensemble"].predict(Xs)
-    probas = primary_pipeline["ensemble"].predict_proba(Xs)
+    preds     = primary_pipeline["ensemble"].predict(Xs)
+    probas    = primary_pipeline["ensemble"].predict_proba(Xs)
     label_map = primary_pipeline["label_map"]
 
     ds = ds.copy()
@@ -82,13 +82,13 @@ def train_meta_model():
     log.info("Loading primary model (pro_crypto_ai_model.pkl)...")
     primary_pipeline = joblib.load(MODEL_FILE)
 
-    log.info("Building dataset (reusing train_model.py's build_dataset — same data, same regimes)...")
+    log.info("Building dataset (reusing train_model.py's build_dataset)...")
     ds = build_dataset()
 
     log.info("Reconstructing primary's train/calib/test split to isolate truly held-out rows...")
     _, _, primary_test = per_symbol_regime_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
 
-    log.info(f"Primary's held-out test portion: {len(primary_test):,} rows (evaluating meta-labels ONLY on these — never seen by primary's training or calibration)")
+    log.info(f"Primary's held-out test portion: {len(primary_test):,} rows (evaluating meta-labels ONLY on these)")
     log.info("Getting primary model's directional calls on held-out rows only...")
 
     primary_test = get_primary_predictions(primary_test, primary_pipeline)
@@ -97,11 +97,10 @@ def train_meta_model():
     n_correct = directional["meta_label"].sum()
     base_rate = (n_correct / n_dir * 100) if n_dir > 0 else 0.0
 
-    log.info(f"Primary model called a direction on {n_dir:,} held-out rows ({n_dir/len(primary_test)*100:.1f}% of held-out set) — {n_correct:,} were correct ({base_rate:.1f}% TRUE out-of-sample base rate)")
-    log.info("  (Compare this to train_model.py's own test-split BUY/SELL precision — they should now roughly agree, since both are evaluating the same held-out rows.)")
+    log.info(f"Primary model called a direction on {n_dir:,} held-out rows ({n_dir/len(primary_test)*100:.1f}% of set) — {n_correct:,} correct ({base_rate:.1f}% TRUE OOS base rate)")
 
     train_df, calib_df, test_df = per_symbol_regime_split(directional, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
-    log.info(f"Meta split (nested within primary's held-out test): train={len(train_df):,}  calib={len(calib_df):,}  test={len(test_df):,}")
+    log.info(f"Meta split: train={len(train_df):,}  calib={len(calib_df):,}  test={len(test_df):,}")
 
     for f in FULL_FEATURES:
         for part in (train_df, calib_df, test_df):
@@ -125,7 +124,7 @@ def train_meta_model():
     y_calib = calib_df["meta_label"].values
     y_test  = test_df["meta_label"].values
 
-    log.info("Training meta-model (binary: was the primary call correct?)...")
+    log.info("Training meta-model ensemble...")
     meta_xgb = XGBClassifier(
         n_estimators=300, max_depth=5, learning_rate=0.03,
         subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
@@ -155,9 +154,6 @@ def train_meta_model():
     y_test_pred = calibrated_meta.predict(X_test)
     meta_acc = accuracy_score(y_test, y_test_pred)
     log.info(f"META-MODEL TEST ACCURACY: {meta_acc*100:.1f}%  (base rate was {base_rate:.1f}%)")
-    log.info("  If this ISN'T meaningfully above the base rate, the meta-model")
-    log.info("  isn't adding real signal — the primary's own confidence may")
-    log.info("  already be capturing what's learnable here.")
     log.info(f"{'='*60}")
 
     m_rep = classification_report(y_test, y_test_pred, output_dict=True, zero_division=0)
