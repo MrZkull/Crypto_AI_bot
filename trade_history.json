@@ -7843,5 +7843,46 @@
     "closed_at": "2026-08-23T11:31:49.602546+00:00",
     "close_reason": "TP1 hit [order]",
     "partial": true
+  },
+  {
+    "symbol": "UNIUSDT",
+    "signal": "BUY",
+    "entry": 4.1704,
+    "stop": 4.2877,
+    "tp1": 4.2877,
+    "tp2": 4.4219,
+    "qty": 1290.79,
+    "qty_tp1": 645.39,
+    "qty_tp2": 645.4,
+    "risk_usd": 1318.23,
+    "balance_at_open": 107698.83,
+    "risk_mult": 0.40800000000000003,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049220709912641",
+      "stop_loss": "USDC-SLMS-33523",
+      "tp1": "USDC-210049220709918169",
+      "tp2": "USDC-210049220709918456"
+    },
+    "opened_at": "2026-08-23T09:47:42.195317+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": true,
+    "confidence": 42.5,
+    "score": 6,
+    "reasons": [
+      "Valid conf (42%)",
+      "Strong ADX 33",
+      "RSI not overbought (56)",
+      "1h confirms",
+      "4h trend aligns (RSI 63)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfc6 Proven Winners",
+    "exchange": "deribit_testnet",
+    "close_price": 4.36415,
+    "pnl": 250.0906,
+    "closed_at": "2026-08-23T12:56:56.340301+00:00",
+    "close_reason": "STOPPED OUT \u274c"
   }
 ]
