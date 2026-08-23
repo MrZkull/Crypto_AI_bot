@@ -1,4 +1,4 @@
-# deribit_client.py — V12.2: Full Institutional Execution Engine & Precision Safeguards
+# deribit_client.py — V12.4: Full Institutional Execution Engine & Precision Safeguards
 
 import math
 import time
@@ -11,74 +11,94 @@ TESTNET_BASE = "https://test.deribit.com/api/v2"
 PROD_BASE    = "https://www.deribit.com/api/v2"
 
 # ── Execution Protection Constants ──
-DEFAULT_LEVERAGE         = 2       # 2x leverage — preserves 1-3% risk, frees margin
-MAX_SLIPPAGE_PCT         = 0.002   # 0.2% max acceptable slippage on entry
-WIDE_SPREAD_WARN_PCT     = 0.003   # warn if spread > 0.3%
-MAX_TRADEABLE_SPREAD_PCT = 0.05    # hard abort if spread > 5% on entry
+DEFAULT_LEVERAGE         = 2       # 2x leverage — capital-safe margin
+MAX_SLIPPAGE_PCT         = 0.002   # 0.2% max acceptable entry slippage
+WIDE_SPREAD_WARN_PCT     = 0.003   # Warn if spread > 0.3%
+MAX_TRADEABLE_SPREAD_PCT = 0.05    # Hard abort entry if spread > 5%
 
-# ── FULL SYMBOL MAP (Updated with 18 Aug 2026 Deribit Linear USDC Specs & Reserves) ──
+# ── FULL SYMBOL MAP (Categorized & Verified Linear USDC Specs) ─────────
 SYMBOL_MAP = {
-    # ── Core Proven Testnet Winners ──
-    "XRPUSDT":  {"instrument": "XRP_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
-    "ALGOUSDT": {"instrument": "ALGO_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
-    "NEARUSDT": {"instrument": "NEAR_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 0.1,    "max_amount": 100000,   "tick_size": 0.0001},
-    "DOTUSDT":  {"instrument": "DOT_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    "LTCUSDT":  {"instrument": "LTC_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.01,   "max_amount": 1000,     "tick_size": 0.01},
-    "UNIUSDT":  {"instrument": "UNI_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
+    # ── 👑 Tier 1: Majors ──
+    "ETHUSDT":   {"instrument": "ETH_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.0001, "max_amount": 5000,     "tick_size": 0.05},
+    "BNBUSDT":   {"instrument": "BNB_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.001,  "max_amount": 1000,     "tick_size": 0.05},
+    "SOLUSDT":   {"instrument": "SOL_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.001,  "max_amount": 50000,    "tick_size": 0.01},
+    # "BTCUSDT":   {"instrument": "BTC_USDC-PERPETUAL",   "currency": "USDC",
+    #               "min_amount": 0.0001, "max_amount": 100,      "tick_size": 0.5},
 
-    # ── Micro-Granular Gems ──
-    "ENAUSDT":  {"instrument": "ENA_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
-    "AAVEUSDT": {"instrument": "AAVE_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 0.01,   "max_amount": 1000,     "tick_size": 0.01},
-    "HYPEUSDT": {"instrument": "HYPE_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
-    "DOGEUSDT": {"instrument": "DOGE_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 1000000,  "tick_size": 0.00001},
+    # ── 🏆 Tier 2: Proven Winners ──
+    "XRPUSDT":   {"instrument": "XRP_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
+    "NEARUSDT":  {"instrument": "NEAR_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 0.1,    "max_amount": 100000,   "tick_size": 0.0001},
+    "LTCUSDT":   {"instrument": "LTC_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.01,   "max_amount": 1000,     "tick_size": 0.01},
+    "UNIUSDT":   {"instrument": "UNI_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
+    "BCHUSDT":   {"instrument": "BCH_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
+    "DOTUSDT":   {"instrument": "DOT_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    "ALGOUSDT":  {"instrument": "ALGO_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
 
-    # ── Institutional Alts & Majors ──
-    "LINKUSDT": {"instrument": "LINK_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
-    "AVAXUSDT": {"instrument": "AVAX_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 0.001,  "max_amount": 10000,    "tick_size": 0.001},
-    "BCHUSDT":  {"instrument": "BCH_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
-    "ETHUSDT":  {"instrument": "ETH_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.0001, "max_amount": 5000,     "tick_size": 0.05},
+    # ── 💎 Tier 3: Micro-Granular Gems ──
+    "ENAUSDT":   {"instrument": "ENA_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
+    "DOGEUSDT":  {"instrument": "DOGE_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 1000000,  "tick_size": 0.00001},
+    "TRUMPUSDT": {"instrument": "TRUMP_USDC-PERPETUAL", "currency": "USDC",
+                  "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
+    "PUMPUSDT":  {"instrument": "PUMP_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 5000000,  "tick_size": 0.00001},
+    "AAVEUSDT":  {"instrument": "AAVE_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 0.01,   "max_amount": 1000,     "tick_size": 0.01},
+    # "HYPEUSDT":  {"instrument": "HYPE_USDC-PERPETUAL",  "currency": "USDC",
+    #               "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
 
-    # ── Preserved for Scaling (Capital >= ₹5,000 / $58+) ──
-    "BTCUSDT":  {"instrument": "BTC_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.0001, "max_amount": 100,      "tick_size": 0.5},
-    "BNBUSDT":  {"instrument": "BNB_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.001,  "max_amount": 1000,     "tick_size": 0.05},
-    "SOLUSDT":  {"instrument": "SOL_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.001,  "max_amount": 50000,    "tick_size": 0.01},
-    "ADAUSDT":  {"instrument": "ADA_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
-    "TRXUSDT":  {"instrument": "TRX_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
-    "PAXGUSDT": {"instrument": "PAXG_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 0.0001, "max_amount": 100,      "tick_size": 0.01},
-    "TRUMPUSDT":{"instrument": "TRUMP_USDC-PERPETUAL","currency": "USDC",
-                 "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
+    # ── 🏛 Tier 4: Deep Liquidity Altcoins ──
+    "LINKUSDT":  {"instrument": "LINK_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
+    "SUIUSDT":   {"instrument": "SUI_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.1,    "max_amount": 100000,   "tick_size": 0.0001},
+    "AVAXUSDT":  {"instrument": "AVAX_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 0.001,  "max_amount": 10000,    "tick_size": 0.001},
+    "ADAUSDT":   {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
+    "TRXUSDT":   {"instrument": "TRX_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
+    # "APTUSDT":   {"instrument": "APT_USDC-PERPETUAL",   "currency": "USDC",
+    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    # "ATOMUSDT":  {"instrument": "ATOM_USDC-PERPETUAL",  "currency": "USDC",
+    #               "min_amount": 1.0,    "max_amount": 2100,     "tick_size": 0.001},
+    # "FETUSDT":   {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
+    #               "min_amount": 1.0,    "max_amount": 100000,   "tick_size": 0.0001},
 
-    # ── Future Deribit Expansion Candidates (Mapped for Safety) ──
-    "SUIUSDT":  {"instrument": "SUI_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 100000,   "tick_size": 0.0001},
-    "APTUSDT":  {"instrument": "APT_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    "ATOMUSDT": {"instrument": "ATOM_USDC-PERPETUAL", "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 2100,     "tick_size": 0.001},
-    "FETUSDT":  {"instrument": "FET_USDC-PERPETUAL",  "currency": "USDC",
-                 "min_amount": 1.0,    "max_amount": 100000,   "tick_size": 0.0001},
-    "RENDERUSDT":{"instrument": "RNDR_USDC-PERPETUAL","currency": "USDC",
-                 "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    # ── 🧪 Tier 5: Testnet Incubation Lab ──
+    "ZECUSDT":   {"instrument": "ZEC_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
+    "TAOUSDT":   {"instrument": "TAO_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
+    "XLMUSDT":   {"instrument": "XLM_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
+    "HBARUSDT":  {"instrument": "HBAR_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
+    "PENDLEUSDT":{"instrument": "PENDLE_USDC-PERPETUAL","currency": "USDC",
+                  "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    "WIFUSDT":   {"instrument": "WIF_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    "CRVUSDT":   {"instrument": "CRV_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 100000,   "tick_size": 0.0001},
+    "RENDERUSDT":{"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+                  "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    # "PAXGUSDT":  {"instrument": "PAXG_USDC-PERPETUAL",  "currency": "USDC",
+    #               "min_amount": 0.0001, "max_amount": 100,      "tick_size": 0.01},
+    # "FILUSDT":   {"instrument": "FIL_USDC-PERPETUAL",   "currency": "USDC",
+    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    # "JUPUSDT":   {"instrument": "JUP_USDC-PERPETUAL",   "currency": "USDC",
+    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
 }
 
 TRADEABLE_SYMBOLS: list = []
@@ -118,7 +138,7 @@ class DeribitClient:
                     f"{self.base}/public/auth",
                     params={
                         "grant_type":    "client_credentials",
-                        "client_id":     self.client_id,
+                        "client_id":      self.client_id,
                         "client_secret": self.client_secret,
                     },
                     timeout=15
@@ -232,29 +252,20 @@ class DeribitClient:
         )
 
     def round_price(self, symbol: str, price: float) -> float:
-        """Round price to exchange tick size cleanly without scientific notation bugs."""
         if price <= 0:
             return 0.0
-
         tick = self.get_tick_size(symbol)
-
         if tick <= 0 or tick > price / 2:
             tick = float(SYMBOL_MAP.get(symbol, {}).get("tick_size", 0.0001))
-            log.debug(f"  round_price: API tick invalid for {symbol}@{price:.6f} — using SYMBOL_MAP tick={tick}")
-
         if tick <= 0:
             tick = 0.0001
-
         decimals = _calc_decimals(tick)
         steps    = round(price / tick)
         rounded  = round(steps * tick, decimals)
-
         if rounded <= 0 and price > 0:
             rounded = round(max(price, tick), decimals)
             if rounded <= 0:
                 rounded = tick
-            log.warning(f"  round_price({symbol}, {price:.6f}) evaluated to 0.0 — clamped to {rounded}")
-
         return rounded
 
     def round_amount(self, symbol: str, raw: float) -> float:
@@ -266,10 +277,6 @@ class DeribitClient:
         return round(result, decimals) if decimals else int(round(result))
 
     def split_amount(self, symbol: str, total: float) -> tuple:
-        """
-        Calculates 50/50 dual-target exits.
-        Dynamically falls back to 100% Single-Exit at TP1 if 50% split < min_amount.
-        """
         if total <= 0:
             return 0.0, 0.0
         step = self.get_min_trade_amount(symbol)
@@ -363,7 +370,7 @@ class DeribitClient:
 
         max_amt  = self.get_max_trade_amount(symbol)
         if raw > max_amt:
-            log.info(f"  ⚡ Position capped at exchange ceiling: {max_amt} {symbol} (raw={raw:.0f}, max={max_amt})")
+            log.info(f"  ⚡ Position capped at exchange ceiling: {max_amt} {symbol}")
             raw = max_amt
 
         result   = self.round_amount(symbol, max(raw, min_amt))
@@ -376,10 +383,6 @@ class DeribitClient:
     @staticmethod
     def _is_position_size_limit_error(e) -> bool:
         return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
-
-    @staticmethod
-    def _is_reduce_only_rejection(e) -> bool:
-        return "11030" in str(e) or "invalid_reduce_only_order" in str(e)
 
     def place_market_order(self, symbol: str, side: str, amount: float, reduce_only: bool = False) -> dict:
         instrument = self.get_instrument_name(symbol)
@@ -459,7 +462,6 @@ class DeribitClient:
                         break
                     log.warning(f"  ⚠️ {symbol}: position-size limit (Code:10057) on market fallback — retrying at {cur_amount}")
                     continue
-
                 log.error(f"  Market order failed permanently for {symbol}: {e}")
                 return {}
 
@@ -533,10 +535,6 @@ class DeribitClient:
 
     def place_limit_order(self, symbol: str, side: str, amount: float, price: float,
                           stop_price: float = None, use_reduce_only: bool = False) -> dict:
-        """
-        Place a limit or stop-limit order.
-        Stop-Loss uses type='stop_limit' with trigger='mark_price' for reliable triggers.
-        """
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_price = self.round_price(symbol, price)
@@ -624,6 +622,10 @@ class DeribitClient:
         try:
             return self._post("/private/cancel", {"order_id": str(order_id)})
         except Exception as e:
+            err_msg = str(e).lower()
+            # Deribit Code 11044: not_open_order (order already filled or cancelled — safe to ignore)
+            if "11044" in err_msg or "not_open_order" in err_msg:
+                return {"result": "already_closed"}
             log.warning(f"  cancel {order_id}: {e}")
             return {}
 
