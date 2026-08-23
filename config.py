@@ -1,4 +1,4 @@
-# config.py — V12.4: Multi-Tier Architecture (Active + Tier-Categorized Reserves)
+# config.py — V12.6: Micro-Capital Universe with TRUMP & PUMP Integration
 
 # ── File Paths ────────────────────────────────────────────────────────
 RAW_DATA_FILE = "data/crypto_historical_15m_expanded.csv"
@@ -16,7 +16,7 @@ FEATURES = [
 
 # ── Coin Tiers & Allocations ──────────────────────────────────────────
 
-# 👑 Tier 1: Majors & Benchmarks (Min Lot < $1.00; BTC preserved for Capital >= $100)
+# 👑 Tier 1: Majors (Min Lot < $1.00; BTC preserved for Capital >= $100)
 TIER_BIG3 = [
     "ETHUSDT",   # Deribit Min Lot: 0.0001 ETH ≈ $0.25 (Vol: $773M)
     "BNBUSDT",   # Deribit Min Lot: 0.001 BNB  ≈ $0.70 (Vol: $121M)
@@ -24,7 +24,7 @@ TIER_BIG3 = [
     # "BTCUSDT", # 🔒 Min Lot: 0.0001 BTC ≈ $7.75 (Enable when Capital >= $100 / ₹8,500)
 ]
 
-# 🏆 Tier 2: Core Proven Winners (High Win Rate + Clean Execution)
+# 🏆 Tier 2: Core Proven Winners
 TIER_PROVEN = [
     "XRPUSDT",   # Deribit Min Lot: 1.0 XRP   ≈ $1.52 (Vol: $397M)
     "NEARUSDT",  # Deribit Min Lot: 0.1 NEAR  ≈ $0.20 (Vol: $48M)
@@ -35,52 +35,52 @@ TIER_PROVEN = [
     "ALGOUSDT",  # Deribit Min Lot: 1.0 ALGO  ≈ $0.09 (Vol: $2.3M)
 ]
 
-# 💎 Tier 3: Micro-Granular Gems (Sub-Dime Min Lots on Deribit | Perfect Dual TP)
+# 💎 Tier 3: Micro-Granular Gems (<$0.20 Min Lots | Perfect Dual TP)
 TIER_MICRO_GEMS = [
     "ENAUSDT",   # Deribit Min Lot: 1.0 ENA     ≈ $0.17 (Vol: $98M)
     "DOGEUSDT",  # Deribit Min Lot: 1.0 DOGE    ≈ $0.09 (Vol: $114M)
     "TRUMPUSDT", # Deribit Min Lot: 0.01 TRUMP  ≈ $0.03 (Vol: $124M)
     "PUMPUSDT",  # Deribit Min Lot: 1.0 PUMP    ≈ $0.01 (Vol: $92M)
     "AAVEUSDT",  # Deribit Min Lot: 0.01 AAVE   ≈ $1.41 (Vol: $39M)
-    # "HYPEUSDT", # 🔒 Preserved for re-evaluation once Binance spot candle feed is live
+    # "HYPEUSDT", # 🔒 Quarantined
 ]
 
-# 🏛 Tier 4: Deep Liquidity Altcoins (Vol > $20M)
+# 🏛 Tier 4: Deep Liquidity Altcoins
 TIER_MAJORS_ALTS = [
     "LINKUSDT",  # Deribit Min Lot: 0.01 LINK   ≈ $0.12 (Vol: $55M)
     "SUIUSDT",   # Deribit Min Lot: 0.1 SUI     ≈ $0.08 (Vol: $69M)
     "AVAXUSDT",  # Deribit Min Lot: 0.001 AVAX  ≈ $0.01 (Vol: $20M)
     "ADAUSDT",   # Deribit Min Lot: 1.0 ADA     ≈ $0.23 (Vol: $38M)
     "TRXUSDT",   # Deribit Min Lot: 1.0 TRX     ≈ $0.34 (Vol: $26M)
-    # "APTUSDT",  # 🔒 Low Historical Precision (33% WR)
-    # "ATOMUSDT", # 🔒 Low Trend Strength (<15 ADX)
-    # "FETUSDT",  # 🔒 High Spread / Chop Friction
+    "XLMUSDT",   # Deribit Min Lot: 1.0 XLM     ≈ $0.20 (Vol: $27M)
+    # "APTUSDT",  # 🔒 Low Precision
+    # "ATOMUSDT", # 🔒 Low Trend Strength
+    # "FETUSDT",  # 🔒 High Spread Friction
 ]
 
-# 🧪 Tier 5: Testnet Incubation Lab (New High-Potential Additions)
-TIER_TEST_LAB = [
-    "ZECUSDT",    # High Volume Privacy/L1 ($263M | Min Lot $0.85)
-    "TAOUSDT",    # AI Momentum Benchmark ($22M | Min Lot $0.23)
-    "XLMUSDT",    # Payment Sector Sync ($27M | Min Lot $0.20)
-    "HBARUSDT",   # Enterprise L1 Micro Lot ($11M | Min Lot $0.08)
-    "PENDLEUSDT", # High-Beta DeFi Swings ($6M | Min Lot $0.20)
-    "WIFUSDT",    # Solana Meme High Volatility ($3.3M | Min Lot $0.02)
-    "CRVUSDT",    # DeFi Mean-Reversion ($7M | Min Lot $0.34)
-    "RENDERUSDT", # DePIN / GPU Narrative ($4.2M | Min Lot $0.15)
-    # "PAXGUSDT", # 🔒 Min Lot: 0.0001 PAXG ≈ $0.46 (Gold Peg / Low Volatility)
-    # "FILUSDT",  # 🔒 Deribit Min Lot: 0.1 FIL ≈ $0.08 (Vol: $5.9M)
-    # "JUPUSDT",  # 🔒 Deribit Min Lot: 0.1 JUP ≈ $0.02 (Vol: $2.1M)
+# 🧪 Tier 5: New Verified Multi-Regime Additions
+TIER_NEW_VERIFIED = [
+    "ZECUSDT",   # Deribit Min Lot: 0.001 ZEC  ≈ $0.85 (Vol: $264M)
+    "HBARUSDT",  # Deribit Min Lot: 1.0 HBAR   ≈ $0.08 (Vol: $11.6M)
+    "CRVUSDT",   # Deribit Min Lot: 1.0 CRV    ≈ $0.34 (Vol: $7.0M)
+    "FILUSDT",   # Deribit Min Lot: 0.1 FIL    ≈ $0.08 (Vol: $6.0M)
+    # "TAOUSDT",    # 🔒 Partial Bear Coverage
+    # "PENDLEUSDT", # 🔒 Partial Bear Coverage
+    # "RENDERUSDT", # 🔒 Thin Deribit Depth
+    # "WIFUSDT",    # 🔒 High Volatility / Low Depth
+    # "JUPUSDT",    # 🔒 Low Liquidity
+    # "PAXGUSDT",   # 🔒 Gold Peg
 ]
 
-# Active Universe (28 Total Pairs for Testnet Screening)
-SYMBOLS = TIER_BIG3 + TIER_PROVEN + TIER_MICRO_GEMS + TIER_MAJORS_ALTS + TIER_TEST_LAB
+# Active Universe (24 Pairs with High Liquidity + Sizing Fit)
+SYMBOLS = TIER_BIG3 + TIER_PROVEN + TIER_MICRO_GEMS + TIER_MAJORS_ALTS + TIER_NEW_VERIFIED
 
 COIN_TIERS = {
-    "big3":       {"label": "👑 Majors",               "coins": TIER_BIG3},
-    "proven":     {"label": "🏆 Proven Winners",       "coins": TIER_PROVEN},
-    "micro_gems": {"label": "💎 Micro-Granular Gems",   "coins": TIER_MICRO_GEMS},
-    "majors_alt": {"label": "🏛 Deep Liquidity Alts",   "coins": TIER_MAJORS_ALTS},
-    "test_lab":   {"label": "🧪 Testnet Lab",          "coins": TIER_TEST_LAB},
+    "big3":         {"label": "👑 Majors",                 "coins": TIER_BIG3},
+    "proven":       {"label": "🏆 Proven Winners",         "coins": TIER_PROVEN},
+    "micro_gems":   {"label": "💎 Micro-Granular Gems",     "coins": TIER_MICRO_GEMS},
+    "majors_alt":   {"label": "🏛 Deep Liquidity Alts",     "coins": TIER_MAJORS_ALTS},
+    "new_verified": {"label": "🧪 Verified Regime Additions","coins": TIER_NEW_VERIFIED},
 }
 
 def get_tier(symbol: str) -> str:
@@ -103,7 +103,7 @@ MIN_SCORE         = 3
 
 # ── Risk Management Parameters ────────────────────────────────────────
 RISK_PER_TRADE     = 0.03   # 3.0% of equity
-MAX_OPEN_TRADES    = 2      # Max 2 concurrent positions
+MAX_OPEN_TRADES    = 5      # Max 2 concurrent positions
 MAX_SAME_DIRECTION = 2      # Max 2 BUY or 2 SELL
 ATR_STOP_MULT      = 2.5    # SL = entry ± 2.5 × ATR
 ATR_TARGET1_MULT   = 3.5    # TP1 = entry ± 3.5 × ATR (50% position exit)
