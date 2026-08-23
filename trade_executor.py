@@ -1,4 +1,4 @@
-# trade_executor.py — V3.5: Institutional Execution Engine with Rolling Circuit Breaker & 4H Trend Alignment
+# trade_executor.py — V3.6: Dynamic Config Integration with Rolling Circuit Breaker & 4H Trend Alignment
 
 import os, json, time, logging, requests, joblib, base64, math
 import pandas as pd, numpy as np
@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+import config
 from config import (
     SYMBOLS, ATR_STOP_MULT, ATR_TARGET1_MULT, ATR_TARGET2_MULT,
     RISK_PER_TRADE, MODEL_FILE, LOG_FILE, get_tier,
@@ -26,7 +27,6 @@ SIGNALS_FILE       = "signals.json"
 BALANCE_FILE       = "balance.json"
 LOCK_FILE          = "scan_lock.json"
 STALE_LOCK_MINUTES = 20
-MAX_OPEN_TRADES    = 2
 
 # --- PRO & PROBATION CONSTANTS ---
 COOLDOWN_FILE        = "cooldown.json"
@@ -216,7 +216,7 @@ def _check_rolling_performance(symbol: str) -> bool:
         return True
     return False
 
-def get_required_confidence(symbol: str, current_baseline_conf: float = 40.0) -> float:
+def get_required_confidence(symbol: str, current_baseline_conf: float = 55.0) -> float:
     rel = load_reliability()
     if symbol not in rel:
         return current_baseline_conf
@@ -247,14 +247,14 @@ def get_required_confidence(symbol: str, current_baseline_conf: float = 40.0) ->
         probation_required_conf = current_baseline_conf + PROBATION_CONFIDENCE_OFFSET
         log.info(
             f"  🔒 {symbol} ON PROBATION: Requiring {probation_required_conf:.1f}% Conf "
-            f"(Base: {current_baseline_conf}% + {PROBATION_CONFIDENCE_OFFSET}% | "
+            f"(Base: {current_baseline_conf:.1f}% + {PROBATION_CONFIDENCE_OFFSET}% | "
             f"Wins: {p_wins}/{PROBATION_WIN_GOAL} | Probation Losses: {p_losses}/{PROBATION_CONSECUTIVE_LOSS_RESET})"
         )
         return probation_required_conf
 
     return current_baseline_conf
 
-def _is_unreliable(symbol: str, signal_conf: float = 0.0, current_baseline_conf: float = 40.0) -> bool:
+def _is_unreliable(symbol: str, signal_conf: float = 0.0, current_baseline_conf: float = 55.0) -> bool:
     rel = load_reliability()
     if symbol not in rel:
         return False
@@ -563,7 +563,7 @@ def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame) -> pd
     return df.sort_values("open_time").reset_index(drop=True)
 
 
-# ════════════ SIGNAL GENERATION (SYMMETRICAL 4H PROTECTED) ════════════
+# ════════════ SIGNAL GENERATION (STRICT CONFIG SYNC) ══════════════════
 
 def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None, btc_df15_live=None):
     try:
@@ -611,13 +611,17 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         sig  = pipeline["label_map"][int(pred)]
         conf = round(float(max(prob))*100, 1)
 
-        # ── Authoritative Model EV Threshold ──
-        rec_buy  = pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.35))
-        rec_sell = pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.40))
-        model_ev_target = (rec_buy * 100.0) if sig == "BUY" else (rec_sell * 100.0)
+        # ── Strict Config Baseline Resolution ──
+        cfg_min_conf = float(getattr(config, "MIN_CONFIDENCE", 45.0))
+        rec_buy  = float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.40))) * 100.0
+        rec_sell = float(pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.45))) * 100.0
+        model_ev_target = rec_buy if sig == "BUY" else rec_sell
 
-        # Apply Probation offset if coin is benched (consecutive or rolling filter)
-        min_required_conf = get_required_confidence(symbol, model_ev_target)
+        # Enforces config.MIN_CONFIDENCE as the minimum floor
+        effective_base_conf = max(cfg_min_conf, model_ev_target)
+
+        # Apply Probation offset if coin is benched
+        min_required_conf = get_required_confidence(symbol, effective_base_conf)
 
         log.info(f"    ML: {sig} {conf:.1f}% (need ≥{min_required_conf:.1f}%)")
         if sig == "NO_TRADE" or conf < min_required_conf: return None
@@ -631,7 +635,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                 return None
 
         adx = float(row.get("adx", 0))
-        min_adx_req = thresholds.get("min_adx", 15.0)
+        min_adx_req = thresholds.get("min_adx", getattr(config, "MIN_ADX", 15.0))
         log.info(f"    [{symbol}] ML={sig} {conf:.1f}% ADX={adx:.1f} — evaluating filters")
         log.info(f"    ADX: {adx:.1f} (need ≥{min_adx_req})")
         if adx < min_adx_req: return None
@@ -651,7 +655,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                 return None
             
             if sig == "SELL" and e20_4h > e50_4h:
-                if rsi_4h < 75:  # Hard block SELL in a 4H uptrend unless extreme overbought
+                if rsi_4h < 75:
                     log.info(f"    [FILTER:4H_BIAS] 4h bullish (EMA20 > EMA50 | RSI {rsi_4h:.0f} < 75) — hard block SELL {symbol}")
                     return None
                 else:
@@ -736,7 +740,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
             if vol_prev > vol_ma20 * 1.5:
                 score += 1; reasons.append(f"Volume surge {vol_prev/vol_ma20:.1f}×")
 
-        effective_min = thresholds.get("min_score", 3)
+        effective_min = thresholds.get("min_score", getattr(config, "MIN_SCORE", 3))
         log.info(f"    Score: {score} (need ≥{effective_min})")
         if score < effective_min:
             log.info(f"    [FILTER:SCORE] Too low ({score} < {effective_min}) — skip {symbol}")
@@ -761,16 +765,27 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         return None
 
 
-# ════════════ EXECUTE TRADE (LOT GATEKEEPER INTEGRATED) ═══════════════
+# ════════════ EXECUTE TRADE (DYNAMIC LIMITS INTEGRATED) ═══════════════
 
-def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float, vol_state: str = "NORMAL", base_min_conf: float = 40.0) -> bool:
+def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float, vol_state: str = "NORMAL", base_min_conf: float = 55.0) -> bool:
     symbol=sig["symbol"]; signal=sig["signal"]
     entry=sig["entry"]; atr=sig["atr"]
     
     trades     = load_trades()
     open_count = len([t for t in trades.values() if not t.get("closed",False)])
-    if open_count >= MAX_OPEN_TRADES:
-        log.info(f"  🛑 MAX TRADES ({MAX_OPEN_TRADES}) — skip {symbol}"); return False
+    
+    # ── Dynamic Limits from config.py ──
+    max_open_trades = int(getattr(config, "MAX_OPEN_TRADES", 8))
+    max_same_dir    = int(getattr(config, "MAX_SAME_DIRECTION", 4))
+
+    if open_count >= max_open_trades:
+        log.info(f"  🛑 MAX TRADES ({open_count}/{max_open_trades}) — skip {symbol}"); return False
+
+    same_dir_count = sum(1 for t in trades.values() if not t.get("closed", False) and t.get("signal") == signal)
+    if same_dir_count >= max_same_dir:
+        log.info(f"  🛑 MAX SAME DIRECTION ({same_dir_count}/{max_same_dir} {signal}) — skip {symbol}")
+        return False
+
     if symbol in trades and not trades[symbol].get("closed",False):
         log.info(f"  {symbol}: already open — skip"); return False
 
@@ -784,7 +799,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
     if not deribit.is_supported(symbol):
         log.info(f"  {symbol}: not on Deribit — skip"); return False
-    if not check_correlation(trades, signal, symbol): return False
 
     daily_count = _get_daily_trade_count()
     if daily_count >= MAX_DAILY_TRADES:
@@ -1520,10 +1534,18 @@ def _run_execution_scan_locked():
     thresholds = get_mode_thresholds(mode)
     risk_mult  = get_effective_risk(mode, vol)
 
-    rec_buy  = pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.35)) * 100
-    rec_sell = pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.40)) * 100
+    # ── Dynamic Config Parameters Resolution ──
+    cfg_min_conf    = float(getattr(config, "MIN_CONFIDENCE", 45.0))
+    max_open_trades = int(getattr(config, "MAX_OPEN_TRADES", 8))
+    max_same_dir    = int(getattr(config, "MAX_SAME_DIRECTION", 4))
 
-    log.info(f"  {mode['label']} | EV Model Targets: BUY≥{rec_buy:.1f}% SELL≥{rec_sell:.1f}% "
+    rec_buy  = float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.40))) * 100.0
+    rec_sell = float(pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.45))) * 100.0
+    
+    eff_buy  = max(cfg_min_conf, rec_buy)
+    eff_sell = max(cfg_min_conf, rec_sell)
+
+    log.info(f"  {mode['label']} | Active Targets: BUY≥{eff_buy:.1f}% SELL≥{eff_sell:.1f}% (Config Base: {cfg_min_conf:.1f}%) "
              f"| score≥{thresholds['min_score']} | ADX≥{thresholds['min_adx']} | risk:{risk_mult:.2f}")
 
     log.info("\n[0] Balance..."); balance = save_balance(deribit)
@@ -1575,7 +1597,7 @@ def _run_execution_scan_locked():
     save_balance(deribit)
 
     open_count = len([t for t in load_trades().values() if not t.get("closed",False)])
-    log.info(f"\n[4] Scanning {len(SYMBOLS)} coins | Open:{open_count}/{MAX_OPEN_TRADES}")
+    log.info(f"\n[4] Scanning {len(SYMBOLS)} coins | Open:{open_count}/{max_open_trades} (Max Direction: {max_same_dir})")
 
     found = 0
     btc_momentum = check_btc_momentum()
@@ -1596,7 +1618,8 @@ def _run_execution_scan_locked():
         if sig is None: time.sleep(0.2); continue
         
         found += 1
-        if execute_trade(deribit, sig, risk_mult, balance, vol_state, base_min_conf=rec_buy if sig["signal"]=="BUY" else rec_sell):
+        base_hurdle = eff_buy if sig["signal"] == "BUY" else eff_sell
+        if execute_trade(deribit, sig, risk_mult, balance, vol_state, base_min_conf=base_hurdle):
             time.sleep(1.5)
 
     save_balance(deribit)
