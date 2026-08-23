@@ -1,4 +1,4 @@
-# train_model.py — V3.6: Institutional Training Pipeline with Threshold Floor & Zero Data Leakage
+# train_model.py — V3.8: Complete 3-Class Diagnostics, NO_TRADE Transparency & Precision Floors
 
 import os, json, time, logging, joblib, requests
 import pandas as pd
@@ -6,7 +6,7 @@ import numpy as np
 from datetime import datetime, timezone
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier, VotingClassifier
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 from sklearn.frozen import FrozenEstimator
@@ -23,8 +23,7 @@ except ImportError:
         "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "NEARUSDT", "LTCUSDT",
         "UNIUSDT", "BCHUSDT", "DOTUSDT", "ALGOUSDT", "ENAUSDT", "DOGEUSDT",
         "TRUMPUSDT", "PUMPUSDT", "AAVEUSDT", "LINKUSDT", "SUIUSDT", "AVAXUSDT",
-        "ADAUSDT", "TRXUSDT", "ZECUSDT", "TAOUSDT", "XLMUSDT", "HBARUSDT",
-        "PENDLEUSDT", "WIFUSDT", "CRVUSDT", "RENDERUSDT"
+        "ADAUSDT", "TRXUSDT", "XLMUSDT", "ZECUSDT", "HBARUSDT", "CRVUSDT", "FILUSDT"
     ]
     ATR_STOP_MULT    = 2.5
     ATR_TARGET1_MULT = 3.5
@@ -42,8 +41,8 @@ MIN_BARS           = 100
 UNDERSAMPLE_RATIO  = 1.0
 
 # Strict Precision Guardrails
-MIN_BUY_THRESHOLD_FLOOR  = 0.40  # Prevents BUY barrier from collapsing
-MIN_SELL_THRESHOLD_FLOOR = 0.45  # Prevents SELL precision regression below 55%+
+MIN_BUY_THRESHOLD_FLOOR  = 0.40  # Hard floor for BUY threshold
+MIN_SELL_THRESHOLD_FLOOR = 0.45  # Hard floor for SELL threshold (preserves 55%+ short precision)
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -87,36 +86,6 @@ def _raw_to_df(raw: list) -> pd.DataFrame:
     return df[keep].reset_index(drop=True)
 
 
-def _fetch_deribit_klines(symbol: str, limit: int) -> pd.DataFrame:
-    try:
-        base = symbol.replace("USDT", "").upper()
-        inst = f"{base}_USDC-PERPETUAL"
-        now_ms = int(time.time() * 1000)
-        start_ms = now_ms - (limit * 15 * 60 * 1000)
-        r = requests.get(
-            "https://www.deribit.com/api/v2/public/get_tradingview_chart_data",
-            params={"instrument_name": inst, "resolution": "15", "start_timestamp": start_ms, "end_timestamp": now_ms},
-            timeout=10
-        )
-        if r.status_code == 200:
-            res = r.json().get("result", {})
-            ticks = res.get("ticks", [])
-            if ticks:
-                df = pd.DataFrame({
-                    "open_time": ticks,
-                    "open": [float(x) for x in res.get("open", [])],
-                    "high": [float(x) for x in res.get("high", [])],
-                    "low": [float(x) for x in res.get("low", [])],
-                    "close": [float(x) for x in res.get("close", [])],
-                    "volume": [float(x) for x in res.get("volume", [])],
-                    "taker_buy_base_vol": [float(x) * 0.5 for x in res.get("volume", [])]
-                })
-                return df.sort_values("open_time").reset_index(drop=True)
-    except Exception:
-        pass
-    return pd.DataFrame()
-
-
 def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.DataFrame:
     for url in BINANCE_ENDPOINTS:
         all_data = []
@@ -134,20 +103,13 @@ def fetch_klines(symbol: str, interval: str, limit: int = RECENT_CANDLES) -> pd.
                     break
                 all_data = batch + all_data
                 end_time = batch[0][0] - 1
-                time.sleep(0.15)
+                time.sleep(0.12)
                 if len(all_data) >= limit:
                     break
             if all_data:
                 return _raw_to_df(all_data[-limit:])
         except Exception:
             pass
-
-    # Deribit fallback for secondary pairs
-    deribit_df = _fetch_deribit_klines(symbol, limit)
-    if not deribit_df.empty:
-        log.info(f"  [{symbol}] Fetched {len(deribit_df)} candles via Deribit fallback endpoint.")
-        return deribit_df
-
     return pd.DataFrame()
 
 
@@ -170,7 +132,7 @@ def fetch_klines_window(symbol, interval, start_ms, end_ms, max_candles=1440):
                     break
                 all_data.extend(batch)
                 cursor = batch[-1][0] + 1
-                time.sleep(0.15)
+                time.sleep(0.12)
                 if len(batch) < 1000:
                     break
             if all_data:
@@ -327,14 +289,15 @@ def _add_extra_features(df15: pd.DataFrame) -> pd.DataFrame:
 
 
 def make_targets(df: pd.DataFrame) -> pd.Series:
+    """Triple-barrier chronological path labeling."""
     n = len(df)
     labels = np.full(n, "NO_TRADE", dtype=object)
     lookahead = 24
 
-    highs = df["high"].values
-    lows  = df["low"].values
+    highs  = df["high"].values
+    lows   = df["low"].values
     closes = df["close"].values
-    atrs  = df["atr"].values if "atr" in df.columns else np.zeros(n)
+    atrs   = df["atr"].values if "atr" in df.columns else np.zeros(n)
 
     target_mult = ATR_TARGET1_MULT
 
@@ -344,12 +307,11 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
         if atr <= 0 or np.isnan(atr):
             continue
 
-        buy_tp = entry + (atr * target_mult)
-        buy_sl = entry - (atr * ATR_STOP_MULT)
+        buy_tp  = entry + (atr * target_mult)
+        buy_sl  = entry - (atr * ATR_STOP_MULT)
         sell_tp = entry - (atr * target_mult)
         sell_sl = entry + (atr * ATR_STOP_MULT)
 
-        # Path evaluation for BUY
         buy_success = False
         for k in range(1, lookahead + 1):
             idx = i + k
@@ -359,7 +321,6 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
                 buy_success = True
                 break
 
-        # Path evaluation for SELL
         sell_success = False
         for k in range(1, lookahead + 1):
             idx = i + k
@@ -478,7 +439,7 @@ def build_dataset() -> pd.DataFrame:
     nt = (ds.target == "NO_TRADE").sum()
 
     log.info(f"\n{'='*60}")
-    log.info(f"DATASET SUMMARY: {n:,} rows | BUY: {b:,} ({b/n*100:.1f}%) | SELL: {s:,} ({s/n*100:.1f}%) | NO_TRADE: {nt:,}")
+    log.info(f"DATASET SUMMARY: {n:,} rows | BUY: {b:,} ({b/n*100:.1f}%) | SELL: {s:,} ({s/n*100:.1f}%) | NO_TRADE: {nt:,} ({nt/n*100:.1f}%)")
     log.info(f"{'='*60}")
 
     return ds
@@ -648,7 +609,7 @@ def train(ds: pd.DataFrame) -> float:
     calibrated_ensemble.fit(Xcal, y_calib)
     ensemble = calibrated_ensemble
 
-    # ── Threshold Tuning with Precision Guardrail Floor ──
+    # ── Threshold Tuning with Full Diagnostics ──
     calib_probas = ensemble.predict_proba(Xcal)
     calib_buy_n  = (y_calib == buy_idx).sum()
     calib_sell_n = (y_calib == sell_idx).sum()
@@ -656,8 +617,10 @@ def train(ds: pd.DataFrame) -> float:
     best_thresh_buy, best_score_buy   = MIN_BUY_THRESHOLD_FLOOR, 0.0
     best_thresh_sell, best_score_sell = MIN_SELL_THRESHOLD_FLOOR, 0.0
 
-    # Search strictly at or above institutional confidence floors
-    for thresh in [0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
+    log.info("\n── Calibration Threshold Sweep & EV Grid ─────────────────")
+    log.info(f"{'Thresh':<8}{'BUY n':<8}{'BUY Prec':<10}{'BUY EV':<9}{'SELL n':<8}{'SELL Prec':<11}{'SELL EV':<9}")
+
+    for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
         yp = [np.argmax(p) if np.argmax(p) != nt_idx and p[np.argmax(p)] >= thresh else nt_idx for p in calib_probas]
         yp = np.array(yp)
         bm, sm = (yp == buy_idx), (yp == sell_idx)
@@ -678,7 +641,8 @@ def train(ds: pd.DataFrame) -> float:
         if thresh >= MIN_SELL_THRESHOLD_FLOOR and sell_score > best_score_sell and sm.sum() > 15:
             best_score_sell, best_thresh_sell = sell_score, thresh
 
-    # Final assertion to guarantee precision floor preservation
+        log.info(f"{thresh:<8.2f}{bm.sum():<8}{pb*100:<9.1f}%{buy_ev:<9.2f}{sm.sum():<8}{ps*100:<10.1f}%{sell_ev:<9.2f}")
+
     best_thresh_buy  = max(MIN_BUY_THRESHOLD_FLOOR, best_thresh_buy)
     best_thresh_sell = max(MIN_SELL_THRESHOLD_FLOOR, best_thresh_sell)
 
@@ -700,15 +664,22 @@ def train(ds: pd.DataFrame) -> float:
 
     acc    = accuracy_score(y_test, y_pred_tuned)
     report = classification_report(y_test, y_pred_tuned, target_names=classes, output_dict=True, zero_division=0)
+    rep_text = classification_report(y_test, y_pred_tuned, target_names=classes, digits=4, zero_division=0)
 
-    log.info(f"\n{'='*60}")
-    log.info(f"RAW ACCURACY: {acc*100:.1f}%")
-    log.info(f"{'='*60}")
+    log.info(f"\n{'='*65}")
+    log.info(f"FULL CLASSIFICATION REPORT (Held-out Test Split | n={len(X_test):,}):")
+    log.info(f"{'='*65}")
+    log.info("\n" + rep_text)
 
-    for label in ["BUY", "SELL"]:
-        log.info(f"  {label:<5} precision: {report.get(label, {}).get('precision', 0):.1%}  "
-                 f"recall: {report.get(label, {}).get('recall', 0):.1%}  "
-                 f"f1: {report.get(label, {}).get('f1-score', 0):.1%}")
+    n_buy_pred  = int((y_pred_tuned == buy_idx).sum())
+    n_sell_pred = int((y_pred_tuned == sell_idx).sum())
+    n_nt_pred   = int((y_pred_tuned == nt_idx).sum())
+
+    log.info(f"PREDICTION DISTRIBUTION ON TEST SET:")
+    log.info(f"  BUY calls:      {n_buy_pred:>6,} ({n_buy_pred/len(y_test)*100:>5.1f}%) | Precision: {report.get('BUY', {}).get('precision', 0):.1%}")
+    log.info(f"  SELL calls:     {n_sell_pred:>6,} ({n_sell_pred/len(y_test)*100:>5.1f}%) | Precision: {report.get('SELL', {}).get('precision', 0):.1%}")
+    log.info(f"  NO_TRADE calls: {n_nt_pred:>6,} ({n_nt_pred/len(y_test)*100:>5.1f}%) | Precision: {report.get('NO_TRADE', {}).get('precision', 0):.1%}")
+    log.info(f"{'='*65}")
 
     pipeline = {
         "ensemble":                   ensemble,
@@ -742,10 +713,15 @@ def train(ds: pd.DataFrame) -> float:
         "selected":                   selected,
         "recommended_threshold_buy":  best_thresh_buy,
         "recommended_threshold_sell": best_thresh_sell,
-        "buy_precision":              round(report.get("BUY",  {}).get("precision", 0), 4),
-        "sell_precision":             round(report.get("SELL", {}).get("precision", 0), 4),
-        "buy_recall":                 round(report.get("BUY",  {}).get("recall",    0), 4),
-        "sell_recall":                round(report.get("SELL", {}).get("recall",    0), 4),
+        "buy_precision":              round(report.get("BUY",      {}).get("precision", 0), 4),
+        "sell_precision":             round(report.get("SELL",     {}).get("precision", 0), 4),
+        "no_trade_precision":         round(report.get("NO_TRADE", {}).get("precision", 0), 4),
+        "buy_recall":                 round(report.get("BUY",      {}).get("recall",    0), 4),
+        "sell_recall":                round(report.get("SELL",     {}).get("recall",    0), 4),
+        "no_trade_recall":            round(report.get("NO_TRADE", {}).get("recall",    0), 4),
+        "buy_f1":                     round(report.get("BUY",      {}).get("f1-score",  0), 4),
+        "sell_f1":                    round(report.get("SELL",     {}).get("f1-score",  0), 4),
+        "no_trade_f1":                round(report.get("NO_TRADE", {}).get("f1-score",  0), 4),
     }
 
     with open("model_performance.json", "w") as f:
