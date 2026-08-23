@@ -1,4 +1,4 @@
-# dashboard.py — V5.6: Zero-Hardcoding Master Server with Dynamic Module Reload & Direct Model Inspection
+# dashboard.py — V5.7: Route-Order Fixed (Catch-All at Bottom) with Full Email & Dynamic State Engine
 
 import os
 import json
@@ -418,35 +418,223 @@ def deribit_client():
         return None
 
 
-# ── Flask Routing ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# ALL API ENDPOINTS (MUST BE REGISTERED BEFORE CATCH-ALL ROUTE)
+# ══════════════════════════════════════════════════════════════════════
 
-@app.route("/")
-def index():
-    return send_from_directory("dashboard_static", "index.html")
+# ── 1. SEND REPORT / EMAIL DISPATCH ROUTE ─────────────────────────────
+
+@app.route("/api/send_report", methods=["POST", "OPTIONS"])
+def api_send_report():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    data = request.get_json() or {}
+    recipient = str(data.get("email") or "").strip()
+    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
+    summary = data.get("summary") or {}
+    trades = data.get("trades") or []
+
+    if not recipient or not re.match(EMAIL_REGEX, recipient):
+        return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
+
+    report_url = None
+    pdf_bytes = None
+    if HAS_REPORTLAB:
+        try:
+            pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+            rid = _store_report(pdf_bytes)
+            report_url = request.host_url.rstrip("/") + f"/api/report/{rid}.pdf"
+        except Exception as e:
+            log.warning(f"PDF pre-generation for email failed: {e}")
+
+    emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID", "").strip()
+    emailjs_template_id = os.getenv("EMAILJS_TEMPLATE_ID", "").strip()
+    emailjs_public_key = os.getenv("EMAILJS_PUBLIC_KEY", "").strip()
+    emailjs_private_key = os.getenv("EMAILJS_PRIVATE_KEY", "").strip()
+
+    brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
+    brevo_sender = os.getenv("BREVO_SENDER_EMAIL", "").strip()
+    resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
+
+    # 1. EMAILJS REST API
+    if emailjs_service_id and emailjs_template_id and emailjs_public_key:
+        try:
+            payload = {
+                "service_id": emailjs_service_id,
+                "template_id": emailjs_template_id,
+                "user_id": emailjs_public_key,
+                "accessToken": emailjs_private_key,
+                "template_params": {
+                    "to_email": recipient,
+                    "scope": scope,
+                    "net_pnl": summary.get('net_pnl', 0),
+                    "total_trades": summary.get('total_trades', 0),
+                    "wins": summary.get('wins', 0),
+                    "losses": summary.get('losses', 0),
+                    "win_rate": summary.get('win_rate', '0%'),
+                    "report_url": report_url or "PDF unavailable — ReportLab not installed on server."
+                }
+            }
+
+            r = requests.post(
+                "https://api.emailjs.com/api/v1.0/email/send",
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=12
+            )
+
+            if r.ok or r.text.strip() == "OK":
+                log.info(f"Report emailed via EmailJS API to {recipient}")
+                _log_email_attempt(recipient, scope, summary, "SENT (EmailJS API)")
+                return jsonify({
+                    "ok": True, "recipient": recipient,
+                    "message": f"Report shared with {recipient}",
+                    "report_url": report_url
+                })
+            else:
+                err_text = r.text
+                log.error(f"EmailJS API Error ({r.status_code}): {err_text}")
+                _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS API: {err_text}")
+                return jsonify({"ok": False, "error": "EMAILJS_API_ERROR", "message": f"EmailJS API Error: {err_text}"}), 400
+        except Exception as api_err:
+            log.error(f"EmailJS Exception: {api_err}")
+            _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS Exception: {api_err}")
+            return jsonify({"ok": False, "error": "EMAILJS_EXCEPTION", "message": str(api_err)}), 500
+
+    # 2. BREVO HTTP API
+    if brevo_api_key and brevo_sender:
+        try:
+            pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8") if pdf_bytes else None
+            link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
+            brevo_payload = {
+                "sender": {"name": "CryptoBot AI", "email": brevo_sender},
+                "to": [{"email": recipient}],
+                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                "htmlContent": f"<h3>CryptoBot AI Performance Report</h3><p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
+            }
+            if pdf_b64:
+                brevo_payload["attachment"] = [{"name": f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf", "content": pdf_b64}]
+
+            r = requests.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={"api-key": brevo_api_key, "Content-Type": "application/json"},
+                json=brevo_payload,
+                timeout=12
+            )
+            if r.ok:
+                _log_email_attempt(recipient, scope, summary, "SENT (Brevo API)")
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
+            else:
+                return jsonify({"ok": False, "error": "BREVO_API_ERROR", "message": r.text}), 400
+        except Exception as e:
+            log.error(f"Brevo API error: {e}")
+            return jsonify({"ok": False, "error": "BREVO_EXCEPTION", "message": str(e)}), 500
+
+    # 3. RESEND HTTP API
+    if resend_api_key:
+        try:
+            link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
+            payload = {
+                "from": os.getenv("RESEND_FROM", "CryptoBot AI <reports@alorix.io>"),
+                "to": [recipient],
+                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                "html": f"<p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
+            }
+            r = requests.post("https://api.resend.com/emails", headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"}, json=payload, timeout=12)
+            if r.ok:
+                _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
+            else:
+                return jsonify({"ok": False, "error": "RESEND_API_ERROR", "message": r.text}), 400
+        except Exception as e:
+            log.error(f"Resend API error: {e}")
+            return jsonify({"ok": False, "error": "RESEND_EXCEPTION", "message": str(e)}), 500
+
+    _log_email_attempt(recipient, scope, summary, "FAILED: No Active API Key")
+    return jsonify({
+        "ok": False, 
+        "error": "NOT_CONFIGURED", 
+        "message": "No active HTTP email service detected. Configure EmailJS or Brevo in Render environment variables."
+    }), 500
 
 
-@app.route("/trading")
-@app.route("/signals")
-@app.route("/market")
-@app.route("/open-trades")
-@app.route("/history")
-@app.route("/performance")
-@app.route("/quant")
-@app.route("/execution")
-@app.route("/modelhealth")
-@app.route("/configuration")
-@app.route("/monitor")
-def spa():
-    return send_from_directory("dashboard_static", "index.html")
+def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
+    bust(EMAIL_TRACKER_FILE)
+    logs = get(EMAIL_TRACKER_FILE, [])
+    log_entry = {
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "recipient": recipient, "scope": scope,
+        "total_trades": summary.get('total_trades', 0),
+        "net_pnl": summary.get('net_pnl', 0), "status": status
+    }
+    logs.append(log_entry)
+    
+    for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(logs, indent=2))
+        except Exception: pass
+    gh_push(EMAIL_TRACKER_FILE, logs)
 
 
-@app.route("/<path:path>")
-def static_files(path):
+@app.route("/api/download_report_pdf", methods=["POST", "OPTIONS"])
+def api_download_report_pdf():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    if not HAS_REPORTLAB:
+        return jsonify({
+            "ok": False, "error": "REPORTLAB_MISSING",
+            "message": "ReportLab is not installed on the server. Add 'reportlab' to requirements.txt."
+        }), 500
+
+    data = request.get_json() or {}
+    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
+    summary = data.get("summary") or {}
+    trades = data.get("trades") or []
+
     try:
-        return send_from_directory("dashboard_static", path)
-    except Exception:
-        return send_from_directory("dashboard_static", "index.html")
+        pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+    except Exception as e:
+        log.error(f"PDF generation failed: {e}")
+        return jsonify({"ok": False, "error": "PDF_GENERATION_FAILED", "message": str(e)}), 500
 
+    buffer = BytesIO(pdf_bytes)
+    buffer.seek(0)
+    filename = f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=filename
+    )
+
+
+@app.route("/api/report/<report_id>.pdf")
+def api_get_stored_report(report_id):
+    _cleanup_reports()
+    entry = REPORT_STORE.get(report_id)
+    if not entry:
+        return jsonify({
+            "ok": False, "error": "NOT_FOUND",
+            "message": "This report link has expired (links last 48h) or does not exist. Generate a new report from the History tab."
+        }), 404
+
+    buffer = BytesIO(entry["data"])
+    buffer.seek(0)
+    filename = f"CryptoBot_Report_{report_id[:8]}.pdf"
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+
+@app.route("/api/email_tracker")
+def api_email_tracker():
+    bust(EMAIL_TRACKER_FILE)
+    logs = get(EMAIL_TRACKER_FILE, [])
+    return jsonify(list(reversed(logs[-50:])))
+
+
+# ── 2. CORE DASHBOARD & STATUS APIS ───────────────────────────────────
 
 @app.route("/api/status")
 def api_status():
@@ -563,7 +751,7 @@ def api_log():
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
 
-# ── Dynamic Probation Engine (Direct Model & History Audit) ────────────
+# ── 3. PROBATION, MARKET & MONITOR APIS ────────────────────────────────
 
 @app.route("/api/probation")
 def api_probation():
@@ -637,8 +825,6 @@ def api_probation():
     return jsonify({"ok": True, "probated_coins": probated_coins})
 
 
-# ── Market & ATR Proxies ────────────────────────────────────────────────
-
 @app.route("/api/market")
 def api_market():
     cfg = get_live_config()
@@ -688,8 +874,6 @@ def api_fng():
     return jsonify({"data": [{"value": "50", "value_classification": "Neutral"}]})
 
 
-# ── System Monitor API Endpoint ────────────────────────────────────────
-
 @app.route("/api/monitor")
 def api_monitor():
     bust("trades.json"); bust("balance.json"); bust("signals.json"); bust("bot.log"); bust("trade_history.json")
@@ -728,7 +912,7 @@ def api_monitor():
     })
 
 
-# ── Execution Microstructure & Fee Drag ────────────────────────────────
+# ── 4. ANALYTICS & CONFIG APIS ────────────────────────────────────────
 
 @app.route("/api/execution")
 def api_execution():
@@ -768,8 +952,6 @@ def api_execution():
         "avg_slippage_pct": 0.02
     })
 
-
-# ── Model Health & Dynamic Calibration ─────────────────────────────────
 
 @app.route("/api/model_health")
 def api_model_health():
@@ -821,8 +1003,6 @@ def api_model_health():
         }
     })
 
-
-# ── Analytics & History Endpoints ─────────────────────────────────────
 
 @app.route("/api/analytics")
 def api_analytics():
@@ -910,10 +1090,31 @@ def api_config():
     })
 
 
-# ── Emergency Kill Switch & Trade Management ──────────────────────────
+# ── 5. BOT ACTIONS & TRADE MANAGEMENT ─────────────────────────────────
 
-@app.route("/api/kill_switch", methods=["POST"])
+@app.route("/api/scan", methods=["POST", "OPTIONS"])
+def api_scan():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    if not GH_TOKEN or not GH_REPO:
+        return jsonify({"error": "GH_PAT_TOKEN not configured"}), 400
+    headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json", "Content-Type": "application/json"}
+    for wf in ["crypto_bot.yml", "crypto_bot.yaml", "main.yml"]:
+        try:
+            r = requests.post(f"https://api.github.com/repos/{GH_REPO}/actions/workflows/{wf}/dispatches", headers=headers, json={"ref": GH_BRANCH, "inputs": {"mode": "scan"}}, timeout=15)
+            if r.status_code in (200, 204):
+                for f in ["trades.json","balance.json","signals.json","bot.log"]: bust(f)
+                return jsonify({"status": "triggered", "message": "Scan started — results appear in ~60s"})
+        except Exception as e: log.warning(f"Workflow dispatch {wf} error: {e}")
+    return jsonify({"error": "Could not trigger scan — check GH_PAT_TOKEN"}), 500
+
+
+@app.route("/api/kill_switch", methods=["POST", "OPTIONS"])
 def api_kill_switch():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
     client = deribit_client()
     if not client:
         return jsonify({"ok": False, "error": "Deribit client not available"}), 500
@@ -972,8 +1173,11 @@ def _send_telegram(text: str):
         log.warning(f"Telegram notification failed: {e}")
 
 
-@app.route("/api/close_trade", methods=["POST"])
+@app.route("/api/close_trade", methods=["POST", "OPTIONS"])
 def api_close_trade():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
     data = request.get_json() or {}
     symbol = str(data.get("symbol", "")).strip().upper()
     if not symbol:
@@ -1080,6 +1284,38 @@ def api_close_trade():
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
+
+
+# ══════════════════════════════════════════════════════════════════════
+# SPA & STATIC CATCH-ALL ROUTING (MUST BE AT THE VERY END OF FILE)
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/")
+def index():
+    return send_from_directory("dashboard_static", "index.html")
+
+
+@app.route("/trading")
+@app.route("/signals")
+@app.route("/market")
+@app.route("/open-trades")
+@app.route("/history")
+@app.route("/performance")
+@app.route("/quant")
+@app.route("/execution")
+@app.route("/modelhealth")
+@app.route("/configuration")
+@app.route("/monitor")
+def spa():
+    return send_from_directory("dashboard_static", "index.html")
+
+
+@app.route("/<path:path>")
+def static_files(path):
+    try:
+        return send_from_directory("dashboard_static", path)
+    except Exception:
+        return send_from_directory("dashboard_static", "index.html")
 
 
 if __name__ == "__main__":
