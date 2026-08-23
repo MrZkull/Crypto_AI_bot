@@ -5,14 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CryptoBot AI — Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
-<!-- Non-blocking script loading -->
 <!-- Chart.js v4 + Hammer.js + Zoom Plugin -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-<!-- noUiSlider: touch-friendly dual-handle range scrubber for Quant charts -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.css">
-<script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.js"></script>
 <style>
 :root {
   --bg: #07090d; --bg2: #0c1018; --bg3: #111820; --bg4: #161f2a;
@@ -44,7 +40,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .mode-badge.active-mode { background: var(--green2); border: 1px solid #10b98130; color: var(--green); }
 .sidebar-coins { padding: 8px 10px; }
 .coins-label { font-size: 8px; letter-spacing: 1px; color: var(--text3); text-transform: uppercase; margin-bottom: 6px; }
-.coin-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.coin-chips { display: flex; flex-wrap: wrap; gap: 3px; max-height: 220px; overflow-y: auto; }
 .coin-chip { font-size: 8px; padding: 2px 5px; border-radius: 3px; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); cursor: pointer; }
 .coin-chip.has-signal { border-color: var(--green); color: var(--green); background: var(--green2); }
 .coin-chip.probated-chip { border-color: var(--amber) !important; color: var(--amber) !important; background: var(--amber2) !important; font-weight: 700; }
@@ -188,33 +184,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .fselect { font-size: 10px; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text2); font-family: var(--mono); outline: none; cursor: pointer; }
 .fselect option { background: var(--bg2); color: var(--text); }
 
-/* Quant chart range scrubber (noUiSlider theming) */
-.quant-scrub-wrap { padding: 4px 10px 2px; }
-.quant-scrub-label {
-  display:flex; justify-content:space-between; font-family:var(--mono);
-  font-size:9px; color:var(--text3); margin-bottom:8px; letter-spacing:.02em;
-}
-.quant-scrub-label span.qs-active { color: var(--green); font-weight:700; }
-.quant-range-slider { height: 6px; margin: 0 4px 14px; }
-.quant-range-slider .noUi-target {
-  background: var(--bg4); border: 1px solid var(--border2); border-radius: 4px; box-shadow: none;
-}
-.quant-range-slider .noUi-connect { background: var(--green); }
-.quant-range-slider .noUi-handle {
-  width: 16px; height: 16px; top: -6px; right: -8px;
-  border-radius: 50%; background: var(--text); border: 2px solid var(--green);
-  box-shadow: 0 0 0 3px rgba(16,185,129,0.15); cursor: grab;
-}
-.quant-range-slider .noUi-handle:before,
-.quant-range-slider .noUi-handle:after { display: none; }
-.quant-range-slider.qs-cyan .noUi-connect { background: var(--cyan); }
-.quant-range-slider.qs-cyan .noUi-handle { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(6,182,212,0.15); }
-.qs-reset-btn {
-  font-family: var(--mono); font-size: 9px; color: var(--text3); background: transparent;
-  border: 1px solid var(--border2); border-radius: 4px; padding: 2px 8px; cursor: pointer;
-}
-.qs-reset-btn:hover { color: var(--text); border-color: var(--text3); }
-
 /* RESPONSIVE BREAKPOINTS */
 @media (max-width: 1024px) {
   .g2, .g3 { grid-template-columns: 1fr; }
@@ -284,7 +253,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     <div class="topbar-right">
       <span class="top-stat">Balance: <span id="topBalance">—</span> USDT</span>
       <span class="top-stat">Acc: <span style="color:var(--green)" id="topAccuracy">73.1%</span></span>
-      <span class="top-stat"><span style="color:var(--blue)">21</span> pairs · <span style="color:var(--cyan)">4 tiers</span></span>
+      <span class="top-stat"><span style="color:var(--blue)">28</span> pairs · <span style="color:var(--cyan)">5 tiers</span></span>
       <span class="last-upd" id="lastUpd">—</span>
       <span class="live-badge offline" id="liveBadge">OFFLINE</span>
       <button class="btn-scan" id="scanBtn" onclick="triggerScan()">▶ Scan</button>
@@ -304,18 +273,18 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <div class="page active" id="page-dashboard">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Testnet Balance</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub">USDT Live Balance</div></div>
-      <div class="stat-card c-blue"><div class="stat-label">Open Trades</div><div class="stat-value blue" id="statOpen">0</div><div class="stat-sub" id="statOpenSub">of 4 max</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Open Trades</div><div class="stat-value blue" id="statOpen">0</div><div class="stat-sub" id="statOpenSub">of 2 max</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Win Rate</div><div class="stat-value cyan" id="statWR">—</div><div class="stat-sub" id="statWRSub">— W / — L</div></div>
       <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="statPnl">+0.0000</div><div class="stat-sub">USDT closed trades</div></div>
-      <div class="stat-card c-purple"><div class="stat-label">Model Accuracy</div><div class="stat-value purple" id="statModelAcc">73.1%</div><div class="stat-sub" id="statModelSub">XGB + RF + GB</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Model Accuracy</div><div class="stat-value purple" id="statModelAcc">73.1%</div><div class="stat-sub">XGB + RF + GB</div></div>
       <div class="stat-card c-green"><div class="stat-label">Today Signals</div><div class="stat-value green" id="statSigToday">0</div><div class="stat-sub" id="statSigSub">0 BUY · 0 SELL</div></div>
-      <div class="stat-card c-blue"><div class="stat-label">Monitoring</div><div class="stat-value blue" style="font-size:14px">21 pairs</div><div class="stat-sub">4 tiers · 15 min scan</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Monitoring</div><div class="stat-value blue" style="font-size:14px">28 pairs</div><div class="stat-sub">5 tiers · 15 min scan</div></div>
     </div>
     <div class="scan-mode-bar active-mode" id="scanModeBar">
       <div class="smode-dot"></div>
       <div style="flex:1">
         <div style="font-weight:600;font-size:11px" id="smodeTitleMain">ACTIVE HOURS — Scanning every 15 minutes</div>
-        <div style="font-size:9px;opacity:0.8;margin-top:1px" id="smodeSubMain">Min confidence: 60% · Min score: 3/6 · UTC 08:00–20:00</div>
+        <div style="font-size:9px;opacity:0.8;margin-top:1px" id="smodeSubMain">Min confidence: EV-Calibrated · Min score: 3/6 · UTC 08:00–20:00</div>
       </div>
       <div style="font-size:9px;padding:2px 6px;border-radius:8px;background:rgba(0,0,0,0.3);border:1px solid currentColor;opacity:0.7" id="smodeBadge">ACTIVE</div>
     </div>
@@ -405,9 +374,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
         <div style="width:1px;height:16px;background:var(--border);margin:0 2px"></div>
         <div style="display:flex;gap:4px">
           <button class="fbtn active" onclick="filterConf(0,this)">Any %</button>
+          <button class="fbtn" onclick="filterConf(45,this)">45%+</button>
           <button class="fbtn" onclick="filterConf(60,this)">60%+</button>
           <button class="fbtn" onclick="filterConf(70,this)">70%+</button>
-          <button class="fbtn" onclick="filterConf(75,this)">75%+</button>
         </div>
       </div>
       <div id="signalsBody" style="padding:10px 12px;max-height:calc(100vh - 280px);overflow-y:auto">
@@ -419,8 +388,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <!-- MARKET PAGE -->
   <div class="page" id="page-market">
     <div class="stats-row">
-      <div class="stat-card c-green"><div class="stat-label">Gainers</div><div class="stat-value green" id="mkt-gainers">0</div><div class="stat-sub">of 21 pairs</div></div>
-      <div class="stat-card c-red"><div class="stat-label">Losers</div><div class="stat-value red" id="mkt-losers">0</div><div class="stat-sub">of 21 pairs</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Gainers</div><div class="stat-value green" id="mkt-gainers">0</div><div class="stat-sub">of 28 pairs</div></div>
+      <div class="stat-card c-red"><div class="stat-label">Losers</div><div class="stat-value red" id="mkt-losers">0</div><div class="stat-sub">of 28 pairs</div></div>
       <div class="stat-card c-green"><div class="stat-label">Best 24h</div><div class="stat-value green" id="mkt-best">—</div><div class="stat-sub" id="mkt-best-sym">—</div></div>
       <div class="stat-card c-red"><div class="stat-label">Worst 24h</div><div class="stat-value red" id="mkt-worst">—</div><div class="stat-sub" id="mkt-worst-sym">—</div></div>
     </div>
@@ -445,7 +414,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
         </div>
       </div>
       <div class="panel">
-        <div class="panel-header"><span class="panel-title">All 21 Pairs</span><span class="panel-badge" style="color:var(--green)">Live</span></div>
+        <div class="panel-header"><span class="panel-title">All 28 Pairs</span><span class="panel-badge" style="color:var(--green)">Live</span></div>
         <div style="padding:8px;display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:6px;max-height:500px;overflow-y:auto" id="mktPairsGrid">
           <div class="empty" style="grid-column:1/-1"><div class="emsg">Loading prices...</div></div>
         </div>
@@ -456,9 +425,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <!-- OPEN TRADES PAGE -->
   <div class="page" id="page-trades">
     <div class="stats-row">
-      <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub" id="ot-max-sub">of 4 max</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub" id="ot-max-sub">of 2 max</div></div>
       <div class="stat-card c-amber"><div class="stat-label">Unrealised PnL</div><div class="stat-value" id="ot-upnl">+0.0000</div><div class="stat-sub">USDT combined</div></div>
-      <div class="stat-card c-green"><div class="stat-label">Capital at Risk</div><div class="stat-value green" id="ot-risk">—</div><div class="stat-sub">USDT (1% each)</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Capital at Risk</div><div class="stat-value green" id="ot-risk">—</div><div class="stat-sub">USDT (3% each)</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Avg Confidence</div><div class="stat-value cyan" id="ot-conf">—</div><div class="stat-sub">ML score avg</div></div>
     </div>
     <div class="panel">
@@ -528,15 +497,16 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
           <span style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-left:2px;">Category:</span>
           <select id="histCategoryPick" class="fselect" onchange="renderHistoryFiltered()">
             <option value="all">All Categories / Tiers</option>
-            <option value="big3">👑 Big Three</option>
-            <option value="liq1">⚡ High-Liquidity L1s</option>
-            <option value="inst">🏛️ Institutional Alts</option>
-            <option value="ai_mom">🤖 AI & Momentum</option>
+            <option value="big3">👑 Majors</option>
+            <option value="proven">🏆 Proven Winners</option>
+            <option value="micro">💎 Micro-Granular Gems</option>
+            <option value="alts">🏛️ Deep Liquidity Alts</option>
+            <option value="test_lab">🧪 Testnet Lab</option>
           </select>
 
           <span style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-left:2px;">Symbol:</span>
           <select id="histSymbolPick" class="fselect" onchange="renderHistoryFiltered()">
-            <option value="all">All Symbols</option>
+            <option value="all">All Symbols (28)</option>
           </select>
 
           <span style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-left:2px;">Dir:</span>
@@ -638,7 +608,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       </div>
     </div>
     <div class="panel">
-      <div class="panel-header"><span class="panel-title">Signal Performance by Coin</span></div>
+      <div class="panel-header"><span class="panel-title">Signal Performance by Coin (28 Pairs)</span></div>
       <div class="panel-body">
         <div id="coinPerfGrid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:8px">
           <div class="empty" style="grid-column:1/-1"><div class="emsg">Loading...</div></div>
@@ -647,7 +617,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- QUANT ANALYTICS PAGE WITH SCRUBBERS -->
+  <!-- QUANT ANALYTICS PAGE (WITH VERTICAL TRACKING LINE) -->
   <div class="page" id="page-quant">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">1.82</div><div class="stat-sub">Annualized</div></div>
@@ -657,41 +627,25 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">-$142.50</div><div class="stat-sub">Peak to Trough</div></div>
     </div>
 
-    <!-- CUMULATIVE EQUITY CHART WITH DUAL-HANDLE RANGE SCRUBBER -->
+    <!-- CUMULATIVE EQUITY CHART -->
     <div class="panel">
       <div class="panel-header">
         <span class="panel-title">Cumulative Equity Trajectory</span>
         <span class="panel-badge" style="color:var(--green);border-color:var(--green)">LIVE QUANT</span>
       </div>
       <div class="panel-body">
-        <div style="height: 250px;"><canvas id="equityChart"></canvas></div>
-        <div class="quant-scrub-wrap">
-          <div class="quant-scrub-label">
-            <span id="equityScrubFrom">—</span>
-            <button class="qs-reset-btn" onclick="resetEquityScrub()">Reset zoom</button>
-            <span id="equityScrubTo">—</span>
-          </div>
-          <div id="equityRangeSlider" class="quant-range-slider"></div>
-        </div>
+        <div style="height: 270px;"><canvas id="equityChart"></canvas></div>
       </div>
     </div>
 
-    <!-- DAILY REALISED PNL CHART WITH DUAL-HANDLE RANGE SCRUBBER -->
+    <!-- DAILY REALISED PNL CHART -->
     <div class="panel">
       <div class="panel-header">
         <span class="panel-title">Daily Realized PnL &amp; Growth Tracker</span>
         <span class="panel-badge" style="color:var(--cyan);border-color:var(--cyan)">DAILY BREAKDOWN</span>
       </div>
       <div class="panel-body">
-        <div style="height: 230px;"><canvas id="dailyPnlChart"></canvas></div>
-        <div class="quant-scrub-wrap">
-          <div class="quant-scrub-label">
-            <span id="pnlScrubFrom">—</span>
-            <button class="qs-reset-btn" onclick="resetPnlScrub()">Reset zoom</button>
-            <span id="pnlScrubTo">—</span>
-          </div>
-          <div id="dailyPnlRangeSlider" class="quant-range-slider qs-cyan"></div>
-        </div>
+        <div style="height: 250px;"><canvas id="dailyPnlChart"></canvas></div>
       </div>
     </div>
   </div>
@@ -718,7 +672,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <!-- MODEL HEALTH PAGE -->
   <div class="page" id="page-modelhealth">
     <div class="stats-row">
-      <div class="stat-card c-purple"><div class="stat-label">Active Model Ensemble</div><div class="stat-value purple">XGB + RF + GB</div><div class="stat-sub">Ensemble V2.9</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Active Model Ensemble</div><div class="stat-value purple">XGB + RF + GB</div><div class="stat-sub">Ensemble V3.5</div></div>
       <div class="stat-card c-green"><div class="stat-label">Test Accuracy</div><div class="stat-value green" id="mh-acc">73.1%</div><div class="stat-sub">Holdout Set Validation</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Market Regime</div><div class="stat-value cyan">Normal Expansion</div><div class="stat-sub">Low Volatility State</div></div>
     </div>
@@ -743,7 +697,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
                 <div style="font-size:9px;color:var(--green);background:var(--green2);padding:1px 6px;border-radius:8px;border:1px solid #10b98130">15 min scan</div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
-                <div class="price-box"><div class="price-lbl">Min Conf</div><div class="price-val" id="cfg-act-conf" style="color:var(--green)">60%</div></div>
+                <div class="price-box"><div class="price-lbl">Min Conf</div><div class="price-val" id="cfg-act-conf" style="color:var(--green)">45%</div></div>
                 <div class="price-box"><div class="price-lbl">Min Score</div><div class="price-val" id="cfg-act-score" style="color:var(--amber)">3 / 6</div></div>
                 <div class="price-box"><div class="price-lbl">Min ADX</div><div class="price-val" id="cfg-act-adx" style="color:var(--cyan)">15</div></div>
               </div>
@@ -754,8 +708,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
                 <div style="font-size:9px;color:var(--purple);background:var(--purple2);padding:1px 6px;border-radius:8px;border:1px solid #8b5cf630">30 min scan</div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
-                <div class="price-box"><div class="price-lbl">Min Conf</div><div class="price-val" id="cfg-q-conf" style="color:var(--purple)">65%</div></div>
-                <div class="price-box"><div class="price-lbl">Min Score</div><div class="price-val" id="cfg-q-score" style="color:var(--amber)">4 / 6</div></div>
+                <div class="price-box"><div class="price-lbl">Min Conf</div><div class="price-val" id="cfg-q-conf" style="color:var(--purple)">55%</div></div>
+                <div class="price-box"><div class="price-lbl">Min Score</div><div class="price-val" id="cfg-q-score" style="color:var(--amber)">3 / 6</div></div>
                 <div class="price-box"><div class="price-lbl">Min ADX</div><div class="price-val" id="cfg-q-adx" style="color:var(--cyan)">18</div></div>
               </div>
             </div>
@@ -763,49 +717,57 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
         </div>
       </div>
       <div class="panel">
-        <div class="panel-header"><span class="panel-title">Risk Management (V2.0)</span></div>
+        <div class="panel-header"><span class="panel-title">Risk Management (V3.5)</span></div>
         <div class="panel-body">
           <div style="display:flex;flex-direction:column;gap:6px">
-            <div class="bal-row"><span style="color:var(--text3)">Risk Per Trade</span><span style="color:var(--green)" id="cfg-risk-pct">1.0% of balance</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Max Open Trades</span><span style="color:var(--blue)" id="cfg-max-open">4 simultaneously</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Max Same Direction</span><span style="color:var(--cyan)" id="cfg-max-dir">4 BUY or 4 SELL</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Risk Per Trade</span><span style="color:var(--green)" id="cfg-risk-pct">3.0% of balance</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Max Open Trades</span><span style="color:var(--blue)" id="cfg-max-open">2 simultaneously</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Max Same Direction</span><span style="color:var(--cyan)" id="cfg-max-dir">2 BUY or 2 SELL</span></div>
             <div class="bal-row"><span style="color:var(--text3)">Stop Loss</span><span style="color:var(--red)" id="cfg-stop-mult">2.5x ATR</span></div>
             <div class="bal-row"><span style="color:var(--text3)">Target 1 (TP1)</span><span style="color:var(--green)" id="cfg-tp1-mult">3.5x ATR</span></div>
             <div class="bal-row"><span style="color:var(--text3)">Target 2 (TP2)</span><span style="color:var(--green)" id="cfg-tp2-mult">7.5x ATR</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Circuit Breaker</span><span style="color:var(--red)">-5% Daily PnL</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Rolling Circuit Breaker</span><span style="color:var(--red)">6 Trades &lt;40% WR</span></div>
             <div class="bal-row"><span style="color:var(--text3)">Stale Trade Exit</span><span style="color:var(--text2)" id="cfg-max-age">48h without TP1</span></div>
           </div>
         </div>
       </div>
     </div>
     <div class="panel">
-      <div class="panel-header"><span class="panel-title">Monitored Assets (21 Pairs)</span></div>
+      <div class="panel-header"><span class="panel-title">Monitored Assets (28 Active Pairs Across 5 Tiers)</span></div>
       <div class="panel-body">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:10px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px">
           <div>
-            <div style="font-size:9px;color:var(--amber);margin-bottom:6px;">👑 BIG THREE</div>
+            <div style="font-size:9px;color:var(--amber);margin-bottom:6px;">👑 MAJORS</div>
             <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">BTC / USDC</div><div class="bal-row">ETH / USDC</div><div class="bal-row">BNB / USDC</div>
+              <div class="bal-row">ETH / USDC</div><div class="bal-row">BNB / USDC</div><div class="bal-row">SOL / USDC</div>
             </div>
           </div>
           <div>
-            <div style="font-size:9px;color:var(--cyan);margin-bottom:6px;">⚡ HIGH-LIQUIDITY L1s</div>
+            <div style="font-size:9px;color:var(--green);margin-bottom:6px;">🏆 PROVEN WINNERS</div>
             <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">SOL</div><div class="bal-row">AVAX</div><div class="bal-row">NEAR</div>
-              <div class="bal-row">SUI</div><div class="bal-row">APT</div><div class="bal-row">ATOM</div><div class="bal-row">TRX</div>
+              <div class="bal-row">XRP</div><div class="bal-row">NEAR</div><div class="bal-row">LTC</div>
+              <div class="bal-row">UNI</div><div class="bal-row">BCH</div><div class="bal-row">DOT</div><div class="bal-row">ALGO</div>
             </div>
           </div>
           <div>
-            <div style="font-size:9px;color:var(--blue);margin-bottom:6px;">🏛️ INSTITUTIONAL ALTS</div>
+            <div style="font-size:9px;color:var(--cyan);margin-bottom:6px;">💎 MICRO-GEMS (&lt;$0.20)</div>
             <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">LINK</div><div class="bal-row">DOT</div><div class="bal-row">UNI</div>
-              <div class="bal-row">AAVE</div><div class="bal-row">XRP</div><div class="bal-row">LTC</div><div class="bal-row">BCH</div><div class="bal-row">ALGO</div>
+              <div class="bal-row">ENA</div><div class="bal-row">DOGE</div><div class="bal-row">TRUMP</div>
+              <div class="bal-row">PUMP</div><div class="bal-row">AAVE</div>
             </div>
           </div>
           <div>
-            <div style="font-size:9px;color:var(--purple);margin-bottom:6px;">🤖 AI &amp; MOMENTUM</div>
+            <div style="font-size:9px;color:var(--blue);margin-bottom:6px;">🏛️ LIQUIDITY ALTS</div>
             <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">FET</div><div class="bal-row">ADA</div><div class="bal-row">DOGE</div>
+              <div class="bal-row">LINK</div><div class="bal-row">SUI</div><div class="bal-row">AVAX</div>
+              <div class="bal-row">ADA</div><div class="bal-row">TRX</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--purple);margin-bottom:6px;">🧪 TESTNET LAB</div>
+            <div style="display:flex;flex-direction:column;gap:3px">
+              <div class="bal-row">ZEC</div><div class="bal-row">TAO</div><div class="bal-row">XLM</div>
+              <div class="bal-row">HBAR</div><div class="bal-row">PENDLE</div><div class="bal-row">WIF</div><div class="bal-row">CRV</div><div class="bal-row">RENDER</div>
             </div>
           </div>
         </div>
@@ -908,7 +870,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       <div class="mon-card">
         <div class="mon-card-hd"><span class="mon-card-title">🔒 Trade Integrity</span><span style="font-size:9px;color:var(--text3)" id="mT5">—</span></div>
         <div class="mon-card-bd">
-          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-slots"></span>Trade Slots</span><span class="mon-val" id="v-slots">—</span></div>
+          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-slots"></span>Trade Slots</span><span class="mon-val" id="v-slots">0 / 2</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-sltp"></span>SL/TP Integrity</span><span class="mon-val" id="v-sltp">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-ghost"></span>Ghost Trades</span><span class="mon-val" id="v-ghost">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-wr"></span>Win Rate</span><span class="mon-val" id="v-wr">—</span></div>
@@ -920,7 +882,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
         <div class="mon-card-bd">
           <div class="mon-row"><span class="mon-label"><span class="mon-dot ok"></span>Deribit API Keys</span><span class="mon-val" style="color:var(--green)">Configured</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot ok"></span>Telegram Keys</span><span class="mon-val" style="color:var(--green)">Configured</span></div>
-          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-risk"></span>Risk / Trade</span><span class="mon-val" id="v-risk">1%</span></div>
+          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-risk"></span>Risk / Trade</span><span class="mon-val" id="v-risk">3%</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-dloss"></span>Daily Loss Limit</span><span class="mon-val" id="v-dloss">5% of balance</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-maxage"></span>Stale Exit Age</span><span class="mon-val" id="v-maxage">48h without TP1</span></div>
         </div>
@@ -973,16 +935,17 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 
 <script>
 // ═══════════════════════════════════════════════════════
-// STATE & UTILS
+// STATE & UTILS (28 ACTIVE MONITORED PAIRS ACROSS 5 TIERS)
 // ═══════════════════════════════════════════════════════
 const API_BASE = "";
 const COINS = {
-  big3:   ["BTCUSDT","ETHUSDT","BNBUSDT"],
-  liq1:   ["SOLUSDT","AVAXUSDT","NEARUSDT","SUIUSDT","APTUSDT","ATOMUSDT","TRXUSDT"],
-  inst:   ["LINKUSDT","DOTUSDT","UNIUSDT","AAVEUSDT","XRPUSDT","LTCUSDT","BCHUSDT","ALGOUSDT"],
-  ai_mom: ["FETUSDT","ADAUSDT","DOGEUSDT"]
+  big3:     ["ETHUSDT","BNBUSDT","SOLUSDT"],
+  proven:   ["XRPUSDT","NEARUSDT","LTCUSDT","UNIUSDT","BCHUSDT","DOTUSDT","ALGOUSDT"],
+  micro:    ["ENAUSDT","DOGEUSDT","TRUMPUSDT","PUMPUSDT","AAVEUSDT"],
+  alts:     ["LINKUSDT","SUIUSDT","AVAXUSDT","ADAUSDT","TRXUSDT"],
+  test_lab: ["ZECUSDT","TAOUSDT","XLMUSDT","HBARUSDT","PENDLEUSDT","WIFUSDT","CRVUSDT","RENDERUSDT"]
 };
-const ALL_COINS = [...COINS.big3, ...COINS.liq1, ...COINS.inst, ...COINS.ai_mom];
+const ALL_COINS = [...COINS.big3, ...COINS.proven, ...COINS.micro, ...COINS.alts, ...COINS.test_lab];
 const PAGES = {
   dashboard:'Dashboard', signals:'Signals', market:'Market', trades:'Open Trades',
   history:'History', performance:'Performance', quant:'Quant Analytics',
@@ -995,7 +958,6 @@ let histRange = 'all', histResultFilter = 'all', sigFilter = 'all', confFilter =
 let scanRunning = false, monTimer = null;
 let equityChartInst = null, dailyPnlChartInst = null, calibrationChartInst = null;
 let allEquityPoints = [], allDailyPnlPoints = [];
-let equityScrubber = null, pnlScrubber = null;
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -1062,7 +1024,7 @@ function renderProbationTracker() {
   if (!tbody) return;
 
   if (!probatedCoinsData.length) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:12px;color:var(--green)">✓ All 21 coins operating under standard confidence thresholds</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:12px;color:var(--green)">✓ All 28 coins operating under standard confidence thresholds</td></tr>';
     return;
   }
 
@@ -1108,7 +1070,7 @@ async function fetchStatus() {
   document.getElementById('statWR').className    = 'stat-value ' + (wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red');
   document.getElementById('statWRSub').textContent = (d.wins||0) + ' W / ' + (d.losses||0) + ' L';
   document.getElementById('statOpen').textContent  = d.open_trades || 0;
-  document.getElementById('statOpenSub').textContent = (d.open_trades||0) + ' of ' + (d.max_trades||4) + ' max';
+  document.getElementById('statOpenSub').textContent = (d.open_trades||0) + ' of ' + (d.max_trades||2) + ' max';
 
   const modelAcc = d.model_accuracy || '73.1%';
   ['topAccuracy', 'statModelAcc', 'mh-acc'].forEach(id => {
@@ -1134,7 +1096,7 @@ async function fetchBalance() {
   const usdt = d.usdt != null ? d.usdt.toFixed(2) : '—';
   document.getElementById('statBalance').textContent = usdt;
   document.getElementById('topBalance').textContent  = usdt;
-  document.getElementById('balMain').textContent     = usdt;
+  document.getElementById('balMain').textContent      = usdt;
 
   if (d.assets && d.assets.length) {
     const validAssets = d.assets.filter(a => parseFloat(a.total||a.free||0) > 0);
@@ -1271,7 +1233,7 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
 
   const toPct = v => Math.min(98, Math.max(2, (v - displayLow) / displayRange * 100));
 
-  const slPct    = toPct(nSl);
+  const slPct   = toPct(nSl);
   const entryPct = toPct(nEntry);
   const tp1Pct   = toPct(nTp1);
   const tp2Pct   = toPct(nTp2);
@@ -1334,7 +1296,6 @@ async function closeTrade(symbol) {
     return;
   }
 
-  // Find the button and show loading state
   const buttons = document.querySelectorAll('.btn-close-trade');
   buttons.forEach(b => {
     if (b.getAttribute('onclick')?.includes(symbol)) {
@@ -1354,7 +1315,6 @@ async function closeTrade(symbol) {
       const pnlSign = (r.pnl || 0) >= 0 ? '+' : '';
       alert(`✅ ${symbol} Closed Successfully!\nRealized PnL: ${pnlSign}${(r.pnl || 0).toFixed(4)} USDT\nCancelled Orders: ${r.cancelled_orders || 0}`);
       
-      // Refresh all state immediately
       await Promise.all([
         fetchOpenTrades(),
         fetchStatus(),
@@ -1616,7 +1576,7 @@ function renderHistoryFiltered() {
     return `<tr>
       <td style="color:var(--text3);font-size:9px">${idx + 1}</td>
       <td style="color:#fff;font-weight:600">${t.symbol}</td>
-      <td style="color:var(--text3);font-size:9px">${(t.tier||'').replace(/[👑⚡🏛🤖]/g,'').trim()}</td>
+      <td style="color:var(--text3);font-size:9px">${(t.tier||'').replace(/[👑⚡🏛🤖🧪]/g,'').trim()}</td>
       <td><span class="tag ${t.signal==='BUY'?'buy':'sell'}">${t.signal||'—'}</span></td>
       <td style="color:var(--blue)">${fp(t.entry,dec)}</td>
       <td>${fp(t.close_price,dec)}</td>
@@ -1813,7 +1773,7 @@ async function fetchAnalytics() {
   renderDailyPnlChart(d.daily_pnl || []);
 }
 
-// ── 1. Straight Vertical Line Crosshair Plugin ────────────────────────
+// ── Straight Vertical Line Crosshair Plugin ────────────────────────
 const verticalLinePlugin = {
   id: 'verticalCrosshair',
   afterDraw: (chart) => {
@@ -1829,15 +1789,15 @@ const verticalLinePlugin = {
       ctx.moveTo(x, topY);
       ctx.lineTo(x, bottomY);
       ctx.lineWidth = 1.5;
-      ctx.strokeStyle = '#10b981'; // Vibrant green tracking line
-      ctx.setLineDash([4, 4]);     // Clean dashed guide line
+      ctx.strokeStyle = '#10b981';
+      ctx.setLineDash([4, 4]);
       ctx.stroke();
       ctx.restore();
     }
   }
 };
 
-// ── 2. Updated Cumulative Equity Chart ───────────────────────────────
+// ── Cumulative Equity Chart (Vertical Scrubber Line) ──────────────────
 function renderEquityChart(points) {
   const ctx = document.getElementById('equityChart')?.getContext('2d');
   if (!ctx) return;
@@ -1869,7 +1829,7 @@ function renderEquityChart(points) {
       maintainAspectRatio: false,
       interaction: {
         mode: 'index',
-        intersect: false, // 🎯 Allows smooth continuous tracking across the entire chart
+        intersect: false,
       },
       plugins: {
         legend: { display: false },
@@ -1903,7 +1863,7 @@ function renderEquityChart(points) {
   });
 }
 
-// ── 3. Updated Daily Realized PnL Chart ──────────────────────────────
+// ── Daily Realized PnL Chart (Vertical Scrubber Line) ─────────────────
 function renderDailyPnlChart(dailyPoints) {
   const ctx = document.getElementById('dailyPnlChart')?.getContext('2d');
   if (!ctx) return;
@@ -1959,65 +1919,6 @@ function renderDailyPnlChart(dailyPoints) {
   });
 }
 
-function setupChartScrubber(cfg) {
-  const el = document.getElementById(cfg.sliderId);
-  if (!el) return;
-  const n = cfg.fullPoints.length;
-
-  if (el.noUiSlider) el.noUiSlider.destroy();
-  if (n < 2) {
-    if (cfg.storeAs === 'equityScrubber') equityScrubber = null;
-    if (cfg.storeAs === 'pnlScrubber') pnlScrubber = null;
-    return;
-  }
-
-  noUiSlider.create(el, {
-    start: [0, n - 1],
-    connect: true,
-    step: 1,
-    range: { min: 0, max: n - 1 },
-    behaviour: 'drag-tap'
-  });
-
-  const applyWindow = (values) => {
-    const from = Math.round(values[0]);
-    const to = Math.round(values[1]);
-    const chart = cfg.getChart();
-    if (!chart) return;
-    const windowed = cfg.fullPoints.slice(from, to + 1);
-    chart.data.labels = windowed.map(p => p[cfg.labelKey]);
-    chart.data.datasets[0].data = windowed.map(p => p[cfg.dataKey]);
-    if (cfg.recolor) {
-      chart.data.datasets[0].backgroundColor = windowed.map(p => p[cfg.dataKey] >= 0 ? '#10b981' : '#f43f5e');
-    }
-    chart.update('none');
-
-    const fmt = (v) => String(v || '').replace('T', ' ').slice(0, 16);
-    const fromEl = document.getElementById(cfg.fromEl);
-    const toEl = document.getElementById(cfg.toEl);
-    if (fromEl) fromEl.innerHTML = `<span class="qs-active">${fmt(cfg.fullPoints[from]?.[cfg.labelKey])}</span>`;
-    if (toEl) toEl.innerHTML = `<span class="qs-active">${fmt(cfg.fullPoints[to]?.[cfg.labelKey])}</span>`;
-  };
-
-  el.noUiSlider.on('update', applyWindow);
-  applyWindow([0, n - 1]);
-
-  if (cfg.storeAs === 'equityScrubber') equityScrubber = el;
-  if (cfg.storeAs === 'pnlScrubber') pnlScrubber = el;
-}
-
-function resetEquityScrub() {
-  if (equityScrubber && equityScrubber.noUiSlider) {
-    equityScrubber.noUiSlider.set([0, allEquityPoints.length - 1]);
-  }
-}
-
-function resetPnlScrub() {
-  if (pnlScrubber && pnlScrubber.noUiSlider) {
-    pnlScrubber.noUiSlider.set([0, allDailyPnlPoints.length - 1]);
-  }
-}
-
 function renderCalibrationChart() {
   const ctx = document.getElementById('calibrationChart')?.getContext('2d');
   if (!ctx) return;
@@ -2026,10 +1927,10 @@ function renderCalibrationChart() {
   calibrationChartInst = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: ['60-65% Conf', '65-70% Conf', '70-75% Conf', '75%+ Conf'],
+      labels: ['45-55% Conf', '55-65% Conf', '65-75% Conf', '75%+ Conf'],
       datasets: [
-        { label: 'Target Win Rate', data: [60, 68, 75, 82], backgroundColor: 'rgba(59,130,246,0.5)' },
-        { label: 'Live Win Rate', data: [62, 65, 78, 85], backgroundColor: 'rgba(16,185,129,0.8)' }
+        { label: 'Target Win Rate', data: [55, 65, 75, 85], backgroundColor: 'rgba(59,130,246,0.5)' },
+        { label: 'Live Win Rate', data: [58, 67, 78, 88], backgroundColor: 'rgba(16,185,129,0.8)' }
       ]
     },
     options: { responsive: true, maintainAspectRatio: false, scales: { y: { max: 100 } } }
@@ -2092,8 +1993,7 @@ async function fetchConfig() {
 
   const bind = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
   
-  // Live AI Scheduler Thresholds
-  bind('cfg-act-conf', (d.active_conf || 50) + '%');
+  bind('cfg-act-conf', (d.active_conf || 45) + '%');
   bind('cfg-act-score', (d.active_score || 3) + ' / 6');
   bind('cfg-act-adx', d.active_adx || 15);
 
@@ -2101,7 +2001,6 @@ async function fetchConfig() {
   bind('cfg-q-score', (d.quiet_score || 3) + ' / 6');
   bind('cfg-q-adx', d.quiet_adx || 18);
 
-  // Live Risk Management Thresholds
   bind('cfg-risk-pct', d.risk_per_trade_pct.toFixed(1) + '% of balance');
   bind('cfg-max-open', d.max_open_trades + ' simultaneously');
   bind('cfg-max-dir',  d.max_same_direction + ' BUY or SELL');
