@@ -1,4 +1,4 @@
-# train_meta_model.py — Research Pipeline: Meta-Labeling & Signal Filter Evaluation
+# train_meta_model.py — Research Pipeline: Meta-Labeling with Orthogonality Benchmark
 
 import json, logging, time
 from datetime import datetime, timezone
@@ -89,8 +89,6 @@ def train_meta_model():
     _, _, primary_test = per_symbol_regime_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
 
     log.info(f"Primary's held-out test portion: {len(primary_test):,} rows (evaluating meta-labels ONLY on these)")
-    log.info("Getting primary model's directional calls on held-out rows only...")
-
     primary_test = get_primary_predictions(primary_test, primary_pipeline)
     directional = build_meta_labels(primary_test)
     n_dir = len(directional)
@@ -148,19 +146,10 @@ def train_meta_model():
     calibrated_meta.fit(X_calib, y_calib)
 
     calib_proba = calibrated_meta.predict_proba(X_calib)[:, 1]
+    test_proba  = calibrated_meta.predict_proba(X_test)[:, 1]
     best_thresh, best_score = 0.50, 0.0
 
-    log.info(f"\n{'='*60}")
-    y_test_pred = calibrated_meta.predict(X_test)
-    meta_acc = accuracy_score(y_test, y_test_pred)
-    log.info(f"META-MODEL TEST ACCURACY: {meta_acc*100:.1f}%  (base rate was {base_rate:.1f}%)")
-    log.info(f"{'='*60}")
-
-    m_rep = classification_report(y_test, y_test_pred, output_dict=True, zero_division=0)
-    log.info(f"  precision (call is correct): {m_rep.get('1', {}).get('precision', 0):.1%}")
-    log.info(f"  recall    (call is correct): {m_rep.get('1', {}).get('recall', 0):.1%}")
-
-    log.info(f"\n── Meta-confidence threshold sweep ──────────────────────")
+    log.info(f"\n── Meta-confidence threshold sweep (Calibration Split) ──")
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
         mask = calib_proba >= thresh
         if mask.sum() < 10: continue
@@ -170,14 +159,40 @@ def train_meta_model():
             best_score, best_thresh = score, thresh
         log.info(f"  {thresh:.2f}   n={mask.sum():>6}   hit_rate={hit_rate*100:.1f}%   score={score:.1f}")
 
-    log.info(f"\n  -> Best meta-threshold: {best_thresh:.2f}")
+    log.info(f"\n  -> Selected Meta-Threshold: {best_thresh:.2f}")
+
+    # ── Orthogonality Benchmark on Out-of-Sample Test Set ──
+    test_mask = test_proba >= best_thresh
+    n_selected_test = int(test_mask.sum())
+    meta_test_precision = float(y_test[test_mask].mean()) if n_selected_test > 0 else 0.0
+
+    primary_conf_test = test_df["primary_conf"].values
+    top_n_idx = np.argsort(primary_conf_test)[::-1][:n_selected_test]
+    primary_highconf_precision = float(y_test[top_n_idx].mean()) if n_selected_test > 0 else 0.0
+    
+    alpha_lift = (meta_test_precision - primary_highconf_precision) * 100.0
+
+    log.info(f"\n{'='*60}")
+    log.info("ORTHOGONALITY BENCHMARK (Untouched Test Split):")
+    log.info(f"  Sample Size (n):                 {n_selected_test}")
+    log.info(f"  Primary Base Rate:               {base_rate:.1f}%")
+    log.info(f"  Primary High-Conf Slice (Top {n_selected_test}): {primary_highconf_precision*100:.1f}%")
+    log.info(f"  Meta-Model Filtered Slice:       {meta_test_precision*100:.1f}%")
+    log.info(f"  Orthogonal Alpha Lift:           {alpha_lift:+.2f}%")
+    if alpha_lift > 2.0:
+        log.info("  ✓ CONCLUSION: Meta-model provides real orthogonal edge over raw primary confidence.")
+    else:
+        log.info("  ✗ CONCLUSION: Meta-model merely proxies primary confidence — keep in research mode.")
+    log.info(f"{'='*60}")
 
     meta_pipeline = {
         "meta_ensemble":              calibrated_meta,
         "meta_features":              meta_features,
         "recommended_meta_threshold": best_thresh,
         "base_rate":                  float(base_rate),
-        "test_accuracy":              float(meta_acc * 100),
+        "test_precision":             float(meta_test_precision * 100),
+        "primary_highconf_precision": float(primary_highconf_precision * 100),
+        "alpha_lift":                 float(alpha_lift),
         "trained_at":                 datetime.now(timezone.utc).isoformat(),
     }
     joblib.dump(meta_pipeline, META_MODEL_FILE)
@@ -185,7 +200,9 @@ def train_meta_model():
 
     with open("meta_model_performance.json", "w") as f:
         json.dump({
-            "test_accuracy":              round(float(meta_acc) * 100, 1),
+            "test_precision":             round(float(meta_test_precision) * 100, 1),
+            "primary_highconf_precision": round(float(primary_highconf_precision) * 100, 1),
+            "alpha_lift_pct":             round(float(alpha_lift), 2),
             "base_rate":                  round(float(base_rate), 1),
             "n_directional_calls":        int(n_dir),
             "recommended_meta_threshold": float(best_thresh),
