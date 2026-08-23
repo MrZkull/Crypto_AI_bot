@@ -49,7 +49,7 @@ _cache_ts = {}
 CACHE_TTL = 15
 
 REPORT_STORE = {}
-REPORT_TTL_SECONDS = 60 * 60 * 48  # 48 hours TTL for PDF links
+REPORT_TTL_SECONDS = 60 * 60 * 48
 
 
 def _cleanup_reports():
@@ -578,7 +578,6 @@ def api_probation():
     now = time.time()
     updated = False
 
-    # 1. Audit trade history directly for 3-consecutive or 6-rolling loss conditions
     symbols_in_history = set(t.get("symbol") for t in history if t.get("symbol"))
     
     for symbol in symbols_in_history:
@@ -615,13 +614,11 @@ def api_probation():
         gh_push(RELIABILITY_FILE, rel)
         _cache[RELIABILITY_FILE] = rel
 
-    # 2. Extract baseline confidence directly from the serialized model pipeline
     model_meta = get_model_metadata()
     cfg = get_live_config()
     base_model_conf = min(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"])
     active_baseline = max(base_model_conf, cfg["min_confidence"])
 
-    # 3. Format probated list with real live required confidence
     probated_coins = []
     for symbol, data in rel.items():
         if isinstance(data, dict) and data.get("is_benched", False):
