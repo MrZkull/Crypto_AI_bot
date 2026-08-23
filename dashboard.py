@@ -1,4 +1,4 @@
-# dashboard.py — V5.7: Route-Order Fixed (Catch-All at Bottom) with Full Email & Dynamic State Engine
+# dashboard.py — V5.8: Zero-Flicker Architecture with Resilient Fallback Caching
 
 import os
 import json
@@ -46,7 +46,7 @@ EMAIL_REGEX        = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 _cache = {}
 _cache_ts = {}
-CACHE_TTL = 15
+CACHE_TTL = 15  # Retain cache for 15 seconds across concurrent requests
 
 REPORT_STORE = {}
 REPORT_TTL_SECONDS = 60 * 60 * 48
@@ -346,7 +346,7 @@ def check_deribit_health():
         return {"status": "OFFLINE", "msg": f"Deribit Outage ({str(e)})", "code": 0}
 
 
-# ── GitHub State Persistence Helpers ──────────────────────────────────
+# ── Resilient GitHub & State Persistence Helpers ──────────────────────
 
 def gh_fetch(filename: str):
     if not GH_TOKEN or not GH_REPO:
@@ -355,7 +355,7 @@ def gh_fetch(filename: str):
     for path in [filename, f"data/{filename}"]:
         try:
             url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}?ref={GH_BRANCH}"
-            r = requests.get(url, headers=headers, timeout=8)
+            r = requests.get(url, headers=headers, timeout=5)
             if r.status_code == 200:
                 raw_content = base64.b64decode(r.json()["content"]).decode("utf-8")
                 return json.loads(raw_content) if filename.endswith(".json") else raw_content
@@ -384,25 +384,38 @@ def gh_push(filename: str, content_dict):
 
 def get(filename: str, default):
     now = time.time()
+    # 1. Use memory cache if still fresh within TTL window
     if filename in _cache and (now - _cache_ts.get(filename, 0) < CACHE_TTL):
         return _cache[filename]
-    data = gh_fetch(filename)
+    
+    data = None
+    # 2. Check local disk first (instant & immune to GitHub rate limits)
+    for p in [Path(filename), Path("data") / filename]:
+        try:
+            if p.exists() and p.stat().st_size > 2:
+                txt = p.read_text(encoding="utf-8")
+                data = json.loads(txt) if filename.endswith(".json") else txt
+                break
+        except Exception: pass
+
+    # 3. Fall back to GitHub fetch
     if data is None:
-        for p in [Path(filename), Path("data") / filename]:
-            try:
-                if p.exists():
-                    txt = p.read_text(encoding="utf-8")
-                    data = json.loads(txt) if filename.endswith(".json") else txt
-                    break
-            except Exception: pass
+        data = gh_fetch(filename)
+
     if data is not None:
         _cache[filename] = data
         _cache_ts[filename] = now
         return data
+
+    # 4. If fetch temporarily fails, retain last known good memory cache
+    if filename in _cache:
+        return _cache[filename]
+
     return default
 
 
 def bust(filename: str):
+    """Busts cache only during state-mutating actions (POST)."""
     _cache_ts[filename] = 0
 
 
@@ -419,10 +432,8 @@ def deribit_client():
 
 
 # ══════════════════════════════════════════════════════════════════════
-# ALL API ENDPOINTS (MUST BE REGISTERED BEFORE CATCH-ALL ROUTE)
+# ALL API ENDPOINTS (PRECEDENCE OVER CATCH-ALL ROUTE)
 # ══════════════════════════════════════════════════════════════════════
-
-# ── 1. SEND REPORT / EMAIL DISPATCH ROUTE ─────────────────────────────
 
 @app.route("/api/send_report", methods=["POST", "OPTIONS"])
 def api_send_report():
@@ -629,17 +640,14 @@ def api_get_stored_report(report_id):
 
 @app.route("/api/email_tracker")
 def api_email_tracker():
-    bust(EMAIL_TRACKER_FILE)
     logs = get(EMAIL_TRACKER_FILE, [])
     return jsonify(list(reversed(logs[-50:])))
 
 
-# ── 2. CORE DASHBOARD & STATUS APIS ───────────────────────────────────
+# ── CORE DASHBOARD & STATUS APIS ──────────────────────────────────────
 
 @app.route("/api/status")
 def api_status():
-    for f in ["trade_history.json","signals.json","scan_mode.json","trades.json","balance.json", PERFORMANCE_FILE]:
-        bust(f)
     history = get("trade_history.json", [])
     signals = get("signals.json", [])
     scan_mode = get("scan_mode.json", {})
@@ -698,7 +706,6 @@ def api_balance():
 
 @app.route("/api/trades/open")
 def api_open_trades():
-    bust("trades.json")
     ai_data = get("trades.json", {})
     client = deribit_client()
     if client:
@@ -730,14 +737,12 @@ def api_open_trades():
 
 @app.route("/api/trades/history")
 def api_trade_history():
-    bust("trade_history.json")
     h = get("trade_history.json", [])
     return jsonify(list(reversed([x for x in h if x.get("signal") != "RECOVERED"][-100:])))
 
 
 @app.route("/api/signals")
 def api_signals():
-    bust("signals.json")
     sigs = get("signals.json", [])
     if isinstance(sigs, dict): sigs = sigs.get("signals", [])
     return jsonify(list(reversed(sigs[-100:])))
@@ -745,19 +750,15 @@ def api_signals():
 
 @app.route("/api/log")
 def api_log():
-    bust("bot.log")
     content = get("bot.log", "")
     lines = content.splitlines(keepends=True)[-200:] if content else ["✓ Bot standby."]
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
 
-# ── 3. PROBATION, MARKET & MONITOR APIS ────────────────────────────────
+# ── PROBATION, MARKET & MONITOR APIS ──────────────────────────────────
 
 @app.route("/api/probation")
 def api_probation():
-    bust(RELIABILITY_FILE)
-    bust("trade_history.json")
-    
     rel = get(RELIABILITY_FILE, {})
     if not isinstance(rel, dict):
         rel = {}
@@ -791,12 +792,10 @@ def api_probation():
                 rel[symbol]["probation_wins"] = 0
                 rel[symbol]["probation_consecutive_losses"] = len([t for t in last_3 if (float(t.get("pnl") or 0)) < 0])
                 updated = True
-        else:
-            if rel[symbol].get("is_benched"):
-                rel[symbol]["is_benched"] = False
-                rel[symbol]["benched_at"] = 0
-                rel[symbol]["probation_consecutive_losses"] = len([t for t in s_trades if (float(t.get("pnl") or 0)) < 0])
-                updated = True
+        elif rel[symbol].get("is_benched") and rel[symbol].get("probation_wins", 0) >= 3:
+            rel[symbol]["is_benched"] = False
+            rel[symbol]["benched_at"] = 0
+            updated = True
 
     if updated:
         gh_push(RELIABILITY_FILE, rel)
@@ -876,7 +875,6 @@ def api_fng():
 
 @app.route("/api/monitor")
 def api_monitor():
-    bust("trades.json"); bust("balance.json"); bust("signals.json"); bust("bot.log"); bust("trade_history.json")
     t0 = time.time()
     deribit = check_deribit_health()
     trades = get("trades.json", {})
@@ -912,11 +910,10 @@ def api_monitor():
     })
 
 
-# ── 4. ANALYTICS & CONFIG APIS ────────────────────────────────────────
+# ── ANALYTICS & CONFIG APIS ───────────────────────────────────────────
 
 @app.route("/api/execution")
 def api_execution():
-    bust("trade_history.json")
     history = get("trade_history.json", [])
     real = [h for h in history if h.get("signal") != "RECOVERED"]
 
@@ -955,8 +952,6 @@ def api_execution():
 
 @app.route("/api/model_health")
 def api_model_health():
-    bust(PERFORMANCE_FILE)
-    bust("trade_history.json")
     perf_data = get(PERFORMANCE_FILE, {})
     history = get("trade_history.json", [])
     real = [h for h in history if h.get("signal") != "RECOVERED"]
@@ -1006,7 +1001,6 @@ def api_model_health():
 
 @app.route("/api/analytics")
 def api_analytics():
-    bust("trade_history.json")
     history = get("trade_history.json", [])
     real_trades = [t for t in history if t.get("signal") != "RECOVERED"]
     pnls = [float(t.get("pnl", 0)) for t in real_trades]
@@ -1048,7 +1042,6 @@ def api_analytics():
 
     daily_points = [{"date": d, "pnl": p} for d, p in sorted(daily_pnl_map.items())]
     equity_points = []
-    bust("balance.json")
     bal_data = get("balance.json", {})
     current_bal = float(bal_data.get("usdt", 108025.24))
     
@@ -1090,7 +1083,7 @@ def api_config():
     })
 
 
-# ── 5. BOT ACTIONS & TRADE MANAGEMENT ─────────────────────────────────
+# ── BOT ACTIONS & TRADE MANAGEMENT ────────────────────────────────────
 
 @app.route("/api/scan", methods=["POST", "OPTIONS"])
 def api_scan():
