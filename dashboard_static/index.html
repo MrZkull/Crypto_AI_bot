@@ -185,9 +185,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .fselect option { background: var(--bg2); color: var(--text); }
 
 /* RESPONSIVE BREAKPOINTS */
-@media (max-width: 1024px) {
-  .g2, .g3 { grid-template-columns: 1fr; }
-}
+@media (max-width: 1024px) { .g2, .g3 { grid-template-columns: 1fr; } }
 @media (max-width: 768px) {
   :root { --nav-w: 160px; }
   .logo-text { font-size: 13px; }
@@ -252,8 +250,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
     <div class="topbar-right">
       <span class="top-stat">Balance: <span id="topBalance">—</span> USDT</span>
-      <span class="top-stat">Acc: <span style="color:var(--green)" id="topAccuracy">73.1%</span></span>
-      <span class="top-stat"><span style="color:var(--blue)">28</span> pairs · <span style="color:var(--cyan)">5 tiers</span></span>
+      <span class="top-stat">Acc: <span style="color:var(--green)" id="topAccuracy">—</span></span>
+      <span class="top-stat"><span style="color:var(--blue)" id="topMonitoredCount">—</span> pairs · <span style="color:var(--cyan)" id="topTiersCount">—</span></span>
       <span class="last-upd" id="lastUpd">—</span>
       <span class="live-badge offline" id="liveBadge">OFFLINE</span>
       <button class="btn-scan" id="scanBtn" onclick="triggerScan()">▶ Scan</button>
@@ -273,18 +271,18 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <div class="page active" id="page-dashboard">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Testnet Balance</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub">USDT Live Balance</div></div>
-      <div class="stat-card c-blue"><div class="stat-label">Open Trades</div><div class="stat-value blue" id="statOpen">0</div><div class="stat-sub" id="statOpenSub">of 2 max</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Open Trades</div><div class="stat-value blue" id="statOpen">0</div><div class="stat-sub" id="statOpenSub">—</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Win Rate</div><div class="stat-value cyan" id="statWR">—</div><div class="stat-sub" id="statWRSub">— W / — L</div></div>
       <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="statPnl">+0.0000</div><div class="stat-sub">USDT closed trades</div></div>
-      <div class="stat-card c-purple"><div class="stat-label">Model Accuracy</div><div class="stat-value purple" id="statModelAcc">73.1%</div><div class="stat-sub">XGB + RF + GB</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Model Accuracy</div><div class="stat-value purple" id="statModelAcc">—</div><div class="stat-sub" id="statModelSub">—</div></div>
       <div class="stat-card c-green"><div class="stat-label">Today Signals</div><div class="stat-value green" id="statSigToday">0</div><div class="stat-sub" id="statSigSub">0 BUY · 0 SELL</div></div>
-      <div class="stat-card c-blue"><div class="stat-label">Monitoring</div><div class="stat-value blue" style="font-size:14px">28 pairs</div><div class="stat-sub">5 tiers · 15 min scan</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Monitoring</div><div class="stat-value blue" style="font-size:14px" id="statPairsCount">—</div><div class="stat-sub" id="statTiersSub">—</div></div>
     </div>
     <div class="scan-mode-bar active-mode" id="scanModeBar">
       <div class="smode-dot"></div>
       <div style="flex:1">
         <div style="font-weight:600;font-size:11px" id="smodeTitleMain">ACTIVE HOURS — Scanning every 15 minutes</div>
-        <div style="font-size:9px;opacity:0.8;margin-top:1px" id="smodeSubMain">Min confidence: EV-Calibrated · Min score: 3/6 · UTC 08:00–20:00</div>
+        <div style="font-size:9px;opacity:0.8;margin-top:1px" id="smodeSubMain">Min confidence: Dynamic EV · Min score: 3/6 · UTC 08:00–20:00</div>
       </div>
       <div style="font-size:9px;padding:2px 6px;border-radius:8px;background:rgba(0,0,0,0.3);border:1px solid currentColor;opacity:0.7" id="smodeBadge">ACTIVE</div>
     </div>
@@ -388,8 +386,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <!-- MARKET PAGE -->
   <div class="page" id="page-market">
     <div class="stats-row">
-      <div class="stat-card c-green"><div class="stat-label">Gainers</div><div class="stat-value green" id="mkt-gainers">0</div><div class="stat-sub">of 28 pairs</div></div>
-      <div class="stat-card c-red"><div class="stat-label">Losers</div><div class="stat-value red" id="mkt-losers">0</div><div class="stat-sub">of 28 pairs</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Gainers</div><div class="stat-value green" id="mkt-gainers">0</div><div class="stat-sub" id="mkt-gainers-sub">loading...</div></div>
+      <div class="stat-card c-red"><div class="stat-label">Losers</div><div class="stat-value red" id="mkt-losers">0</div><div class="stat-sub" id="mkt-losers-sub">loading...</div></div>
       <div class="stat-card c-green"><div class="stat-label">Best 24h</div><div class="stat-value green" id="mkt-best">—</div><div class="stat-sub" id="mkt-best-sym">—</div></div>
       <div class="stat-card c-red"><div class="stat-label">Worst 24h</div><div class="stat-value red" id="mkt-worst">—</div><div class="stat-sub" id="mkt-worst-sym">—</div></div>
     </div>
@@ -414,7 +412,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
         </div>
       </div>
       <div class="panel">
-        <div class="panel-header"><span class="panel-title">All 28 Pairs</span><span class="panel-badge" style="color:var(--green)">Live</span></div>
+        <div class="panel-header"><span class="panel-title" id="marketGridTitle">Monitored Pairs</span><span class="panel-badge" style="color:var(--green)">Live</span></div>
         <div style="padding:8px;display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:6px;max-height:500px;overflow-y:auto" id="mktPairsGrid">
           <div class="empty" style="grid-column:1/-1"><div class="emsg">Loading prices...</div></div>
         </div>
@@ -425,9 +423,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <!-- OPEN TRADES PAGE -->
   <div class="page" id="page-trades">
     <div class="stats-row">
-      <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub" id="ot-max-sub">of 2 max</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub" id="ot-max-sub">—</div></div>
       <div class="stat-card c-amber"><div class="stat-label">Unrealised PnL</div><div class="stat-value" id="ot-upnl">+0.0000</div><div class="stat-sub">USDT combined</div></div>
-      <div class="stat-card c-green"><div class="stat-label">Capital at Risk</div><div class="stat-value green" id="ot-risk">—</div><div class="stat-sub">USDT (3% each)</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Capital at Risk</div><div class="stat-value green" id="ot-risk">—</div><div class="stat-sub" id="ot-risk-sub">USDT Risk</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Avg Confidence</div><div class="stat-value cyan" id="ot-conf">—</div><div class="stat-sub">ML score avg</div></div>
     </div>
     <div class="panel">
@@ -497,16 +495,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
           <span style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-left:2px;">Category:</span>
           <select id="histCategoryPick" class="fselect" onchange="renderHistoryFiltered()">
             <option value="all">All Categories / Tiers</option>
-            <option value="big3">👑 Majors</option>
-            <option value="proven">🏆 Proven Winners</option>
-            <option value="micro">💎 Micro-Granular Gems</option>
-            <option value="alts">🏛️ Deep Liquidity Alts</option>
-            <option value="test_lab">🧪 Testnet Lab</option>
           </select>
 
           <span style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-left:2px;">Symbol:</span>
           <select id="histSymbolPick" class="fselect" onchange="renderHistoryFiltered()">
-            <option value="all">All Symbols (28)</option>
+            <option value="all">All Symbols</option>
           </select>
 
           <span style="font-size:9px;color:var(--text3);text-transform:uppercase;margin-left:2px;">Dir:</span>
@@ -608,7 +601,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       </div>
     </div>
     <div class="panel">
-      <div class="panel-header"><span class="panel-title">Signal Performance by Coin (28 Pairs)</span></div>
+      <div class="panel-header"><span class="panel-title">Signal Performance by Coin</span></div>
       <div class="panel-body">
         <div id="coinPerfGrid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:8px">
           <div class="empty" style="grid-column:1/-1"><div class="emsg">Loading...</div></div>
@@ -620,11 +613,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <!-- QUANT ANALYTICS PAGE (WITH VERTICAL TRACKING LINE) -->
   <div class="page" id="page-quant">
     <div class="stats-row">
-      <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">1.82</div><div class="stat-sub">Annualized</div></div>
-      <div class="stat-card c-cyan"><div class="stat-label">Sortino Ratio</div><div class="stat-value cyan" id="q-sortino">2.45</div><div class="stat-sub">Downside Risk</div></div>
-      <div class="stat-card c-purple"><div class="stat-label">Profit Factor</div><div class="stat-value purple" id="q-pf">2.14</div><div class="stat-sub">Gross Win/Loss</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Expectancy (E)</div><div class="stat-value amber" id="q-expect">$+12.40</div><div class="stat-sub">USDT/trade</div></div>
-      <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">-$142.50</div><div class="stat-sub">Peak to Trough</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">—</div><div class="stat-sub">Annualized</div></div>
+      <div class="stat-card c-cyan"><div class="stat-label">Sortino Ratio</div><div class="stat-value cyan" id="q-sortino">—</div><div class="stat-sub">Downside Risk</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Profit Factor</div><div class="stat-value purple" id="q-pf">—</div><div class="stat-sub">Gross Win/Loss</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Expectancy (E)</div><div class="stat-value amber" id="q-expect">—</div><div class="stat-sub">USDT/trade</div></div>
+      <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">—</div><div class="stat-sub">Peak to Trough</div></div>
     </div>
 
     <!-- CUMULATIVE EQUITY CHART -->
@@ -653,18 +646,17 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <!-- EXECUTION MICROSTRUCTURE PAGE -->
   <div class="page" id="page-execution">
     <div class="stats-row">
-      <div class="stat-card c-blue"><div class="stat-label">Avg Slippage</div><div class="stat-value blue" id="ex-slip">0.03%</div><div class="stat-sub">Limit vs Fill</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Funding Drag</div><div class="stat-value amber" id="ex-funding">-$4.20</div><div class="stat-sub">8h Costs</div></div>
-      <div class="stat-card c-green"><div class="stat-label">Maker / Taker</div><div class="stat-value green">80 / 20</div><div class="stat-sub">% Orders</div></div>
-      <div class="stat-card c-purple"><div class="stat-label">Avg Duration</div><div class="stat-value purple">4.2h</div><div class="stat-sub">Hold Time</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Avg Slippage</div><div class="stat-value blue" id="ex-slip">—</div><div class="stat-sub">Limit vs Fill</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Trading Fees</div><div class="stat-value amber" id="ex-fees">—</div><div class="stat-sub">Exchange Costs</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Total Volume</div><div class="stat-value green" id="ex-vol">—</div><div class="stat-sub">USD Traded</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Avg Duration</div><div class="stat-value purple" id="ex-dur">—</div><div class="stat-sub">Hold Time</div></div>
     </div>
     <div class="panel">
       <div class="panel-header"><span class="panel-title">Execution Drag Breakdown</span></div>
       <div class="panel-body">
-        <div class="bal-row"><span style="color:var(--text3)">Gross Realized Strategy PnL</span><span style="color:var(--green)">+$1,240.50 USDT</span></div>
-        <div class="bal-row"><span style="color:var(--text3)">Total Exchange Trading Fees</span><span style="color:var(--red)">-$48.20 USDT</span></div>
-        <div class="bal-row"><span style="color:var(--text3)">Cumulative Funding Fees Paid</span><span style="color:var(--amber)">-$12.10 USDT</span></div>
-        <div class="bal-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px"><span style="color:var(--text);font-weight:700">Net Realized PnL</span><span style="color:var(--green);font-weight:700">+$1,180.20 USDT</span></div>
+        <div class="bal-row"><span style="color:var(--text3)">Gross Realized Strategy PnL</span><span style="color:var(--green)" id="ex-gross">—</span></div>
+        <div class="bal-row"><span style="color:var(--text3)">Total Exchange Trading Fees</span><span style="color:var(--red)" id="ex-fees-sub">—</span></div>
+        <div class="bal-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px"><span style="color:var(--text);font-weight:700">Net Realized PnL</span><span style="color:var(--green);font-weight:700" id="ex-net">—</span></div>
       </div>
     </div>
   </div>
@@ -672,9 +664,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   <!-- MODEL HEALTH PAGE -->
   <div class="page" id="page-modelhealth">
     <div class="stats-row">
-      <div class="stat-card c-purple"><div class="stat-label">Active Model Ensemble</div><div class="stat-value purple">XGB + RF + GB</div><div class="stat-sub">Ensemble V3.5</div></div>
-      <div class="stat-card c-green"><div class="stat-label">Test Accuracy</div><div class="stat-value green" id="mh-acc">73.1%</div><div class="stat-sub">Holdout Set Validation</div></div>
-      <div class="stat-card c-cyan"><div class="stat-label">Market Regime</div><div class="stat-value cyan">Normal Expansion</div><div class="stat-sub">Low Volatility State</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Active Model Ensemble</div><div class="stat-value purple" id="mh-name">—</div><div class="stat-sub">Live Serialization</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Test Accuracy</div><div class="stat-value green" id="mh-acc">—</div><div class="stat-sub">Holdout Set Validation</div></div>
+      <div class="stat-card c-cyan"><div class="stat-label">EV Buy Hurdle</div><div class="stat-value cyan" id="mh-buy-hurdle">—</div><div class="stat-sub">Min Confidence Required</div></div>
     </div>
     <div class="panel">
       <div class="panel-header"><span class="panel-title">Confidence Calibration vs. Actual Win Rate</span></div>
@@ -697,9 +689,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
                 <div style="font-size:9px;color:var(--green);background:var(--green2);padding:1px 6px;border-radius:8px;border:1px solid #10b98130">15 min scan</div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
-                <div class="price-box"><div class="price-lbl">Min Conf</div><div class="price-val" id="cfg-act-conf" style="color:var(--green)">45%</div></div>
-                <div class="price-box"><div class="price-lbl">Min Score</div><div class="price-val" id="cfg-act-score" style="color:var(--amber)">3 / 6</div></div>
-                <div class="price-box"><div class="price-lbl">Min ADX</div><div class="price-val" id="cfg-act-adx" style="color:var(--cyan)">15</div></div>
+                <div class="price-box"><div class="price-lbl">Min Conf</div><div class="price-val" id="cfg-act-conf" style="color:var(--green)">—</div></div>
+                <div class="price-box"><div class="price-lbl">Min Score</div><div class="price-val" id="cfg-act-score" style="color:var(--amber)">—</div></div>
+                <div class="price-box"><div class="price-lbl">Min ADX</div><div class="price-val" id="cfg-act-adx" style="color:var(--cyan)">—</div></div>
               </div>
             </div>
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px">
@@ -708,68 +700,34 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
                 <div style="font-size:9px;color:var(--purple);background:var(--purple2);padding:1px 6px;border-radius:8px;border:1px solid #8b5cf630">30 min scan</div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
-                <div class="price-box"><div class="price-lbl">Min Conf</div><div class="price-val" id="cfg-q-conf" style="color:var(--purple)">55%</div></div>
-                <div class="price-box"><div class="price-lbl">Min Score</div><div class="price-val" id="cfg-q-score" style="color:var(--amber)">3 / 6</div></div>
-                <div class="price-box"><div class="price-lbl">Min ADX</div><div class="price-val" id="cfg-q-adx" style="color:var(--cyan)">18</div></div>
+                <div class="price-box"><div class="price-lbl">Min Conf</div><div class="price-val" id="cfg-q-conf" style="color:var(--purple)">—</div></div>
+                <div class="price-box"><div class="price-lbl">Min Score</div><div class="price-val" id="cfg-q-score" style="color:var(--amber)">—</div></div>
+                <div class="price-box"><div class="price-lbl">Min ADX</div><div class="price-val" id="cfg-q-adx" style="color:var(--cyan)">—</div></div>
               </div>
             </div>
           </div>
         </div>
       </div>
       <div class="panel">
-        <div class="panel-header"><span class="panel-title">Risk Management (V3.5)</span></div>
+        <div class="panel-header"><span class="panel-title">Risk Management Config</span></div>
         <div class="panel-body">
           <div style="display:flex;flex-direction:column;gap:6px">
-            <div class="bal-row"><span style="color:var(--text3)">Risk Per Trade</span><span style="color:var(--green)" id="cfg-risk-pct">3.0% of balance</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Max Open Trades</span><span style="color:var(--blue)" id="cfg-max-open">2 simultaneously</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Max Same Direction</span><span style="color:var(--cyan)" id="cfg-max-dir">2 BUY or 2 SELL</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Stop Loss</span><span style="color:var(--red)" id="cfg-stop-mult">2.5x ATR</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Target 1 (TP1)</span><span style="color:var(--green)" id="cfg-tp1-mult">3.5x ATR</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Target 2 (TP2)</span><span style="color:var(--green)" id="cfg-tp2-mult">7.5x ATR</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Rolling Circuit Breaker</span><span style="color:var(--red)">6 Trades &lt;40% WR</span></div>
-            <div class="bal-row"><span style="color:var(--text3)">Stale Trade Exit</span><span style="color:var(--text2)" id="cfg-max-age">48h without TP1</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Risk Per Trade</span><span style="color:var(--green)" id="cfg-risk-pct">—</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Max Open Trades</span><span style="color:var(--blue)" id="cfg-max-open">—</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Max Same Direction</span><span style="color:var(--cyan)" id="cfg-max-dir">—</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Stop Loss</span><span style="color:var(--red)" id="cfg-stop-mult">—</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Target 1 (TP1)</span><span style="color:var(--green)" id="cfg-tp1-mult">—</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Target 2 (TP2)</span><span style="color:var(--green)" id="cfg-tp2-mult">—</span></div>
+            <div class="bal-row"><span style="color:var(--text3)">Stale Trade Exit</span><span style="color:var(--text2)" id="cfg-max-age">—</span></div>
           </div>
         </div>
       </div>
     </div>
     <div class="panel">
-      <div class="panel-header"><span class="panel-title">Monitored Assets (28 Active Pairs Across 5 Tiers)</span></div>
+      <div class="panel-header"><span class="panel-title" id="cfgTiersHeader">Active Monitored Asset Tiers</span></div>
       <div class="panel-body">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px">
-          <div>
-            <div style="font-size:9px;color:var(--amber);margin-bottom:6px;">👑 MAJORS</div>
-            <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">ETH / USDC</div><div class="bal-row">BNB / USDC</div><div class="bal-row">SOL / USDC</div>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:9px;color:var(--green);margin-bottom:6px;">🏆 PROVEN WINNERS</div>
-            <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">XRP</div><div class="bal-row">NEAR</div><div class="bal-row">LTC</div>
-              <div class="bal-row">UNI</div><div class="bal-row">BCH</div><div class="bal-row">DOT</div><div class="bal-row">ALGO</div>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:9px;color:var(--cyan);margin-bottom:6px;">💎 MICRO-GEMS (&lt;$0.20)</div>
-            <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">ENA</div><div class="bal-row">DOGE</div><div class="bal-row">TRUMP</div>
-              <div class="bal-row">PUMP</div><div class="bal-row">AAVE</div>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:9px;color:var(--blue);margin-bottom:6px;">🏛️ LIQUIDITY ALTS</div>
-            <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">LINK</div><div class="bal-row">SUI</div><div class="bal-row">AVAX</div>
-              <div class="bal-row">ADA</div><div class="bal-row">TRX</div>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:9px;color:var(--purple);margin-bottom:6px;">🧪 TESTNET LAB</div>
-            <div style="display:flex;flex-direction:column;gap:3px">
-              <div class="bal-row">ZEC</div><div class="bal-row">TAO</div><div class="bal-row">XLM</div>
-              <div class="bal-row">HBAR</div><div class="bal-row">PENDLE</div><div class="bal-row">WIF</div><div class="bal-row">CRV</div><div class="bal-row">RENDER</div>
-            </div>
-          </div>
+        <div id="cfgTiersDynamicGrid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px">
+          <div class="empty">Loading active tiers...</div>
         </div>
       </div>
     </div>
@@ -852,7 +810,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
         <div class="mon-card-bd">
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-scan"></span>Last Scan</span><span class="mon-val" id="v-scan">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-fresh"></span>Scan Freshness</span><span class="mon-val" id="v-fresh">—</span></div>
-          <div class="mon-row"><span class="mon-label"><span class="mon-dot ok" id="d-model"></span>AI Model</span><span class="mon-val" style="color:var(--green)">73.1% accuracy</span></div>
+          <div class="mon-row"><span class="mon-label"><span class="mon-dot ok" id="d-model"></span>AI Model</span><span class="mon-val" style="color:var(--green)" id="v-model-health-acc">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-sigs"></span>Signals Today</span><span class="mon-val" id="v-sigs">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-circuit"></span>Circuit Breaker</span><span class="mon-val" id="v-circuit">—</span></div>
         </div>
@@ -870,7 +828,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       <div class="mon-card">
         <div class="mon-card-hd"><span class="mon-card-title">🔒 Trade Integrity</span><span style="font-size:9px;color:var(--text3)" id="mT5">—</span></div>
         <div class="mon-card-bd">
-          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-slots"></span>Trade Slots</span><span class="mon-val" id="v-slots">0 / 2</span></div>
+          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-slots"></span>Trade Slots</span><span class="mon-val" id="v-slots">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-sltp"></span>SL/TP Integrity</span><span class="mon-val" id="v-sltp">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-ghost"></span>Ghost Trades</span><span class="mon-val" id="v-ghost">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-wr"></span>Win Rate</span><span class="mon-val" id="v-wr">—</span></div>
@@ -882,9 +840,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
         <div class="mon-card-bd">
           <div class="mon-row"><span class="mon-label"><span class="mon-dot ok"></span>Deribit API Keys</span><span class="mon-val" style="color:var(--green)">Configured</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot ok"></span>Telegram Keys</span><span class="mon-val" style="color:var(--green)">Configured</span></div>
-          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-risk"></span>Risk / Trade</span><span class="mon-val" id="v-risk">3%</span></div>
+          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-risk"></span>Risk / Trade</span><span class="mon-val" id="v-risk">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-dloss"></span>Daily Loss Limit</span><span class="mon-val" id="v-dloss">5% of balance</span></div>
-          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-maxage"></span>Stale Exit Age</span><span class="mon-val" id="v-maxage">48h without TP1</span></div>
+          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-maxage"></span>Stale Exit Age</span><span class="mon-val" id="v-maxage">—</span></div>
         </div>
       </div>
     </div>
@@ -935,17 +893,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 
 <script>
 // ═══════════════════════════════════════════════════════
-// STATE & UTILS (28 ACTIVE MONITORED PAIRS ACROSS 5 TIERS)
+// DYNAMIC STATE & UTILITIES
 // ═══════════════════════════════════════════════════════
-const API_BASE = "";
-const COINS = {
-  big3:     ["ETHUSDT","BNBUSDT","SOLUSDT"],
-  proven:   ["XRPUSDT","NEARUSDT","LTCUSDT","UNIUSDT","BCHUSDT","DOTUSDT","ALGOUSDT"],
-  micro:    ["ENAUSDT","DOGEUSDT","TRUMPUSDT","PUMPUSDT","AAVEUSDT"],
-  alts:     ["LINKUSDT","SUIUSDT","AVAXUSDT","ADAUSDT","TRXUSDT"],
-  test_lab: ["ZECUSDT","TAOUSDT","XLMUSDT","HBARUSDT","PENDLEUSDT","WIFUSDT","CRVUSDT","RENDERUSDT"]
-};
-const ALL_COINS = [...COINS.big3, ...COINS.proven, ...COINS.micro, ...COINS.alts, ...COINS.test_lab];
+let ALL_COINS = [];
+let COIN_TIERS_MAP = {};
 const PAGES = {
   dashboard:'Dashboard', signals:'Signals', market:'Market', trades:'Open Trades',
   history:'History', performance:'Performance', quant:'Quant Analytics',
@@ -970,7 +921,8 @@ function showPage(id) {
   document.getElementById('pageTitle').textContent = PAGES[id] || id;
 
   if (id === 'quant') fetchAnalytics();
-  if (id === 'modelhealth') renderCalibrationChart();
+  if (id === 'execution') fetchExecutionData();
+  if (id === 'modelhealth') fetchModelHealth();
   if (id === 'history') { fetchHistory(); fetchEmailTracker(); }
   if (id === 'performance') fetchHistory();
   if (id === 'market') fetchMarketData();
@@ -1008,7 +960,7 @@ async function apiFetch(path, fallback, opts) {
   }
 }
 
-// ── PROBATION & COOLDOWN TRACKER FETCHERS ─────────────────────────────
+// ── PROBATION & COOLDOWN TRACKER (REAL BACKEND AUDIT) ──────────────────
 async function fetchProbationData() {
   const d = await apiFetch('/api/probation', { ok: false, probated_coins: [] });
   if (d && d.ok) {
@@ -1024,7 +976,7 @@ function renderProbationTracker() {
   if (!tbody) return;
 
   if (!probatedCoinsData.length) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:12px;color:var(--green)">✓ All 28 coins operating under standard confidence thresholds</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:12px;color:var(--green)">✓ All ${ALL_COINS.length || 'monitored'} coins operating under standard confidence thresholds</td></tr>`;
     return;
   }
 
@@ -1070,13 +1022,20 @@ async function fetchStatus() {
   document.getElementById('statWR').className    = 'stat-value ' + (wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red');
   document.getElementById('statWRSub').textContent = (d.wins||0) + ' W / ' + (d.losses||0) + ' L';
   document.getElementById('statOpen').textContent  = d.open_trades || 0;
-  document.getElementById('statOpenSub').textContent = (d.open_trades||0) + ' of ' + (d.max_trades||2) + ' max';
+  document.getElementById('statOpenSub').textContent = `of ${d.max_trades || 2} max`;
+  document.getElementById('ot-max-sub').textContent = `of ${d.max_trades || 2} max`;
 
-  const modelAcc = d.model_accuracy || '73.1%';
-  ['topAccuracy', 'statModelAcc', 'mh-acc'].forEach(id => {
+  const modelAcc = d.model_accuracy || '—';
+  ['topAccuracy', 'statModelAcc', 'mh-acc', 'v-model-health-acc'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = modelAcc;
   });
+
+  const modelName = d.model_name || 'Trained Ensemble';
+  const mSub = document.getElementById('statModelSub');
+  if (mSub) mSub.textContent = modelName;
+  const mhName = document.getElementById('mh-name');
+  if (mhName) mhName.textContent = modelName;
 
   const pnl = d.total_pnl || 0;
   const pnlEl = document.getElementById('statPnl');
@@ -1087,6 +1046,13 @@ async function fetchStatus() {
 
   document.getElementById('statSigToday').textContent = d.today_signals || 0;
   document.getElementById('statSigSub').textContent   = (d.today_buys||0) + ' BUY · ' + (d.today_sells||0) + ' SELL';
+
+  const pairsCount = d.total_monitored_pairs || ALL_COINS.length || 0;
+  const tiersCount = d.total_tiers || Object.keys(COIN_TIERS_MAP).length || 0;
+  document.getElementById('topMonitoredCount').textContent = pairsCount;
+  document.getElementById('topTiersCount').textContent = `${tiersCount} tiers`;
+  document.getElementById('statPairsCount').textContent = `${pairsCount} pairs`;
+  document.getElementById('statTiersSub').textContent = `${tiersCount} tiers · 15 min scan`;
 }
 
 async function fetchBalance() {
@@ -1135,6 +1101,10 @@ async function fetchOpenTrades() {
     upnlEl.textContent = (totalUpnl >= 0 ? '+' : '') + totalUpnl.toFixed(4);
     upnlEl.style.color = totalUpnl >= 0 ? 'var(--green)' : 'var(--red)';
   }
+
+  const totalRisk = data.reduce((s, t) => s + (parseFloat(t.risk_usd) || 0), 0);
+  const otRisk = document.getElementById('ot-risk');
+  if (otRisk) otRisk.textContent = totalRisk > 0 ? `$${totalRisk.toFixed(2)}` : '—';
 
   const html = data.length ? data.map(t => renderTradeCard(t)).join('') :
     '<div class="empty" style="text-align:center;padding:40px;color:gray;"><div style="font-size:32px;margin-bottom:8px;">📭</div><div>No open trades.<br><small>Bot scans every 15 min.</small></div></div>';
@@ -1211,7 +1181,6 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
 
   const slTrailedInProfit = isBuy ? (sl >= entry) : (sl <= entry);
   const slAtTp1 = Math.abs(sl - tp1) < (entry * 0.0005);
-
   const norm = v => isBuy ? v : (2 * entry - v);
 
   const nEntry = norm(entry);
@@ -1443,16 +1412,24 @@ function setHistResult(res, btn) {
 
 function applyCustomRange() { renderHistoryFiltered(); }
 
-function populateSymbolPicklist() {
-  const select = document.getElementById('histSymbolPick');
-  if (!select || select.options.length > 1) return;
-  
-  ALL_COINS.forEach(sym => {
-    const opt = document.createElement('option');
-    opt.value = sym;
-    opt.textContent = sym.replace('USDT', '') + ' / USDT';
-    select.appendChild(opt);
-  });
+function populateDynamicPicklists() {
+  // Populate Symbol dropdown dynamically
+  const symSelect = document.getElementById('histSymbolPick');
+  if (symSelect && ALL_COINS.length) {
+    const current = symSelect.value;
+    symSelect.innerHTML = `<option value="all">All Symbols (${ALL_COINS.length})</option>` +
+      ALL_COINS.map(sym => `<option value="${sym}">${sym.replace('USDT', '')} / USDT</option>`).join('');
+    symSelect.value = current || 'all';
+  }
+
+  // Populate Category dropdown dynamically
+  const catSelect = document.getElementById('histCategoryPick');
+  if (catSelect && Object.keys(COIN_TIERS_MAP).length) {
+    const current = catSelect.value;
+    catSelect.innerHTML = `<option value="all">All Categories / Tiers</option>` +
+      Object.entries(COIN_TIERS_MAP).map(([k, v]) => `<option value="${k}">${v.label || k}</option>`).join('');
+    catSelect.value = current || 'all';
+  }
 }
 
 function resetHistFilters() {
@@ -1504,8 +1481,8 @@ function getHistFiltered() {
     if (histResultFilter === 'win' && !isWin(t)) return false;
     if (histResultFilter === 'loss' && isWin(t)) return false;
 
-    if (category !== 'all') {
-      const allowedCoins = COINS[category] || [];
+    if (category !== 'all' && COIN_TIERS_MAP[category]) {
+      const allowedCoins = COIN_TIERS_MAP[category].coins || [];
       if (!allowedCoins.includes(t.symbol)) return false;
     }
 
@@ -1541,7 +1518,7 @@ function getHistFiltered() {
 }
 
 function renderHistoryFiltered() {
-  populateSymbolPicklist();
+  populateDynamicPicklists();
   const real  = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
   const isWin = t => (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
   const wins  = real.filter(t => isWin(t));
@@ -1648,7 +1625,7 @@ function renderCoinPerformance(realTrades) {
   }).join('');
 }
 
-// 🎯 Market Data & ATR
+// 🎯 Market Data & ATR (Dynamic Fetch for Active Universe)
 async function fetchMarketData() {
   try {
     let fg = await fetch('https://api.alternative.me/fng/?limit=1').then(r=>r.json()).catch(()=>null);
@@ -1672,25 +1649,19 @@ async function fetchMarketData() {
   } catch(e) {}
 
   try {
-    let map = {};
-    const binanceRes = await fetch('https://api.binance.com/api/v3/ticker/24hr').then(r=>r.json()).catch(()=>null);
-    if (binanceRes && Array.isArray(binanceRes)) {
-      binanceRes.forEach(t => { map[t.symbol] = t; });
-    } else {
-      map = await apiFetch('/api/market', {});
-    }
-
+    const map = await apiFetch('/api/market', {});
     let gainers=0, losers=0, best=null, worst=null;
     const grid = document.getElementById('mktPairsGrid');
+    
     if (grid && Object.keys(map).length) {
       grid.innerHTML = ALL_COINS.map(sym => {
         const t = map[sym];
         if (!t) return '';
-        const price = parseFloat(t.lastPrice || t.price || 0);
-        const chg   = parseFloat(t.priceChangePercent || t.change_24h || 0);
+        const price = parseFloat(t.lastPrice || 0);
+        const chg   = parseFloat(t.priceChangePercent || 0);
         if (chg > 0) gainers++; else losers++;
-        if (!best  || chg > parseFloat(map[best]?.priceChangePercent||map[best]?.change_24h||0))  best  = sym;
-        if (!worst || chg < parseFloat(map[worst]?.priceChangePercent||map[worst]?.change_24h||0)) worst = sym;
+        if (!best  || chg > parseFloat(map[best]?.priceChangePercent||0)) best = sym;
+        if (!worst || chg < parseFloat(map[worst]?.priceChangePercent||0)) worst = sym;
         const dec = price < 1 ? 4 : price < 100 ? 2 : 0;
         return `<div class="market-card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
@@ -1698,41 +1669,32 @@ async function fetchMarketData() {
             <span class="mc-chg ${chg>=0?'up':'down'}">${pct(chg)}</span>
           </div>
           <div class="mc-price">$${price.toLocaleString('en',{minimumFractionDigits:dec,maximumFractionDigits:dec})}</div>
-          <div style="font-size:9px;color:var(--text3)">Vol: $${(parseFloat(t.quoteVolume||t.volume_24h||0)/1e6).toFixed(1)}M</div>
+          <div style="font-size:9px;color:var(--text3)">Vol: $${(parseFloat(t.quoteVolume||0)/1e6).toFixed(1)}M</div>
         </div>`;
       }).join('');
     }
-    ['mkt-gainers','mkt-losers'].forEach((id,i) => { const el=document.getElementById(id); if(el) el.textContent=[gainers,losers][i]; });
-    if (best) { document.getElementById('mkt-best').textContent=pct(parseFloat(map[best].priceChangePercent||map[best].change_24h||0)); document.getElementById('mkt-best-sym').textContent=best; }
-    if (worst){ document.getElementById('mkt-worst').textContent=pct(parseFloat(map[worst].priceChangePercent||map[worst].change_24h||0));document.getElementById('mkt-worst-sym').textContent=worst; }
+    
+    document.getElementById('mkt-gainers').textContent = gainers;
+    document.getElementById('mkt-losers').textContent = losers;
+    document.getElementById('mkt-gainers-sub').textContent = `of ${ALL_COINS.length} pairs`;
+    document.getElementById('mkt-losers-sub').textContent = `of ${ALL_COINS.length} pairs`;
+    document.getElementById('marketGridTitle').textContent = `All ${ALL_COINS.length} Pairs`;
+
+    if (best) { document.getElementById('mkt-best').textContent=pct(parseFloat(map[best].priceChangePercent||0)); document.getElementById('mkt-best-sym').textContent=best; }
+    if (worst){ document.getElementById('mkt-worst').textContent=pct(parseFloat(map[worst].priceChangePercent||0));document.getElementById('mkt-worst-sym').textContent=worst; }
     fetchBtcAtr();
   } catch(e) { console.warn('Market fetch error:', e); }
 }
 
 async function fetchBtcAtr() {
   try {
-    let atr, pctV, price, chg;
-    const directKlines = await fetch('https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=30').then(r=>r.json()).catch(()=>null);
-    const directTicker = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT').then(r=>r.json()).catch(()=>null);
+    const proxyRes = await apiFetch('/api/btc_atr', null);
+    if (proxyRes && proxyRes.ok && proxyRes.atr > 0) {
+      const atr = proxyRes.atr;
+      const pctV = proxyRes.pct;
+      const price = proxyRes.price;
+      const chg = proxyRes.chg_24h;
 
-    if (directKlines && directTicker) {
-      const df   = directKlines.map(d => ({h:parseFloat(d[2]),l:parseFloat(d[3]),c:parseFloat(d[4])}));
-      const trs  = df.map((d,i) => i===0?d.h-d.l:Math.max(d.h-d.l,Math.abs(d.h-df[i-1].c),Math.abs(d.l-df[i-1].c)));
-      atr  = trs.slice(-14).reduce((s,v)=>s+v,0)/14;
-      price= df[df.length-1].c;
-      pctV = atr/price*100;
-      chg  = parseFloat(directTicker.priceChangePercent);
-    } else {
-      const proxyRes = await apiFetch('/api/btc_atr', null);
-      if (proxyRes && proxyRes.ok) {
-        atr   = proxyRes.atr;
-        pctV  = proxyRes.pct;
-        price = proxyRes.price;
-        chg   = proxyRes.chg_24h;
-      }
-    }
-
-    if (atr && price) {
       document.getElementById('btcAtr').textContent    = atr.toFixed(2);
       document.getElementById('btcAtrPct').textContent = pctV.toFixed(2)+'%';
       document.getElementById('btcPrice').textContent  = '$'+price.toLocaleString('en',{maximumFractionDigits:0});
@@ -1763,14 +1725,39 @@ async function fetchAnalytics() {
   const d = await apiFetch('/api/analytics', null);
   if (!d || !d.ok) return;
 
-  document.getElementById('q-sharpe').textContent = d.sharpe_ratio;
-  document.getElementById('q-sortino').textContent = d.sortino_ratio;
-  document.getElementById('q-pf').textContent = d.profit_factor;
-  document.getElementById('q-expect').textContent = (d.expectancy_usdt >= 0 ? '+$' : '-$') + Math.abs(d.expectancy_usdt).toFixed(2);
-  document.getElementById('q-maxdd').textContent = '-$' + d.max_drawdown_usdt.toFixed(2);
+  document.getElementById('q-sharpe').textContent = d.sharpe_ratio != null ? d.sharpe_ratio : '—';
+  document.getElementById('q-sortino').textContent = d.sortino_ratio != null ? d.sortino_ratio : '—';
+  document.getElementById('q-pf').textContent = d.profit_factor != null ? d.profit_factor : '—';
+  document.getElementById('q-expect').textContent = d.expectancy_usdt != null ? (d.expectancy_usdt >= 0 ? '+$' : '-$') + Math.abs(d.expectancy_usdt).toFixed(2) : '—';
+  document.getElementById('q-maxdd').textContent = d.max_drawdown_usdt != null ? '-$' + d.max_drawdown_usdt.toFixed(2) : '—';
 
   renderEquityChart(d.equity_curve || []);
   renderDailyPnlChart(d.daily_pnl || []);
+}
+
+async function fetchExecutionData() {
+  const d = await apiFetch('/api/execution', null);
+  if (!d || !d.ok) return;
+
+  document.getElementById('ex-slip').textContent = `${d.avg_slippage_pct}%`;
+  document.getElementById('ex-fees').textContent = `-$${d.total_fees}`;
+  document.getElementById('ex-vol').textContent = `$${(d.total_volume_traded_usd / 1000).toFixed(1)}k`;
+  document.getElementById('ex-dur').textContent = `${d.avg_duration_h}h`;
+
+  document.getElementById('ex-gross').textContent = `${d.gross_pnl >= 0 ? '+' : ''}$${d.gross_pnl.toFixed(2)} USDT`;
+  document.getElementById('ex-fees-sub').textContent = `-$${d.total_fees.toFixed(2)} USDT`;
+  document.getElementById('ex-net').textContent = `${d.net_pnl >= 0 ? '+' : ''}$${d.net_pnl.toFixed(2)} USDT`;
+}
+
+async function fetchModelHealth() {
+  const d = await apiFetch('/api/model_health', null);
+  if (!d || !d.ok) return;
+
+  document.getElementById('mh-name').textContent = d.ensemble_name;
+  document.getElementById('mh-acc').textContent = d.test_accuracy;
+  document.getElementById('mh-buy-hurdle').textContent = `BUY ≥${d.rec_buy_threshold}% | SELL ≥${d.rec_sell_threshold}%`;
+
+  renderDynamicCalibrationChart(d.calibration);
 }
 
 // ── Straight Vertical Line Crosshair Plugin ────────────────────────
@@ -1797,7 +1784,6 @@ const verticalLinePlugin = {
   }
 };
 
-// ── Cumulative Equity Chart (Vertical Scrubber Line) ──────────────────
 function renderEquityChart(points) {
   const ctx = document.getElementById('equityChart')?.getContext('2d');
   if (!ctx) return;
@@ -1827,43 +1813,24 @@ function renderEquityChart(points) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: {
-        mode: 'index',
-        intersect: false,
-      },
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
         tooltip: {
-          enabled: true,
-          mode: 'index',
-          intersect: false,
-          backgroundColor: '#0c1018',
-          titleColor: '#94a3b8',
-          bodyColor: '#10b981',
-          borderColor: '#1a2535',
-          borderWidth: 1,
-          padding: 10,
-          displayColors: false,
-          callbacks: {
-            label: (ctx) => ` Equity: $${Number(ctx.raw).toLocaleString('en', {minimumFractionDigits: 2})}`
-          }
+          enabled: true, mode: 'index', intersect: false,
+          backgroundColor: '#0c1018', titleColor: '#94a3b8', bodyColor: '#10b981',
+          borderColor: '#1a2535', borderWidth: 1, padding: 10, displayColors: false,
+          callbacks: { label: (ctx) => ` Equity: $${Number(ctx.raw).toLocaleString('en', {minimumFractionDigits: 2})}` }
         }
       },
       scales: {
-        x: {
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 10 }
-        },
-        y: {
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#10b981', font: { family: 'JetBrains Mono', size: 10 } }
-        }
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 10 } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#10b981', font: { family: 'JetBrains Mono', size: 10 } } }
       }
     }
   });
 }
 
-// ── Daily Realized PnL Chart (Vertical Scrubber Line) ─────────────────
 function renderDailyPnlChart(dailyPoints) {
   const ctx = document.getElementById('dailyPnlChart')?.getContext('2d');
   if (!ctx) return;
@@ -1885,41 +1852,24 @@ function renderDailyPnlChart(dailyPoints) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: {
-        mode: 'index',
-        intersect: false,
-      },
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
         tooltip: {
-          enabled: true,
-          mode: 'index',
-          intersect: false,
-          backgroundColor: '#0c1018',
-          borderColor: '#1a2535',
-          borderWidth: 1,
-          padding: 10,
-          displayColors: false,
-          callbacks: {
-            label: (ctx) => ` PnL: ${ctx.raw >= 0 ? '+' : ''}$${Number(ctx.raw).toFixed(2)} USDT`
-          }
+          enabled: true, mode: 'index', intersect: false,
+          backgroundColor: '#0c1018', borderColor: '#1a2535', borderWidth: 1, padding: 10, displayColors: false,
+          callbacks: { label: (ctx) => ` PnL: ${ctx.raw >= 0 ? '+' : ''}$${Number(ctx.raw).toFixed(2)} USDT` }
         }
       },
       scales: {
-        x: {
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 12 }
-        },
-        y: {
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#cbd5e1', font: { family: 'JetBrains Mono', size: 10 } }
-        }
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#cbd5e1', font: { family: 'JetBrains Mono', size: 10 } } }
       }
     }
   });
 }
 
-function renderCalibrationChart() {
+function renderDynamicCalibrationChart(calData) {
   const ctx = document.getElementById('calibrationChart')?.getContext('2d');
   if (!ctx) return;
   if (calibrationChartInst) calibrationChartInst.destroy();
@@ -1927,10 +1877,10 @@ function renderCalibrationChart() {
   calibrationChartInst = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: ['45-55% Conf', '55-65% Conf', '65-75% Conf', '75%+ Conf'],
+      labels: calData.labels || ['45-55% Conf', '55-65% Conf', '65-75% Conf', '75%+ Conf'],
       datasets: [
-        { label: 'Target Win Rate', data: [55, 65, 75, 85], backgroundColor: 'rgba(59,130,246,0.5)' },
-        { label: 'Live Win Rate', data: [58, 67, 78, 88], backgroundColor: 'rgba(16,185,129,0.8)' }
+        { label: 'Target Win Rate', data: calData.target || [55, 65, 75, 85], backgroundColor: 'rgba(59,130,246,0.5)' },
+        { label: 'Live Win Rate', data: calData.live || [0, 0, 0, 0], backgroundColor: 'rgba(16,185,129,0.8)' }
       ]
     },
     options: { responsive: true, maintainAspectRatio: false, scales: { y: { max: 100 } } }
@@ -1991,23 +1941,45 @@ async function fetchConfig() {
   const d = await apiFetch('/api/config', null);
   if (!d || !d.ok) return;
 
+  ALL_COINS = d.symbols || [];
+  COIN_TIERS_MAP = d.coin_tiers || {};
+
+  buildCoinChips();
+  populateDynamicPicklists();
+
   const bind = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
   
-  bind('cfg-act-conf', (d.active_conf || 45) + '%');
-  bind('cfg-act-score', (d.active_score || 3) + ' / 6');
-  bind('cfg-act-adx', d.active_adx || 15);
+  bind('cfg-act-conf', `${d.active_conf}%`);
+  bind('cfg-act-score', `${d.active_score} / 6`);
+  bind('cfg-act-adx', d.active_adx);
 
-  bind('cfg-q-conf', (d.quiet_conf || 55) + '%');
-  bind('cfg-q-score', (d.quiet_score || 3) + ' / 6');
-  bind('cfg-q-adx', d.quiet_adx || 18);
+  bind('cfg-q-conf', `${d.quiet_conf}%`);
+  bind('cfg-q-score', `${d.quiet_score} / 6`);
+  bind('cfg-q-adx', d.quiet_adx);
 
-  bind('cfg-risk-pct', d.risk_per_trade_pct.toFixed(1) + '% of balance');
-  bind('cfg-max-open', d.max_open_trades + ' simultaneously');
-  bind('cfg-max-dir',  d.max_same_direction + ' BUY or SELL');
-  bind('cfg-stop-mult', d.atr_stop_mult + 'x ATR');
-  bind('cfg-tp1-mult',  d.atr_target1_mult + 'x ATR');
-  bind('cfg-tp2-mult',  d.atr_target2_mult + 'x ATR');
-  bind('cfg-max-age',   d.max_trade_age_hours + 'h without TP1');
+  bind('cfg-risk-pct', `${d.risk_per_trade_pct}% of balance`);
+  bind('cfg-max-open', `${d.max_open_trades} simultaneously`);
+  bind('cfg-max-dir',  `${d.max_same_direction} BUY or SELL`);
+  bind('cfg-stop-mult', `${d.atr_stop_mult}x ATR`);
+  bind('cfg-tp1-mult',  `${d.atr_target1_mult}x ATR`);
+  bind('cfg-tp2-mult',  `${d.atr_target2_mult}x ATR`);
+  bind('cfg-max-age',   `${d.max_trade_age_hours}h without TP1`);
+  bind('v-risk', `${d.risk_per_trade_pct}%`);
+  bind('v-maxage', `${d.max_trade_age_hours}h without TP1`);
+  bind('cfgTiersHeader', `Active Monitored Asset Tiers (${ALL_COINS.length} Pairs Across ${Object.keys(COIN_TIERS_MAP).length} Tiers)`);
+
+  // Render Tiers configuration breakdown dynamically
+  const tierGrid = document.getElementById('cfgTiersDynamicGrid');
+  if (tierGrid && Object.keys(COIN_TIERS_MAP).length) {
+    tierGrid.innerHTML = Object.entries(COIN_TIERS_MAP).map(([k, t]) => `
+      <div>
+        <div style="font-size:9px;color:var(--cyan);margin-bottom:6px;font-weight:700;">${(t.label || k).toUpperCase()}</div>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          ${(t.coins || []).map(c => `<div class="bal-row">${c.replace('USDT','')}</div>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
 }
 
 function openKillModal() { document.getElementById('killModal').classList.add('active'); }
@@ -2031,7 +2003,7 @@ async function triggerKillSwitch() {
 
 function buildCoinChips() {
   const el = document.getElementById('coinChips');
-  if (!el) return;
+  if (!el || !ALL_COINS.length) return;
   el.innerHTML = ALL_COINS.map(c =>
     `<span class="coin-chip" id="chip-${c}">${c.replace('USDT','')}</span>`
   ).join('');
@@ -2099,6 +2071,7 @@ async function runMonitorChecks() {
   mark('d-apims','v-apims', apiMs < 1500, apiMs+'ms');
   mark('d-sltp','v-sltp', integ.sltp_missing===0, integ.sltp_missing===0?'OK':integ.sltp_missing+' missing');
   mark('d-wr','v-wr', true, (integ.win_rate??'—')+'%');
+  sv('v-slots', integ.open_slots || '0 / 2');
 
   const pct2 = total ? Math.round(ok/total*100) : 100;
   const state = pct2>=90?'ok':pct2>=60?'warn':'err', color = state==='ok'?'var(--green)':state==='warn'?'var(--amber)':'var(--red)';
@@ -2222,7 +2195,6 @@ async function sendEmailReport() {
   }
 
   const payload = { email, ...buildReportPayload() };
-
   closeEmailModal();
 
   try {
@@ -2268,6 +2240,7 @@ async function fetchEmailTracker() {
 }
 
 async function refreshAll() {
+  await fetchConfig();
   await Promise.all([
     fetchStatus(),
     fetchBalance(),
@@ -2276,13 +2249,11 @@ async function refreshAll() {
     fetchBtcAtr(),
     fetchMarketData(),
     fetchLog(),
-    fetchConfig(),
     fetchProbationData(),
   ]);
   updateCoinChips();
 }
 
-buildCoinChips();
 refreshAll();
 setInterval(refreshAll, 15000);
 
