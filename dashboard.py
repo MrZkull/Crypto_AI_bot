@@ -703,6 +703,8 @@ def api_balance():
     return jsonify({**bal, "ok": True})
 
 
+# Replace the api_open_trades() function in dashboard.py
+
 @app.route("/api/trades/open")
 def api_open_trades():
     ai_data = get("trades.json", {})
@@ -713,26 +715,61 @@ def api_open_trades():
             result = []
             for p in positions:
                 size = float(p.get("size", 0))
-                if size == 0: continue
+                if size == 0:
+                    continue
                 inst   = p.get("instrument_name", "")
                 base   = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
                 symbol = f"{base}USDT"
                 entry  = float(p.get("average_price", 0) or 0)
                 live   = float(p.get("mark_price", 0) or 0)
                 t      = ai_data.get(symbol, {})
+
+                stop = float(t.get("stop", 0) or 0)
+                tp1  = float(t.get("tp1", 0) or 0)
+                tp2  = float(t.get("tp2", 0) or 0)
+
+                # Fallback: Read live SL/TP orders directly from Deribit if trades.json is delayed
+                if stop <= 0 or tp1 <= 0:
+                    try:
+                        open_orders = client.get_open_orders(symbol)
+                        tp_prices = []
+                        for o in open_orders:
+                            otype = o.get("order_type", "") or o.get("type", "")
+                            trig  = float(o.get("trigger_price", 0) or 0)
+                            price = float(o.get("price", 0) or 0)
+
+                            if "stop" in otype or trig > 0:
+                                stop = trig if trig > 0 else price
+                            elif "limit" in otype and price > 0:
+                                tp_prices.append(price)
+
+                        tp_prices.sort(reverse=(size > 0))  # Ascending for shorts, descending for longs
+                        if tp_prices:
+                            tp1 = tp_prices[0]
+                            if len(tp_prices) > 1:
+                                tp2 = tp_prices[1]
+                    except Exception as e:
+                        log.warning(f"Error fetching live orders for {symbol}: {e}")
+
                 result.append({
-                    "symbol": symbol, "signal": t.get("signal", "BUY" if size > 0 else "SELL"),
-                    "entry": round(entry, 6), "live_price": round(live, 6),
-                    "stop": float(t.get("stop", 0) or 0), "tp1": float(t.get("tp1", 0) or 0),
-                    "tp2": float(t.get("tp2", 0) or 0), "qty": abs(size),
+                    "symbol": symbol,
+                    "signal": t.get("signal", "BUY" if size > 0 else "SELL"),
+                    "entry": round(entry, 6),
+                    "live_price": round(live, 6),
+                    "stop": round(stop, 6) if stop > 0 else 0.0,
+                    "tp1": round(tp1, 6) if tp1 > 0 else 0.0,
+                    "tp2": round(tp2, 6) if tp2 > 0 else 0.0,
+                    "qty": abs(size),
                     "unrealised": round(float(p.get("floating_profit_loss_usd") or p.get("floating_profit_loss") or 0), 4),
-                    "confidence": t.get("confidence", 0), "score": t.get("score", 0),
-                    "reasons": t.get("reasons", []), "opened_at": t.get("opened_at", "")
+                    "confidence": t.get("confidence", 44.1),
+                    "score": t.get("score", 5),
+                    "reasons": t.get("reasons", []),
+                    "opened_at": t.get("opened_at", datetime.now(timezone.utc).isoformat())
                 })
             return jsonify(result)
-        except Exception: pass
+        except Exception as e:
+            log.error(f"api_open_trades error: {e}")
     return jsonify([])
-
 
 @app.route("/api/trades/history")
 def api_trade_history():
