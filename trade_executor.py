@@ -1,4 +1,4 @@
-# trade_executor.py — V3.4: Complete Institutional Execution Engine (Lossless + EV Fix)
+# trade_executor.py — V3.5: Institutional Execution Engine with Rolling Circuit Breaker & 4H Trend Alignment
 
 import os, json, time, logging, requests, joblib, base64, math
 import pandas as pd, numpy as np
@@ -24,27 +24,32 @@ TRADES_FILE        = "trades.json"
 HISTORY_FILE       = "trade_history.json"
 SIGNALS_FILE       = "signals.json"
 BALANCE_FILE       = "balance.json"
-LOCK_FILE          = "scan_lock.json"   # Prevents concurrent execution runs
-STALE_LOCK_MINUTES = 20                 # Auto-clears orphaned scan locks
-MAX_OPEN_TRADES    = 2                  # Cap for micro-capital risk management
+LOCK_FILE          = "scan_lock.json"
+STALE_LOCK_MINUTES = 20
+MAX_OPEN_TRADES    = 2
 
-# --- V2 PRO & PROBATION CONSTANTS ---
+# --- PRO & PROBATION CONSTANTS ---
 COOLDOWN_FILE        = "cooldown.json"
 RELIABILITY_FILE     = "reliability.json"
 COOLDOWN_HOURS       = 2
 GHOST_STRIKE_LIMIT   = 3
-MAX_DAILY_TRADES     = 20  # MAINNET: 8 | TESTNET: 20
+MAX_DAILY_TRADES     = 20
 FUNDING_WARN_PCT     = 0.05
 FUNDING_SKIP_PCT     = 0.10
-ENTRY_MAX_SPREAD_PCT = 0.005  # 0.5% max spread ceiling for NEW trade entries
+ENTRY_MAX_SPREAD_PCT = 0.005
 
-# ── DYNAMIC REGIME PROBATION CONFIGURATION ─────────────────────────────
-CONSECUTIVE_LOSS_BENCH_THRESHOLD = 3      # 3 losses in a row in Normal Mode -> Bench on Probation
-PROBATION_WIN_GOAL               = 3      # 3 accumulated wins in Probation -> Immediate Reinstatement
-PROBATION_MIN_WINS_FOR_TIME_EXIT = 2      # Must have >= 2 wins to exit probation after 7 days
-PROBATION_CONSECUTIVE_LOSS_RESET = 3      # 3 consecutive losses in Probation -> Wipe win streak & reset timer
-PROBATION_CONFIDENCE_OFFSET      = 10.0   # Dynamic +10.0% premium over active baseline
-BENCH_MAX_COOLDOWN_DAYS          = 7      # 7-Day probation evaluation window
+# ── DYNAMIC REGIME PROBATION & ROLLING CIRCUIT BREAKER ─────────────────
+CONSECUTIVE_LOSS_BENCH_THRESHOLD = 3      # 3 losses in a row -> Bench
+PROBATION_WIN_GOAL               = 3      # 3 accumulated wins in Probation -> Reinstatement
+PROBATION_MIN_WINS_FOR_TIME_EXIT = 2      # >= 2 wins to exit probation after 7 days
+PROBATION_CONSECUTIVE_LOSS_RESET = 3      # 3 consecutive losses in Probation -> Reset timer
+PROBATION_CONFIDENCE_OFFSET      = 10.0   # +10.0% confidence premium required
+BENCH_MAX_COOLDOWN_DAYS          = 7      # 7-Day evaluation window
+
+# Rolling-Window Circuit Breaker (Catches alternating loss patterns like L-L-W-W-L-L)
+ROLLING_WINDOW_TRADES            = 6
+ROLLING_MIN_WIN_RATE             = 0.40   # Less than 40% win rate triggers bench
+ROLLING_MAX_NET_LOSS             = 0.0    # Negative net PnL over window triggers bench
 
 GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
 GH_REPO   = os.getenv("GITHUB_REPO", "MrZkull/Crypto_AI_bot")
@@ -93,7 +98,6 @@ def load_cooldown() -> dict: return load_json(COOLDOWN_FILE, {})
 def save_cooldown(d: dict): save_json(COOLDOWN_FILE, d)
 
 def gh_fetch(filename: str):
-    """Fetches raw JSON content from GitHub repository."""
     if not GH_TOKEN or not GH_REPO:
         return None
     headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
@@ -103,7 +107,7 @@ def gh_fetch(filename: str):
             r = requests.get(url, headers=headers, timeout=8)
             if r.status_code == 200:
                 raw_content = base64.b64decode(r.json()["content"]).decode("utf-8")
-                return json.loads(raw_content)
+                return json.loads(raw_content) if filename.endswith(".json") else raw_content
         except Exception as e:
             log.debug(f"gh_fetch failed for {path}: {e}")
     return None
@@ -134,7 +138,7 @@ def _acquire_scan_lock() -> bool:
         if age_min < STALE_LOCK_MINUTES:
             log.warning(f"  🔒 Scan already in progress (started {age_min:.1f}m ago) — skipping this run")
             return False
-        log.warning(f"  🔓 Stale lock from {age_min:.1f}m ago (crashed run?) — clearing and proceeding")
+        log.warning(f"  🔓 Stale lock from {age_min:.1f}m ago — clearing and proceeding")
 
     save_json(LOCK_FILE, {"locked_at": datetime.now(timezone.utc).isoformat()})
     return True
@@ -177,6 +181,41 @@ def _record_ghost(symbol: str):
     log.warning(f"  👻 {symbol}: Ghost trade recorded (Total ghosts: {rel[symbol]['ghosts']})")
     save_reliability(rel)
 
+def _check_rolling_performance(symbol: str) -> bool:
+    """Benches symbols with poor rolling metrics even if losses don't occur strictly back-to-back."""
+    hist = load_history()
+    recent = [
+        h for h in hist
+        if h.get("symbol") == symbol
+        and h.get("close_reason") not in ("Ghost — PnL unrecoverable", "Ghost — broken record")
+    ]
+    recent = sorted(recent, key=lambda h: h.get("closed_at", ""))[-ROLLING_WINDOW_TRADES:]
+
+    if len(recent) < ROLLING_WINDOW_TRADES:
+        return False
+
+    wins = sum(1 for h in recent if float(h.get("pnl", 0)) > 0)
+    net_pnl = sum(float(h.get("pnl", 0)) for h in recent)
+    win_rate = wins / len(recent)
+
+    if win_rate < ROLLING_MIN_WIN_RATE and net_pnl < ROLLING_MAX_NET_LOSS:
+        log.warning(
+            f"  🚫 {symbol}: Rolling {len(recent)}-trade win rate={win_rate:.0%} | "
+            f"Net PnL=${net_pnl:+.2f} — BENCHING ON PROBATION (Rolling Filter)"
+        )
+        rel = load_reliability()
+        if symbol not in rel:
+            rel[symbol] = {
+                "normal_consecutive_losses": 0, "probation_wins": 0,
+                "probation_consecutive_losses": 0, "is_benched": False,
+                "benched_at": 0, "wins": 0, "losses": 0, "ghosts": 0
+            }
+        rel[symbol]["is_benched"] = True
+        rel[symbol]["benched_at"] = time.time()
+        save_reliability(rel)
+        return True
+    return False
+
 def get_required_confidence(symbol: str, current_baseline_conf: float = 40.0) -> float:
     rel = load_reliability()
     if symbol not in rel:
@@ -198,7 +237,7 @@ def get_required_confidence(symbol: str, current_baseline_conf: float = 40.0) ->
                 data["probation_wins"] = 0
                 data["probation_consecutive_losses"] = 0
                 save_reliability(rel)
-                log.info(f"  ⏱️ {symbol}: 7 days elapsed with {p_wins} wins. Reinstated to active baseline ({current_baseline_conf}%).")
+                log.info(f"  ⏱️ {symbol}: 7 days elapsed with {p_wins} wins. Reinstated to baseline ({current_baseline_conf}%).")
                 return current_baseline_conf
             else:
                 data["benched_at"] = now
@@ -296,6 +335,7 @@ def _record_outcome(symbol: str, won: bool):
                 log.warning(f"  🚫 {symbol}: {CONSECUTIVE_LOSS_BENCH_THRESHOLD} consecutive losses! Benched on Probation (+{PROBATION_CONFIDENCE_OFFSET}% Conf Required).")
 
     save_reliability(rel)
+    _check_rolling_performance(symbol)
 
 record_trade_outcome = _record_outcome
 record_ghost         = _record_ghost
@@ -371,7 +411,6 @@ def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, 
     return ""
 
 def _cancel_all_open_orders_for_symbol(deribit: DeribitClient, symbol: str):
-    """Cancels ALL active open orders for this symbol directly on Deribit."""
     try:
         orders = deribit.get_open_orders(symbol)
         if orders:
@@ -524,7 +563,7 @@ def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame) -> pd
     return df.sort_values("open_time").reset_index(drop=True)
 
 
-# ════════════ SIGNAL GENERATION (EV-TUNED THRESHOLDS) ════════════════
+# ════════════ SIGNAL GENERATION (SYMMETRICAL 4H PROTECTED) ════════════
 
 def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None, btc_df15_live=None):
     try:
@@ -577,7 +616,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         rec_sell = pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.40))
         model_ev_target = (rec_buy * 100.0) if sig == "BUY" else (rec_sell * 100.0)
 
-        # Apply Probation offset if coin is benched
+        # Apply Probation offset if coin is benched (consecutive or rolling filter)
         min_required_conf = get_required_confidence(symbol, model_ev_target)
 
         log.info(f"    ML: {sig} {conf:.1f}% (need ≥{min_required_conf:.1f}%)")
@@ -605,21 +644,19 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         rsi_4h = float(r4h.get("rsi", 50))  if not df4h.empty else 50
         trend_bars = 0
 
+        # ── Symmetrical 4H Bias Protection ──
         if not df4h.empty:
             if sig == "BUY" and e20_4h < e50_4h:
-                log.info(f"    [FILTER:4H_BIAS] 4h bearish — skip BUY {symbol}")
+                log.info(f"    [FILTER:4H_BIAS] 4h bearish (EMA20 < EMA50) — hard block BUY {symbol}")
                 return None
+            
             if sig == "SELL" and e20_4h > e50_4h:
-                BIG_THREE = {"BTCUSDT", "ETHUSDT", "BNBUSDT"}
-                if symbol in BIG_THREE:
-                    log.info(f"    [FILTER:4H_BIAS] 4h bullish — hard block SELL {symbol}")
-                    return None
-                elif rsi_4h > 65:
-                    log.info(f"    [FILTER:4H_BIAS] 4h strongly bullish (RSI {rsi_4h:.0f}) — skip SELL {symbol}")
+                if rsi_4h < 75:  # Hard block SELL in a 4H uptrend unless extreme overbought
+                    log.info(f"    [FILTER:4H_BIAS] 4h bullish (EMA20 > EMA50 | RSI {rsi_4h:.0f} < 75) — hard block SELL {symbol}")
                     return None
                 else:
                     score -= 1
-                    reasons.append("4h counter-trend (-1)")
+                    reasons.append("4h extreme overbought counter-trend (-1)")
 
             for i in range(1, min(6, len(df4h))):
                 r_prev = df4h.iloc[-(i+1)]
@@ -630,7 +667,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                 else: break
 
             if trend_bars < 1:
-                log.info(f"    [FILTER:4H_FRESH] trend too fresh ({trend_bars} bars) — skip {symbol}")
+                log.info(f"    [FILTER:4H_FRESH] 4h trend too fresh ({trend_bars} bars) — skip {symbol}")
                 return None
 
         if conf >= (min_required_conf + 15): score+=2; reasons.append(f"Strong conf ({conf:.0f}%)")
@@ -1224,7 +1261,7 @@ def check_open_trades(deribit: DeribitClient):
                     to_remove.append(symbol)
                     continue
 
-            # SL & Advanced Mark-Breach Monitoring
+            # SL & Mark-Breach Monitoring
             if not trade.get("closed") and oids.get("stop_loss"):
                 sl_o     = _safe_get_order(deribit, str(oids["stop_loss"]))
                 sl_state = sl_o.get("order_state", "").lower()
