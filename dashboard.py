@@ -1,4 +1,4 @@
-# dashboard.py — V5.8: Zero-Flicker Architecture with Resilient Fallback Caching
+# dashboard.py — V5.9: Resilient State Shield (Zero Rate-Limit Dropouts)
 
 import os
 import json
@@ -46,7 +46,7 @@ EMAIL_REGEX        = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 _cache = {}
 _cache_ts = {}
-CACHE_TTL = 15  # Retain cache for 15 seconds across concurrent requests
+CACHE_TTL = 30  # 30-second cache window protects against GitHub rate limits
 
 REPORT_STORE = {}
 REPORT_TTL_SECONDS = 60 * 60 * 48
@@ -338,7 +338,7 @@ def check_deribit_health():
         r = requests.get("https://test.deribit.com/api/v2/public/test", timeout=4)
         if r.status_code == 200:
             return {"status": "ONLINE", "msg": "Deribit Operational", "code": 200}
-        elif r.status_code in (502, 503):
+        elif r.status_code in (502, 503, 504):
             return {"status": "MAINTENANCE", "msg": f"Deribit Maintenance (HTTP {r.status_code})", "code": r.status_code}
         else:
             return {"status": "OFFLINE", "msg": f"Deribit API Error (HTTP {r.status_code})", "code": r.status_code}
@@ -355,7 +355,7 @@ def gh_fetch(filename: str):
     for path in [filename, f"data/{filename}"]:
         try:
             url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}?ref={GH_BRANCH}"
-            r = requests.get(url, headers=headers, timeout=5)
+            r = requests.get(url, headers=headers, timeout=4)
             if r.status_code == 200:
                 raw_content = base64.b64decode(r.json()["content"]).decode("utf-8")
                 return json.loads(raw_content) if filename.endswith(".json") else raw_content
@@ -415,7 +415,6 @@ def get(filename: str, default):
 
 
 def bust(filename: str):
-    """Busts cache only during state-mutating actions (POST)."""
     _cache_ts[filename] = 0
 
 
