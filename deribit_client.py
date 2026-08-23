@@ -1,4 +1,4 @@
-# deribit_client.py — V12.4: Full Institutional Execution Engine & Precision Safeguards
+# deribit_client.py — V12.6: Full Institutional Execution Engine & Precision Safeguards
 
 import math
 import time
@@ -69,6 +69,8 @@ SYMBOL_MAP = {
                   "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
     "TRXUSDT":   {"instrument": "TRX_USDC-PERPETUAL",   "currency": "USDC",
                   "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
+    "XLMUSDT":   {"instrument": "XLM_USDC-PERPETUAL",   "currency": "USDC",
+                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
     # "APTUSDT":   {"instrument": "APT_USDC-PERPETUAL",   "currency": "USDC",
     #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
     # "ATOMUSDT":  {"instrument": "ATOM_USDC-PERPETUAL",  "currency": "USDC",
@@ -76,29 +78,27 @@ SYMBOL_MAP = {
     # "FETUSDT":   {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
     #               "min_amount": 1.0,    "max_amount": 100000,   "tick_size": 0.0001},
 
-    # ── 🧪 Tier 5: Testnet Incubation Lab ──
+    # ── 🧪 Tier 5: New Verified Multi-Regime Additions ──
     "ZECUSDT":   {"instrument": "ZEC_USDC-PERPETUAL",   "currency": "USDC",
                   "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
-    "TAOUSDT":   {"instrument": "TAO_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
-    "XLMUSDT":   {"instrument": "XLM_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
     "HBARUSDT":  {"instrument": "HBAR_USDC-PERPETUAL",  "currency": "USDC",
                   "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
-    "PENDLEUSDT":{"instrument": "PENDLE_USDC-PERPETUAL","currency": "USDC",
-                  "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    "WIFUSDT":   {"instrument": "WIF_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
     "CRVUSDT":   {"instrument": "CRV_USDC-PERPETUAL",   "currency": "USDC",
                   "min_amount": 1.0,    "max_amount": 100000,   "tick_size": 0.0001},
-    "RENDERUSDT":{"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+    "FILUSDT":   {"instrument": "FIL_USDC-PERPETUAL",   "currency": "USDC",
                   "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    # "PAXGUSDT":  {"instrument": "PAXG_USDC-PERPETUAL",  "currency": "USDC",
-    #               "min_amount": 0.0001, "max_amount": 100,      "tick_size": 0.01},
-    # "FILUSDT":   {"instrument": "FIL_USDC-PERPETUAL",   "currency": "USDC",
+    # "TAOUSDT":   {"instrument": "TAO_USDC-PERPETUAL",   "currency": "USDC",
+    #               "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
+    # "PENDLEUSDT":{"instrument": "PENDLE_USDC-PERPETUAL","currency": "USDC",
+    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    # "RENDERUSDT":{"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
+    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    # "WIFUSDT":   {"instrument": "WIF_USDC-PERPETUAL",   "currency": "USDC",
     #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
     # "JUPUSDT":   {"instrument": "JUP_USDC-PERPETUAL",   "currency": "USDC",
     #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
+    # "PAXGUSDT":  {"instrument": "PAXG_USDC-PERPETUAL",  "currency": "USDC",
+    #               "min_amount": 0.0001, "max_amount": 100,      "tick_size": 0.01},
 }
 
 TRADEABLE_SYMBOLS: list = []
@@ -189,7 +189,7 @@ class DeribitClient:
         r.raise_for_status()
         return data.get("result", data)
 
-    # ── Instrument management ─────────────────────────────────────────
+    # ── Instrument Management ─────────────────────────────────────────
 
     def _verify_instruments(self):
         global TRADEABLE_SYMBOLS
@@ -233,7 +233,7 @@ class DeribitClient:
                 pass
         return self._instrument_cache.get(name, {})
 
-    # ── Price + amount precision ──────────────────────────────────────
+    # ── Precision & Sizing ────────────────────────────────────────────
 
     def get_tick_size(self, symbol: str) -> float:
         info = self.get_instrument_info(symbol)
@@ -292,7 +292,7 @@ class DeribitClient:
         decimals = _calc_decimals(step)
         return (round(tp1, decimals), round(tp2, decimals)) if decimals else (int(round(tp1)), int(round(tp2)))
 
-    # ── Market data ───────────────────────────────────────────────────
+    # ── Market Data ───────────────────────────────────────────────────
 
     def get_live_price(self, symbol: str) -> float:
         try:
@@ -347,7 +347,7 @@ class DeribitClient:
             log.warning(f"  order book {symbol}: {e}")
             return {"best_bid": 0, "best_ask": 0, "spread_pct": 999, "is_wide": True}
 
-    # ── Position sizing ───────────────────────────────────────────────
+    # ── Sizing Calculations ───────────────────────────────────────────
 
     def calc_contracts(self, symbol: str, balance_usd: float,
                        entry: float, stop: float, risk_mult: float = 1.0):
@@ -378,7 +378,7 @@ class DeribitClient:
         log.info(f"  Contracts: {result} {symbol} | notional≈${notional:.2f} | risk=${risk_usd:.2f}")
         return result
 
-    # ── Order execution ───────────────────────────────────────────────
+    # ── Order Placement ───────────────────────────────────────────────
 
     @staticmethod
     def _is_position_size_limit_error(e) -> bool:
@@ -468,7 +468,7 @@ class DeribitClient:
         log.error(f"  🚨 {symbol}: order NOT placed, manual intervention required")
         return {}
 
-    # ── Fill price + positions ────────────────────────────────────────
+    # ── Fill Tracking ─────────────────────────────────────────────────
 
     def get_fill_price(self, market_result: dict, fallback: float) -> float:
         try:
@@ -623,7 +623,6 @@ class DeribitClient:
             return self._post("/private/cancel", {"order_id": str(order_id)})
         except Exception as e:
             err_msg = str(e).lower()
-            # Deribit Code 11044: not_open_order (order already filled or cancelled — safe to ignore)
             if "11044" in err_msg or "not_open_order" in err_msg:
                 return {"result": "already_closed"}
             log.warning(f"  cancel {order_id}: {e}")
