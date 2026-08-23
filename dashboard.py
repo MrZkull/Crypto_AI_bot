@@ -1,4 +1,4 @@
-# dashboard.py — V5.5: Zero-Hardcoding Master Server with Real-Time Analytics & Dynamic Probation
+# dashboard.py — V5.6: Zero-Hardcoding Master Server with Dynamic Module Reload & Direct Model Inspection
 
 import os
 import json
@@ -11,6 +11,7 @@ import re
 import socket
 import uuid
 import joblib
+import importlib
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,29 +73,30 @@ def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
 
-# ── Model & Dynamic Configuration Introspection ────────────────────────
+# ── Dynamic Model & Config Introspection ────────────────────────────────
 
 def get_live_config():
-    """Dynamically reads live variables from config.py."""
+    """Dynamically reloads and reads live variables directly from config.py."""
     try:
         import config
+        importlib.reload(config)
         return {
             "symbols": getattr(config, "SYMBOLS", []),
             "coin_tiers": getattr(config, "COIN_TIERS", {}),
             "features": getattr(config, "FEATURES", []),
-            "min_confidence": getattr(config, "MIN_CONFIDENCE", 45.0),
-            "min_adx": getattr(config, "MIN_ADX", 15.0),
-            "min_score": getattr(config, "MIN_SCORE", 3),
-            "risk_per_trade": getattr(config, "RISK_PER_TRADE", 0.03),
-            "max_open_trades": getattr(config, "MAX_OPEN_TRADES", 2),
-            "max_same_direction": getattr(config, "MAX_SAME_DIRECTION", 2),
-            "atr_stop_mult": getattr(config, "ATR_STOP_MULT", 2.5),
-            "atr_target1_mult": getattr(config, "ATR_TARGET1_MULT", 3.5),
-            "atr_target2_mult": getattr(config, "ATR_TARGET2_MULT", 7.5),
-            "max_trade_age_hours": getattr(config, "MAX_TRADE_AGE_HOURS", 48),
+            "min_confidence": float(getattr(config, "MIN_CONFIDENCE", 45.0)),
+            "min_adx": float(getattr(config, "MIN_ADX", 15.0)),
+            "min_score": int(getattr(config, "MIN_SCORE", 3)),
+            "risk_per_trade": float(getattr(config, "RISK_PER_TRADE", 0.03)),
+            "max_open_trades": int(getattr(config, "MAX_OPEN_TRADES", 2)),
+            "max_same_direction": int(getattr(config, "MAX_SAME_DIRECTION", 2)),
+            "atr_stop_mult": float(getattr(config, "ATR_STOP_MULT", 2.5)),
+            "atr_target1_mult": float(getattr(config, "ATR_TARGET1_MULT", 3.5)),
+            "atr_target2_mult": float(getattr(config, "ATR_TARGET2_MULT", 7.5)),
+            "max_trade_age_hours": int(getattr(config, "MAX_TRADE_AGE_HOURS", 48)),
         }
     except Exception as e:
-        log.warning(f"Failed to import config.py: {e}")
+        log.warning(f"Failed to dynamically load config.py: {e}")
         return {
             "symbols": [], "coin_tiers": {}, "features": [],
             "min_confidence": 45.0, "min_adx": 15.0, "min_score": 3,
@@ -105,7 +107,7 @@ def get_live_config():
 
 
 def get_model_metadata():
-    """Inspects the active serialized model pipeline for EV thresholds and estimators."""
+    """Inspects the serialized model pipeline for EV thresholds and estimators."""
     for p in [Path(MODEL_FILE), Path("data") / MODEL_FILE]:
         if p.exists():
             try:
@@ -118,8 +120,7 @@ def get_model_metadata():
                     estimators = list(ensemble.named_estimators_.keys())
                 
                 model_name = " + ".join(estimators) if estimators else "Trained Ensemble"
-                
-                rec_buy = float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.35))) * 100.0
+                rec_buy = float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.40))) * 100.0
                 rec_sell = float(pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.45))) * 100.0
                 
                 return {
@@ -131,7 +132,7 @@ def get_model_metadata():
                     "label_map": pipeline.get("label_map", {})
                 }
             except Exception as e:
-                log.warning(f"Error inspecting {p}: {e}")
+                log.warning(f"Error reading model metadata from {p}: {e}")
     
     cfg = get_live_config()
     return {
@@ -469,7 +470,6 @@ def api_status():
     cfg = get_live_config()
     model_meta = get_model_metadata()
 
-    # Determine dynamic accuracy: from model test validation or real live trades
     accuracy = perf_data.get("test_accuracy") or perf_data.get("accuracy")
     if not accuracy:
         accuracy = f"{win_rate}%" if real else "73.1%"
@@ -563,7 +563,7 @@ def api_log():
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
 
-# ── Dynamic Probation Engine (Zero-Hardcoding / Direct Audit) ────────
+# ── Dynamic Probation Engine (Direct Model & History Audit) ────────────
 
 @app.route("/api/probation")
 def api_probation():
@@ -578,7 +578,7 @@ def api_probation():
     now = time.time()
     updated = False
 
-    # 1. Audit trade history for real streak + rolling losses
+    # 1. Audit trade history directly for 3-consecutive or 6-rolling loss conditions
     symbols_in_history = set(t.get("symbol") for t in history if t.get("symbol"))
     
     for symbol in symbols_in_history:
@@ -615,7 +615,7 @@ def api_probation():
         gh_push(RELIABILITY_FILE, rel)
         _cache[RELIABILITY_FILE] = rel
 
-    # 2. Extract authoritative baseline confidence directly from the live model pipeline
+    # 2. Extract baseline confidence directly from the serialized model pipeline
     model_meta = get_model_metadata()
     cfg = get_live_config()
     base_model_conf = min(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"])
@@ -731,7 +731,7 @@ def api_monitor():
     })
 
 
-# ── Real Execution Drag & Real Microstructure Analytics ────────────────
+# ── Execution Microstructure & Fee Drag ────────────────────────────────
 
 @app.route("/api/execution")
 def api_execution():
@@ -740,7 +740,6 @@ def api_execution():
     real = [h for h in history if h.get("signal") != "RECOVERED"]
 
     durations = []
-    slippages = []
     total_volume_usd = 0.0
     gross_pnl = 0.0
 
@@ -749,7 +748,7 @@ def api_execution():
         gross_pnl += pnl
         entry = float(t.get("entry", 0))
         qty = float(t.get("qty", 0))
-        total_volume_usd += (entry * qty * 2.0)  # Entry + Exit Volume
+        total_volume_usd += (entry * qty * 2.0)
 
         if t.get("opened_at") and t.get("closed_at"):
             try:
@@ -759,8 +758,6 @@ def api_execution():
             except Exception: pass
 
     avg_duration_h = round(sum(durations) / len(durations), 1) if durations else 0.0
-    
-    # Real Deribit Maker/Taker Fees (0.05% Taker entry, 0.015% Maker TP)
     estimated_fees = round(total_volume_usd * 0.00035, 2)
     net_pnl = round(gross_pnl - estimated_fees, 2)
 
@@ -775,7 +772,7 @@ def api_execution():
     })
 
 
-# ── Model Health & Dynamic Confidence Calibration ──────────────────────
+# ── Model Health & Dynamic Calibration ─────────────────────────────────
 
 @app.route("/api/model_health")
 def api_model_health():
@@ -786,7 +783,6 @@ def api_model_health():
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     model_meta = get_model_metadata()
 
-    # Dynamic calibration bucket analysis from real historical trades
     buckets = {
         "45-55%": {"wins": 0, "total": 0, "target": 55},
         "55-65%": {"wins": 0, "total": 0, "target": 65},
