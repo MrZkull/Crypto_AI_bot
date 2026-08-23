@@ -1,7 +1,6 @@
 name: Backtest Model
 
 on:
-  # Runs automatically on the 1st of every month after retraining
   schedule:
     - cron: '0 6 1 * *'
   workflow_dispatch:
@@ -57,12 +56,21 @@ jobs:
 
       - name: Download latest primary model
         run: |
-          wget -q -O pro_crypto_ai_model.pkl "https://github.com/MrZkull/Crypto_AI_bot/releases/download/v2.0/pro_crypto_ai_model.pkl"
+          echo "Fetching primary model via GitHub CLI..."
+          gh release download v2.0 --pattern "pro_crypto_ai_model.pkl" --clobber || \
+          gh release download --pattern "pro_crypto_ai_model.pkl" --clobber || \
+          (echo "Release download failed, checking local workspace..." && test -f pro_crypto_ai_model.pkl)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download latest meta model (if it exists)
         continue-on-error: true
         run: |
-          wget -q -O meta_pipeline.pkl "https://github.com/MrZkull/Crypto_AI_bot/releases/download/v2.0/meta_pipeline.pkl"
+          echo "Fetching meta model (optional)..."
+          gh release download v2.0 --pattern "meta_pipeline.pkl" --clobber || \
+          gh release download --pattern "meta_pipeline.pkl" --clobber || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Backtest — Primary model alone
         run: |
@@ -114,7 +122,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload backtest artifacts (Short 3-Day Retention)
+      - name: Upload backtest artifacts
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
