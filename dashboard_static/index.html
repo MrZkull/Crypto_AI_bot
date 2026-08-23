@@ -2010,18 +2010,34 @@ function buildCoinChips() {
   ).join('');
 }
 
+// ── FLICKER-PROOF ATOMIC CHIP UPDATER ──────────────────────────────────
 function updateCoinChips() {
-  const sigSyms = new Set(allSignals.map(s => s.symbol));
+  if (!ALL_COINS.length) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const openSyms = new Set(Object.keys(allTrades || {}));
+  
+  // Highlight green only for pairs with an active signal today or an open trade
+  const sigSyms = new Set(
+    allSignals
+      .filter(s => !s.isRejected && (s.generated_at || '').startsWith(today))
+      .map(s => s.symbol)
+  );
+
   ALL_COINS.forEach(c => {
-    const el = document.getElementById('chip-'+c);
+    const el = document.getElementById('chip-' + c);
     if (el) {
       const isProbated = probatedCoinsSet.has(c);
+      const hasSignal = sigSyms.has(c) || openSyms.has(c);
       const coinName = c.replace('USDT', '');
+      const targetText = isProbated ? `${coinName} 🔒` : coinName;
       
-      el.textContent = isProbated ? `${coinName} 🔒` : coinName;
-      el.className = 'coin-chip' + 
-        (isProbated ? ' probated-chip' : '') + 
-        (sigSyms.has(c) ? ' has-signal' : '');
+      let targetClass = 'coin-chip';
+      if (isProbated) targetClass += ' probated-chip';
+      else if (hasSignal) targetClass += ' has-signal';
+
+      // Atomic diffing prevents DOM re-renders if state is unchanged
+      if (el.textContent !== targetText) el.textContent = targetText;
+      if (el.className !== targetClass) el.className = targetClass;
     }
   });
 }
