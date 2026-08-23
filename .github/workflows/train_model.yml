@@ -19,6 +19,11 @@ on:
         default: 'false'
         type: choice
         options: [ 'false', 'true' ]
+      train_meta:
+        description: 'Run Meta-Model research pipeline? (Adds ~15 mins)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   train:
@@ -53,7 +58,7 @@ jobs:
       - name: Run training
         run: |
           echo "Starting model training at $(date -u)"
-          echo "Note: ${{ github.event.inputs.note }}"
+          echo "Note: ${{ github.event.inputs.note || 'Scheduled monthly retrain' }}"
           python train_model.py
           echo "Training complete at $(date -u)"
 
@@ -76,6 +81,7 @@ jobs:
           print(f'FEATURES:  {len(p.get(\"features\", []))} total')
           print(f'BUY  precision: {p.get(\"buy_precision\", 0)}')
           print(f'SELL precision: {p.get(\"sell_precision\", 0)}')
+          print(f'NO_TRADE precision: {p.get(\"no_trade_precision\", 0)}')
           print('='*50)
           "
 
@@ -88,11 +94,13 @@ jobs:
               f.write(f'{p.get(\"accuracy\", 0)}% accuracy')
           "
 
-      - name: Train Meta Model (research only — not shipped)
+      # 🔬 Runs ONLY when train_meta is checked during manual dispatch
+      - name: Train Meta Model (Research Only)
+        if: ${{ github.event.inputs.train_meta == 'true' }}
         id: train_meta
         continue-on-error: true
         run: |
-          echo "Starting meta-model training at $(date -u)"
+          echo "Starting meta-model research pipeline at $(date -u)"
           python train_meta_model.py
           echo "Meta-model training complete at $(date -u)"
 
@@ -103,7 +111,7 @@ jobs:
             echo "has_meta=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_meta=false" >> "$GITHUB_OUTPUT"
-            echo "No fresh meta-model outputs this run — skipping meta result display."
+            echo "Meta-model was skipped or produced no outputs."
           fi
 
       - name: Show meta results
@@ -115,6 +123,7 @@ jobs:
           print('='*50)
           print(f'META TEST ACCURACY: {p.get(\"test_accuracy\", 0)}%')
           print(f'BASE RATE:          {p.get(\"base_rate\", 0)}%')
+          print(f'ORTHOGONAL LIFT:    {p.get(\"alpha_lift_pct\", 0)}%')
           print(f'DIRECTIONAL CALLS:  {p.get(\"n_directional_calls\", 0)}')
           print(f'META THRESHOLD:     {p.get(\"recommended_meta_threshold\", 0)}')
           print('(Research metric only — meta-model is not currently shipped to production.)')
@@ -223,16 +232,3 @@ jobs:
           echo "The currently-live v2.0 release was left unchanged."
           echo "Re-run this workflow manually with force_promote=true if you want to ship it anyway."
           exit 1
-
-      - name: Upload Performance JSON Artifacts (Quota-Safe)
-        if: always()
-        continue-on-error: true    # 🛡️ Prevents quota lock from failing the run
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-metrics-${{ github.run_number }}
-          path: |
-            model_performance.json
-            meta_model_performance.json
-          retention-days: 3
-          if-no-files-found: ignore
-          
