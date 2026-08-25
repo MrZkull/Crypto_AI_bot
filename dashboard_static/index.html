@@ -1001,7 +1001,40 @@ async function fetchStatus() {
 
   document.getElementById('liveBadge').textContent = 'LIVE';
   document.getElementById('liveBadge').className   = 'live-badge';
-  document.getElementById('lastUpd').textContent   = new Date().toLocaleTimeString();
+  
+  // ── True Scan Phase & Staleness Indicator ──
+  const phase = d.last_scan_phase;
+  const completedAt = d.last_scan_completed_at;
+  const updLabel = document.getElementById('lastUpd');
+
+  if (updLabel) {
+      if (phase !== 'completed' && phase !== 'unknown') {
+          updLabel.innerHTML = `⚠️ Scan Stalled (Phase: ${phase})`;
+          updLabel.style.color = "#f43f5e";
+          updLabel.style.fontWeight = "700";
+      } else if (completedAt && completedAt !== "Unknown") {
+          // Native ISO 8601 parsing
+          const scanTime = new Date(completedAt).getTime();
+          const now = new Date().getTime();
+          const diffMinutes = Math.floor((now - scanTime) / 60000);
+
+          if (isNaN(diffMinutes)) {
+              updLabel.innerHTML = `⚠️ Date Parse Error`;
+              updLabel.style.color = "#f43f5e";
+          } else if (diffMinutes > 20) {
+              updLabel.innerHTML = `⚠️ STALE (Scan: ${diffMinutes}m ago)`;
+              updLabel.style.color = "#f43f5e";
+              updLabel.style.fontWeight = "700";
+          } else {
+              updLabel.innerHTML = `✓ Live (Scan: ${diffMinutes}m ago)`;
+              updLabel.style.color = "var(--text3)";
+              updLabel.style.fontWeight = "normal";
+          }
+      } else {
+          // Fallback if the backend hasn't generated the status file yet
+          updLabel.textContent = new Date().toLocaleTimeString();
+      }
+  }
 
   if (d.deribit_status && d.deribit_status.status !== 'ONLINE') {
     const banner = document.getElementById('deribitAlertBanner');
