@@ -12,7 +12,6 @@ on:
         type: choice
         options: [scan, diagnostic]
 
-# 🔐 Grants full write permissions required for Private Repositories
 permissions:
   contents: write
 
@@ -57,11 +56,13 @@ jobs:
 
       - name: Init state files if missing
         run: |
-          [ -f trades.json ]        || echo '{}' > trades.json
-          [ -f trade_history.json ] || echo '[]' > trade_history.json
-          [ -f signals.json ]       || echo '[]' > signals.json
-          [ -f scan_mode.json ]     || echo '{}' > scan_mode.json
-          [ -f balance.json ]       || echo '{}' > balance.json
+          [ -f trades.json ]            || echo '{}' > trades.json
+          [ -f trade_history.json ]     || echo '[]' > trade_history.json
+          [ -f signals.json ]           || echo '[]' > signals.json
+          [ -f scan_mode.json ]         || echo '{}' > scan_mode.json
+          [ -f balance.json ]           || echo '{}' > balance.json
+          [ -f orphan_candidates.json ] || echo '{}' > orphan_candidates.json
+          [ -f scan_status.json ]       || echo '{}' > scan_status.json
           mkdir -p data
 
       - name: Run bot
@@ -90,16 +91,17 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Remove secrets and model — never commit these
           rm -f .env pro_crypto_ai_model.pkl
           git rm --cached --ignore-unmatch "*.pkl" "*.joblib" 2>/dev/null || true
 
           # ── 1. Backup fresh runtime state to /tmp BEFORE git operation ──
-          cp trades.json        /tmp/trades_runtime.json        2>/dev/null || echo '{}' > /tmp/trades_runtime.json
-          cp trade_history.json /tmp/trade_history_runtime.json 2>/dev/null || echo '[]' > /tmp/trade_history_runtime.json
-          cp signals.json       /tmp/signals_runtime.json       2>/dev/null || echo '[]' > /tmp/signals_runtime.json
-          cp balance.json       /tmp/balance_runtime.json       2>/dev/null || echo '{}' > /tmp/balance_runtime.json
-          cp scan_mode.json     /tmp/scan_mode_runtime.json     2>/dev/null || echo '{}' > /tmp/scan_mode_runtime.json
+          cp trades.json            /tmp/trades_runtime.json            2>/dev/null || echo '{}' > /tmp/trades_runtime.json
+          cp trade_history.json     /tmp/trade_history_runtime.json     2>/dev/null || echo '[]' > /tmp/trade_history_runtime.json
+          cp signals.json           /tmp/signals_runtime.json           2>/dev/null || echo '[]' > /tmp/signals_runtime.json
+          cp balance.json           /tmp/balance_runtime.json           2>/dev/null || echo '{}' > /tmp/balance_runtime.json
+          cp scan_mode.json         /tmp/scan_mode_runtime.json         2>/dev/null || echo '{}' > /tmp/scan_mode_runtime.json
+          cp orphan_candidates.json /tmp/orphan_candidates_runtime.json 2>/dev/null || echo '{}' > /tmp/orphan_candidates_runtime.json
+          cp scan_status.json       /tmp/scan_status_runtime.json       2>/dev/null || echo '{}' > /tmp/scan_status_runtime.json
 
           # ── 2. Reset working tree to clear modified files for git pull ──
           git reset --hard HEAD
@@ -109,20 +111,23 @@ jobs:
           git pull --rebase origin main || git pull origin main || true
 
           # ── 4. Restore fresh runtime state back over pulled files ──
-          cp /tmp/trades_runtime.json        trades.json
-          cp /tmp/trade_history_runtime.json trade_history.json
-          cp /tmp/signals_runtime.json       signals.json
-          cp /tmp/balance_runtime.json       balance.json
-          cp /tmp/scan_mode_runtime.json     scan_mode.json
+          cp /tmp/trades_runtime.json            trades.json
+          cp /tmp/trade_history_runtime.json     trade_history.json
+          cp /tmp/signals_runtime.json           signals.json
+          cp /tmp/balance_runtime.json           balance.json
+          cp /tmp/scan_mode_runtime.json         scan_mode.json
+          cp /tmp/orphan_candidates_runtime.json orphan_candidates.json
+          cp /tmp/scan_status_runtime.json       scan_status.json
 
           # ── 5. Stage, commit, and push updated state ──
-          git add trades.json        || true
-          git add trade_history.json || true
-          git add signals.json       || true
-          git add scan_mode.json     || true
-          git add balance.json       || true
-          git add data/              || true
+          git add trades.json            || true
+          git add trade_history.json     || true
+          git add signals.json           || true
+          git add scan_mode.json         || true
+          git add balance.json           || true
+          git add orphan_candidates.json || true
+          git add scan_status.json       || true
+          git add data/                  || true
 
           git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
           git push origin main
-          
