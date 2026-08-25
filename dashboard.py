@@ -1,4 +1,4 @@
-# dashboard.py — V5.9: Resilient State Shield (Zero Rate-Limit Dropouts)
+# dashboard.py — V5.11: Scan Phase Telemetry & Ad-Hoc Analytics (Full Version)
 
 import os
 import json
@@ -18,6 +18,11 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
+
+try:
+    from fg_override_audit import audit_fg_overrides
+except ImportError:
+    def audit_fg_overrides(history): return {"error": "fg_override_audit.py not found on server"}
 
 # Safe ReportLab import check
 try:
@@ -42,6 +47,7 @@ EMAIL_TRACKER_FILE = "email_tracker.json"
 RELIABILITY_FILE   = "reliability.json"
 PERFORMANCE_FILE   = "model_performance.json"
 MODEL_FILE         = "pro_crypto_ai_model.pkl"
+SCAN_STATUS_FILE   = "scan_status.json"
 EMAIL_REGEX        = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 _cache = {}
@@ -88,21 +94,22 @@ def get_live_config():
             "min_adx": float(getattr(config, "MIN_ADX", 15.0)),
             "min_score": int(getattr(config, "MIN_SCORE", 3)),
             "risk_per_trade": float(getattr(config, "RISK_PER_TRADE", 0.03)),
-            "max_open_trades": int(getattr(config, "MAX_OPEN_TRADES", 2)),
-            "max_same_direction": int(getattr(config, "MAX_SAME_DIRECTION", 2)),
+            "max_open_trades": int(getattr(config, "MAX_OPEN_TRADES", 8)),
+            "max_same_direction": int(getattr(config, "MAX_SAME_DIRECTION", 4)),
             "atr_stop_mult": float(getattr(config, "ATR_STOP_MULT", 2.5)),
             "atr_target1_mult": float(getattr(config, "ATR_TARGET1_MULT", 3.5)),
             "atr_target2_mult": float(getattr(config, "ATR_TARGET2_MULT", 7.5)),
-            "max_trade_age_hours": int(getattr(config, "MAX_TRADE_AGE_HOURS", 48)),
+            "max_trade_age_hours_pre_tp1": int(getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12)),
+            "max_trade_age_hours_post_tp1": int(getattr(config, "MAX_TRADE_AGE_HOURS_POST_TP1", 48)),
         }
     except Exception as e:
         log.warning(f"Failed to dynamically load config.py: {e}")
         return {
             "symbols": [], "coin_tiers": {}, "features": [],
             "min_confidence": 45.0, "min_adx": 15.0, "min_score": 3,
-            "risk_per_trade": 0.03, "max_open_trades": 2, "max_same_direction": 2,
+            "risk_per_trade": 0.03, "max_open_trades": 8, "max_same_direction": 4,
             "atr_stop_mult": 2.5, "atr_target1_mult": 3.5, "atr_target2_mult": 7.5,
-            "max_trade_age_hours": 48
+            "max_trade_age_hours_pre_tp1": 12, "max_trade_age_hours_post_tp1": 48
         }
 
 
@@ -653,6 +660,7 @@ def api_status():
     trades = get("trades.json", {})
     balance = get("balance.json", {})
     perf_data = get(PERFORMANCE_FILE, {})
+    scan_status = get("scan_status.json", {})
 
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     wins = [h for h in real if (h.get("pnl") or 0) > 0]
@@ -673,6 +681,9 @@ def api_status():
 
     return jsonify({
         "ok": True,
+        "last_scan_at": balance.get("updated_at", "Unknown"), 
+        "last_scan_phase": scan_status.get("phase", "unknown"),
+        "last_scan_completed_at": scan_status.get("completed_at", "Unknown"),
         "win_rate": win_rate, "wins": len(wins), "losses": len(real) - len(wins), 
         "total_pnl": round(tpnl, 4), "total_trades": len(real),
         "open_trades": len([t for t in trades.values() if not t.get("closed")]),
@@ -689,6 +700,40 @@ def api_status():
     })
 
 
+@app.route("/api/config")
+def api_config():
+    cfg = get_live_config()
+    model_meta = get_model_metadata()
+    import config
+    return jsonify({
+        "ok": True,
+        "active_conf": model_meta["rec_buy_conf"],
+        "active_score": cfg["min_score"],
+        "active_adx": cfg["min_adx"],
+        "quiet_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
+        "quiet_score": cfg["min_score"],
+        "quiet_adx": cfg["min_adx"] + 3,
+        "max_open_trades": cfg["max_open_trades"],
+        "risk_per_trade_pct": round(cfg["risk_per_trade"] * 100, 1),
+        "max_same_direction": cfg["max_same_direction"],
+        "atr_stop_mult": cfg["atr_stop_mult"],
+        "atr_target1_mult": cfg["atr_target1_mult"],
+        "atr_target2_mult": cfg["atr_target2_mult"],
+        "max_trade_age_hours_pre_tp1": getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12),
+        "max_trade_age_hours_post_tp1": getattr(config, "MAX_TRADE_AGE_HOURS_POST_TP1", 48),
+        "max_trade_age_hours": getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12),
+        "symbols": cfg["symbols"],
+        "coin_tiers": cfg["coin_tiers"],
+        "exchange": "Deribit Testnet (USDC Linear Perpetuals)"
+    })
+
+
+@app.route("/api/override_audit")
+def api_override_audit():
+    history = get("trade_history.json", [])
+    return jsonify(audit_fg_overrides(history))
+
+
 @app.route("/api/balance")
 def api_balance():
     client = deribit_client()
@@ -702,8 +747,6 @@ def api_balance():
     bal = get("balance.json", {})
     return jsonify({**bal, "ok": True})
 
-
-# Replace the api_open_trades() function in dashboard.py
 
 @app.route("/api/trades/open")
 def api_open_trades():
@@ -743,7 +786,7 @@ def api_open_trades():
                             elif "limit" in otype and price > 0:
                                 tp_prices.append(price)
 
-                        tp_prices.sort(reverse=(size > 0))  # Ascending for shorts, descending for longs
+                        tp_prices.sort(reverse=(size > 0))  
                         if tp_prices:
                             tp1 = tp_prices[0]
                             if len(tp_prices) > 1:
@@ -771,6 +814,7 @@ def api_open_trades():
             log.error(f"api_open_trades error: {e}")
     return jsonify([])
 
+
 @app.route("/api/trades/history")
 def api_trade_history():
     h = get("trade_history.json", [])
@@ -796,13 +840,10 @@ def api_log():
 @app.route("/api/probation")
 def api_probation():
     rel = get(RELIABILITY_FILE, {})
-    if not isinstance(rel, dict):
-        rel = {}
-        
+    if not isinstance(rel, dict): rel = {}
     history = get("trade_history.json", [])
     now = time.time()
     updated = False
-
     symbols_in_history = set(t.get("symbol") for t in history if t.get("symbol"))
     
     for symbol in symbols_in_history:
@@ -818,8 +859,7 @@ def api_probation():
             if (wins_6 / 6.0 < 0.40) and (pnl_6 < 0.0):
                 has_rolling_drawdown = True
         
-        if symbol not in rel or not isinstance(rel[symbol], dict):
-            rel[symbol] = {}
+        if symbol not in rel or not isinstance(rel[symbol], dict): rel[symbol] = {}
             
         if has_3_consecutive_losses or has_rolling_drawdown:
             if not rel[symbol].get("is_benched"):
@@ -847,7 +887,6 @@ def api_probation():
         if isinstance(data, dict) and data.get("is_benched", False):
             benched_at = data.get("benched_at", 0)
             time_left_sec = max(0, (7 * 86400) - (now - benched_at)) if benched_at > 0 else 0
-            
             probated_coins.append({
                 "symbol": symbol,
                 "probation_wins": data.get("probation_wins", 0),
@@ -856,7 +895,6 @@ def api_probation():
                 "required_conf": round(active_baseline + 10.0, 1),
                 "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
             })
-
     return jsonify({"ok": True, "probated_coins": probated_coins})
 
 
@@ -864,7 +902,6 @@ def api_probation():
 def api_market():
     cfg = get_live_config()
     symbols = cfg["symbols"]
-
     prices = {}
     try:
         r = requests.get("https://data-api.binance.vision/api/v3/ticker/24hr", timeout=6)
@@ -876,8 +913,7 @@ def api_market():
                         "priceChangePercent": float(item.get("priceChangePercent", 0)),
                         "quoteVolume": float(item.get("quoteVolume", 0)),
                     }
-    except Exception as e:
-        log.warning(f"Market proxy error: {e}")
+    except Exception as e: log.warning(f"Market proxy error: {e}")
     return jsonify(prices)
 
 
@@ -894,8 +930,7 @@ def api_btc_atr():
             pct_v = atr / price * 100
             chg   = float(r2.json().get("priceChangePercent", 0))
             return jsonify({"ok": True, "atr": round(atr, 2), "pct": round(pct_v, 2), "price": round(price, 0), "chg_24h": round(chg, 2)})
-    except Exception as e:
-        log.warning(f"BTC ATR proxy error: {e}")
+    except Exception as e: log.warning(f"BTC ATR proxy error: {e}")
     return jsonify({"ok": True, "atr": 0.0, "pct": 0.0, "price": 0.0, "chg_24h": 0.0})
 
 
@@ -903,8 +938,7 @@ def api_btc_atr():
 def api_fng():
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=6)
-        if r.ok:
-            return jsonify(r.json())
+        if r.ok: return jsonify(r.json())
     except Exception: pass
     return jsonify({"data": [{"value": "50", "value_classification": "Neutral"}]})
 
@@ -916,7 +950,6 @@ def api_monitor():
     trades = get("trades.json", {})
     open_trades = [t for t in trades.values() if not t.get("closed")]
     bal = get("balance.json", {})
-
     t1 = time.time()
     binance_ok, btc_price, err = False, None, None
     try:
@@ -924,16 +957,13 @@ def api_monitor():
         binance_ok = r.ok
         if r.ok: btc_price = float(r.json()["price"])
         else: err = f"HTTP {r.status_code}"
-    except Exception as e:
-        err = str(e)
-
+    except Exception as e: err = str(e)
     signals = get("signals.json", [])
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     history = get("trade_history.json", [])
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     wins = [h for h in real if (h.get("pnl") or 0) > 0]
     cfg = get_live_config()
-
     return jsonify({
         "ok": True,
         "deribit": {"ok": deribit["status"] == "ONLINE", "msg": deribit["msg"], "latency_ms": round((time.time()-t0)*1000),
@@ -946,42 +976,31 @@ def api_monitor():
     })
 
 
-# ── ANALYTICS & CONFIG APIS ───────────────────────────────────────────
-
 @app.route("/api/execution")
 def api_execution():
     history = get("trade_history.json", [])
     real = [h for h in history if h.get("signal") != "RECOVERED"]
-
     durations = []
     total_volume_usd = 0.0
     gross_pnl = 0.0
-
     for t in real:
         pnl = float(t.get("pnl", 0))
         gross_pnl += pnl
         entry = float(t.get("entry", 0))
         qty = float(t.get("qty", 0))
         total_volume_usd += (entry * qty * 2.0)
-
         if t.get("opened_at") and t.get("closed_at"):
             try:
                 o = datetime.fromisoformat(str(t["opened_at"]).replace("Z", "+00:00"))
                 c = datetime.fromisoformat(str(t["closed_at"]).replace("Z", "+00:00"))
                 durations.append((c - o).total_seconds() / 3600.0)
             except Exception: pass
-
     avg_duration_h = round(sum(durations) / len(durations), 1) if durations else 0.0
     estimated_fees = round(total_volume_usd * 0.00035, 2)
     net_pnl = round(gross_pnl - estimated_fees, 2)
-
     return jsonify({
-        "ok": True,
-        "gross_pnl": round(gross_pnl, 2),
-        "total_fees": estimated_fees,
-        "net_pnl": net_pnl,
-        "avg_duration_h": avg_duration_h,
-        "total_volume_traded_usd": round(total_volume_usd, 2),
+        "ok": True, "gross_pnl": round(gross_pnl, 2), "total_fees": estimated_fees,
+        "net_pnl": net_pnl, "avg_duration_h": avg_duration_h, "total_volume_traded_usd": round(total_volume_usd, 2),
         "avg_slippage_pct": 0.02
     })
 
@@ -992,46 +1011,28 @@ def api_model_health():
     history = get("trade_history.json", [])
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     model_meta = get_model_metadata()
-
     buckets = {
-        "45-55%": {"wins": 0, "total": 0, "target": 55},
-        "55-65%": {"wins": 0, "total": 0, "target": 65},
-        "65-75%": {"wins": 0, "total": 0, "target": 75},
-        "75%+":   {"wins": 0, "total": 0, "target": 85}
+        "45-55%": {"wins": 0, "total": 0, "target": 55}, "55-65%": {"wins": 0, "total": 0, "target": 65},
+        "65-75%": {"wins": 0, "total": 0, "target": 75}, "75%+":   {"wins": 0, "total": 0, "target": 85}
     }
-
     for t in real:
         conf = float(t.get("confidence", 0))
         pnl = float(t.get("pnl", 0))
         is_win = pnl > 0 or "TP" in str(t.get("close_reason", ""))
-
         if 45.0 <= conf < 55.0: key = "45-55%"
         elif 55.0 <= conf < 65.0: key = "55-65%"
         elif 65.0 <= conf < 75.0: key = "65-75%"
         elif conf >= 75.0: key = "75%+"
         else: continue
-
         buckets[key]["total"] += 1
         if is_win: buckets[key]["wins"] += 1
-
     calibration_labels = list(buckets.keys())
     target_win_rates = [b["target"] for b in buckets.values()]
-    live_win_rates = [
-        round((b["wins"] / b["total"] * 100), 1) if b["total"] > 0 else 0.0
-        for b in buckets.values()
-    ]
-
+    live_win_rates = [round((b["wins"] / b["total"] * 100), 1) if b["total"] > 0 else 0.0 for b in buckets.values()]
     return jsonify({
-        "ok": True,
-        "ensemble_name": model_meta["model_name"],
-        "test_accuracy": perf_data.get("test_accuracy", "73.1%"),
-        "rec_buy_threshold": model_meta["rec_buy_conf"],
-        "rec_sell_threshold": model_meta["rec_sell_conf"],
-        "calibration": {
-            "labels": calibration_labels,
-            "target": target_win_rates,
-            "live": live_win_rates
-        }
+        "ok": True, "ensemble_name": model_meta["model_name"], "test_accuracy": perf_data.get("test_accuracy", "73.1%"),
+        "rec_buy_threshold": model_meta["rec_buy_conf"], "rec_sell_threshold": model_meta["rec_sell_conf"],
+        "calibration": {"labels": calibration_labels, "target": target_win_rates, "live": live_win_rates}
     })
 
 
@@ -1042,17 +1043,14 @@ def api_analytics():
     pnls = [float(t.get("pnl", 0)) for t in real_trades]
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p <= 0]
-
     total_trades = len(pnls)
     win_rate = (len(wins) / total_trades * 100) if total_trades > 0 else 0.0
     avg_win = (sum(wins) / len(wins)) if wins else 0.0
     avg_loss = (abs(sum(losses)) / len(losses)) if losses else 0.0
-    
     gross_profit = sum(wins)
     gross_loss = abs(sum(losses))
     profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (round(gross_profit, 2) if gross_profit > 0 else 0.0)
     expectancy = round((win_rate / 100.0 * avg_win) - ((1.0 - win_rate / 100.0) * avg_loss), 4)
-
     sharpe, sortino, max_dd = 0.0, 0.0, 0.0
     if len(pnls) > 3:
         mean_pnl = sum(pnls) / len(pnls)
@@ -1062,7 +1060,6 @@ def api_analytics():
         downside_std = math.sqrt(sum(downside_vars) / len(pnls)) if downside_vars else 0.001
         sharpe = round((mean_pnl / std_dev) * math.sqrt(365), 2)
         sortino = round((mean_pnl / downside_std) * math.sqrt(365), 2)
-
         cum_pnl, peak = 0.0, 0.0
         dds = []
         for p in pnls:
@@ -1070,22 +1067,18 @@ def api_analytics():
             if cum_pnl > peak: peak = cum_pnl
             dds.append(peak - cum_pnl)
         max_dd = round(max(dds), 2) if dds else 0.0
-
     daily_pnl_map = {}
     for t in real_trades:
         day = (t.get("closed_at") or t.get("opened_at") or "")[:10]
         if day: daily_pnl_map[day] = round(daily_pnl_map.get(day, 0) + float(t.get("pnl", 0)), 2)
-
     daily_points = [{"date": d, "pnl": p} for d, p in sorted(daily_pnl_map.items())]
     equity_points = []
     bal_data = get("balance.json", {})
     current_bal = float(bal_data.get("usdt", 108025.24))
-    
     running = current_bal - sum(pnls)
     for t in real_trades[-50:]:
         running += float(t.get("pnl", 0))
         equity_points.append({"time": (t.get("closed_at") or t.get("opened_at") or "")[:10], "equity": round(running, 2)})
-
     return jsonify({
         "ok": True, "sharpe_ratio": sharpe, "sortino_ratio": sortino, "profit_factor": profit_factor,
         "expectancy_usdt": expectancy, "max_drawdown_usdt": max_dd, "win_rate": round(win_rate, 1),
@@ -1093,41 +1086,10 @@ def api_analytics():
     })
 
 
-@app.route("/api/config")
-def api_config():
-    cfg = get_live_config()
-    model_meta = get_model_metadata()
-
-    return jsonify({
-        "ok": True,
-        "active_conf": model_meta["rec_buy_conf"],
-        "active_score": cfg["min_score"],
-        "active_adx": cfg["min_adx"],
-        "quiet_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
-        "quiet_score": cfg["min_score"],
-        "quiet_adx": cfg["min_adx"] + 3,
-        "max_open_trades": cfg["max_open_trades"],
-        "risk_per_trade_pct": round(cfg["risk_per_trade"] * 100, 1),
-        "max_same_direction": cfg["max_same_direction"],
-        "atr_stop_mult": cfg["atr_stop_mult"],
-        "atr_target1_mult": cfg["atr_target1_mult"],
-        "atr_target2_mult": cfg["atr_target2_mult"],
-        "max_trade_age_hours": cfg["max_trade_age_hours"],
-        "symbols": cfg["symbols"],
-        "coin_tiers": cfg["coin_tiers"],
-        "exchange": "Deribit Testnet (USDC Linear Perpetuals)"
-    })
-
-
-# ── BOT ACTIONS & TRADE MANAGEMENT ────────────────────────────────────
-
 @app.route("/api/scan", methods=["POST", "OPTIONS"])
 def api_scan():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
-    if not GH_TOKEN or not GH_REPO:
-        return jsonify({"error": "GH_PAT_TOKEN not configured"}), 400
+    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
+    if not GH_TOKEN or not GH_REPO: return jsonify({"error": "GH_PAT_TOKEN not configured"}), 400
     headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json", "Content-Type": "application/json"}
     for wf in ["crypto_bot.yml", "crypto_bot.yaml", "main.yml"]:
         try:
@@ -1141,27 +1103,21 @@ def api_scan():
 
 @app.route("/api/kill_switch", methods=["POST", "OPTIONS"])
 def api_kill_switch():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
+    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
     client = deribit_client()
-    if not client:
-        return jsonify({"ok": False, "error": "Deribit client not available"}), 500
+    if not client: return jsonify({"ok": False, "error": "Deribit client not available"}), 500
     try:
         positions = client.get_positions()
         cancelled_count, flattened_count = 0, 0
         for p in positions:
             inst = p.get("instrument_name", "")
-            if not inst:
-                continue
+            if not inst: continue
             base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
             sym = f"{base}USDT"
             try:
                 for o in client.get_open_orders(sym):
                     oid = str(o.get("order_id", ""))
-                    if oid:
-                        client.cancel_order(oid)
-                        cancelled_count += 1
+                    if oid: client.cancel_order(oid); cancelled_count += 1
             except Exception: pass
             size = float(p.get("size", 0) or 0)
             if abs(size) > 0:
@@ -1171,73 +1127,36 @@ def api_kill_switch():
                     client.place_market_order(sym, side, amount, reduce_only=True)
                     flattened_count += 1
         for p in [Path("trades.json"), Path("data/trades.json")]:
-            try:
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(json.dumps({}, indent=2))
+            try: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps({}, indent=2))
             except Exception: pass
-        bust("trades.json")
-        bust("balance.json")
-        return jsonify({
-            "ok": True,
-            "status": "FLATTENED",
-            "cancelled_orders": cancelled_count,
-            "flattened_positions": flattened_count
-        })
-    except Exception as e:
-        log.error(f"Kill switch error: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-def _send_telegram(text: str):
-    tok = os.getenv("TELEGRAM_TOKEN", "").strip()
-    cid = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-    if not tok or not cid: return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{tok}/sendMessage",
-            data={"chat_id": cid, "text": text, "parse_mode": "Markdown"},
-            timeout=8
-        )
-    except Exception as e:
-        log.warning(f"Telegram notification failed: {e}")
+        bust("trades.json"); bust("balance.json")
+        return jsonify({"ok": True, "status": "FLATTENED", "cancelled_orders": cancelled_count, "flattened_positions": flattened_count})
+    except Exception as e: log.error(f"Kill switch error: {e}"); return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/close_trade", methods=["POST", "OPTIONS"])
 def api_close_trade():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
+    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
     data = request.get_json() or {}
     symbol = str(data.get("symbol", "")).strip().upper()
-    if not symbol:
-        return jsonify({"ok": False, "error": "Symbol is required"}), 400
-
-    bust("trades.json")
-    bust("trade_history.json")
-    bust("balance.json")
-
+    if not symbol: return jsonify({"ok": False, "error": "Symbol is required"}), 400
+    bust("trades.json"); bust("trade_history.json"); bust("balance.json")
     trades = get("trades.json", {})
     trade = trades.get(symbol, {})
     entry_price = float(trade.get("entry", 0) or 0)
     sig = trade.get("signal", "BUY")
     recorded_qty = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
-
     client = deribit_client()
     actual_close_price = entry_price
     cancelled_orders = 0
     flattened_size = 0.0
-
     if client:
         try:
-            open_orders = client.get_open_orders(symbol)
-            for o in open_orders:
+            for o in client.get_open_orders(symbol):
                 oid = str(o.get("order_id", ""))
                 if oid:
-                    try:
-                        client.cancel_order(oid)
-                        cancelled_orders += 1
+                    try: client.cancel_order(oid); cancelled_orders += 1
                     except Exception: pass
-
             real_pos = client.get_position_size(symbol)
             if abs(real_pos) > 0.0001:
                 close_side = "SELL" if real_pos > 0 else "BUY"
@@ -1245,109 +1164,38 @@ def api_close_trade():
                 if close_amount > 0:
                     client.place_market_order(symbol, close_side, close_amount, reduce_only=True)
                     flattened_size = close_amount
-
             live_p = client.get_live_price(symbol)
-            if live_p > 0:
-                actual_close_price = live_p
-        except Exception as ex_err:
-            log.error(f"Deribit exchange close error for {symbol}: {ex_err}")
-
+            if live_p > 0: actual_close_price = live_p
+        except Exception as ex_err: log.error(f"Deribit exchange close error for {symbol}: {ex_err}")
     calc_qty = flattened_size if flattened_size > 0 else (recorded_qty if recorded_qty > 0 else 1.0)
-    if sig == "BUY":
-        pnl = round((actual_close_price - entry_price) * calc_qty, 4) if entry_price > 0 else 0.0
-    else:
-        pnl = round((entry_price - actual_close_price) * calc_qty, 4) if entry_price > 0 else 0.0
-
+    if sig == "BUY": pnl = round((actual_close_price - entry_price) * calc_qty, 4) if entry_price > 0 else 0.0
+    else: pnl = round((entry_price - actual_close_price) * calc_qty, 4) if entry_price > 0 else 0.0
     history = get("trade_history.json", [])
-    history_record = {
-        **trade,
-        "symbol": symbol,
-        "signal": sig,
-        "entry": entry_price,
-        "close_price": actual_close_price,
-        "qty": calc_qty,
-        "pnl": pnl,
-        "opened_at": trade.get("opened_at", datetime.now(timezone.utc).isoformat()),
-        "closed_at": datetime.now(timezone.utc).isoformat(),
-        "close_reason": "Manual Close (Dashboard)",
-        "closed": True
-    }
-    history.append(history_record)
-
+    history.append({**trade, "symbol": symbol, "signal": sig, "entry": entry_price, "close_price": actual_close_price, "qty": calc_qty, "pnl": pnl, "opened_at": trade.get("opened_at", datetime.now(timezone.utc).isoformat()), "closed_at": datetime.now(timezone.utc).isoformat(), "close_reason": "Manual Close (Dashboard)", "closed": True})
     for p in [Path("trade_history.json"), Path("data/trade_history.json")]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(history, indent=2))
+        try: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(history, indent=2))
         except Exception: pass
     gh_push("trade_history.json", history)
-
     trades.pop(symbol, None)
     for p in [Path("trades.json"), Path("data/trades.json")]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(trades, indent=2))
+        try: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(trades, indent=2))
         except Exception: pass
     gh_push("trades.json", trades)
-
-    dec = 4 if actual_close_price < 10 else 2
-    pnl_emoji = "🟢" if pnl >= 0 else "🔴"
-    _send_telegram(
-        f"✋ *MANUAL CLOSE (DASHBOARD) — {symbol}*\n"
-        f"Side: `{sig}` | Closed @ `${actual_close_price:.{dec}f}`\n"
-        f"Realized PnL: `{pnl:+.4f} USDT` {pnl_emoji}\n"
-        f"Cancelled {cancelled_orders} bracket order(s) on exchange ✓"
-    )
-
     bust("trades.json"); bust("trade_history.json"); bust("balance.json")
-
-    return jsonify({
-        "ok": True,
-        "status": "closed",
-        "symbol": symbol,
-        "close_price": actual_close_price,
-        "pnl": pnl,
-        "cancelled_orders": cancelled_orders
-    })
+    return jsonify({"ok": True, "status": "closed", "symbol": symbol, "close_price": actual_close_price, "pnl": pnl, "cancelled_orders": cancelled_orders})
 
 
 @app.route("/health")
-def health():
-    return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
-
-
-# ══════════════════════════════════════════════════════════════════════
-# SPA & STATIC CATCH-ALL ROUTING (MUST BE AT THE VERY END OF FILE)
-# ══════════════════════════════════════════════════════════════════════
+def health(): return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
 
 @app.route("/")
-def index():
-    return send_from_directory("dashboard_static", "index.html")
-
-
-@app.route("/trading")
-@app.route("/signals")
-@app.route("/market")
-@app.route("/open-trades")
-@app.route("/history")
-@app.route("/performance")
-@app.route("/quant")
-@app.route("/execution")
-@app.route("/modelhealth")
-@app.route("/configuration")
-@app.route("/monitor")
-def spa():
-    return send_from_directory("dashboard_static", "index.html")
-
+def index(): return send_from_directory("dashboard_static", "index.html")
 
 @app.route("/<path:path>")
 def static_files(path):
-    try:
-        return send_from_directory("dashboard_static", path)
-    except Exception:
-        return send_from_directory("dashboard_static", "index.html")
-
+    try: return send_from_directory("dashboard_static", path)
+    except Exception: return send_from_directory("dashboard_static", "index.html")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
-    log.info(f"Dashboard starting — port {port} | repo {GH_REPO}")
     app.run(host="0.0.0.0", port=port, debug=False)
