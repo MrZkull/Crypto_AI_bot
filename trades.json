@@ -114,5 +114,43 @@
     "tier": "\ud83d\udc8e Micro-Granular Gems",
     "fg_override": false,
     "exchange": "deribit_testnet"
+  },
+  "PUMPUSDT": {
+    "symbol": "PUMPUSDT",
+    "signal": "BUY",
+    "entry": 0.00454,
+    "stop": 0.00443,
+    "tp1": 0.0047,
+    "tp2": 0.00488,
+    "qty": 1186000,
+    "qty_tp1": 593000,
+    "qty_tp2": 593000,
+    "risk_usd": 130.46,
+    "budget_risk_usd": 1290.44,
+    "balance_at_open": 107536.92,
+    "risk_mult": 0.4,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049221572345867",
+      "stop_loss": "USDC-SLMS-36824",
+      "tp1": "USDC-210049221572351166",
+      "tp2": "USDC-210049221572351380"
+    },
+    "opened_at": "2026-08-25T19:05:07.356878+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 51.5,
+    "score": 5,
+    "reasons": [
+      "Valid conf (52%)",
+      "Strong ADX 35",
+      "RSI not overbought (38)",
+      "4h trend aligns (RSI 48)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc8e Micro-Granular Gems",
+    "fg_override": false,
+    "exchange": "deribit_testnet"
   }
 }
