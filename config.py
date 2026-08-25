@@ -1,4 +1,4 @@
-# config.py — V12.6: Micro-Capital Universe with TRUMP & PUMP Integration
+# config.py — V12.7: Micro-Capital Universe with 2-Tier Timeouts & EV Authority
 
 # ── File Paths ────────────────────────────────────────────────────────
 RAW_DATA_FILE = "data/crypto_historical_15m_expanded.csv"
@@ -97,17 +97,21 @@ LIVE_LIMIT        = 300
 SCAN_INTERVAL_MIN = 15
 
 # ── Strategy & Filter Baselines ───────────────────────────────────────
+# NOTE: MIN_CONFIDENCE is used to scale Quiet Hours & Probation modes dynamically.
+# Live trade execution is governed natively by EV-calibrated model metadata 
+# (recommended_threshold_buy / recommended_threshold_sell) in pro_crypto_ai_model.pkl.
 MIN_CONFIDENCE    = 50.0
 MIN_ADX           = 15.0
 MIN_SCORE         = 3
 
 # ── Risk Management Parameters ────────────────────────────────────────
 RISK_PER_TRADE     = 0.03   # 3.0% of equity
-MAX_OPEN_TRADES    = 8      # Max 2 concurrent positions
-MAX_SAME_DIRECTION = 4      # Max 2 BUY or 2 SELL
+MAX_OPEN_TRADES    = 8      # Max concurrent positions
+MAX_SAME_DIRECTION = 4      # Max BUY or SELL
 ATR_STOP_MULT      = 2.5    # SL = entry ± 2.5 × ATR
 ATR_TARGET1_MULT   = 3.5    # TP1 = entry ± 3.5 × ATR (50% position exit)
 ATR_TARGET2_MULT   = 7.5    # TP2 = entry ± 7.5 × ATR (50% runner exit)
 
-# ── Stale Position Circuit Breaker ────────────────────────────────────
-MAX_TRADE_AGE_HOURS = 48
+# ── Stale Position Circuit Breakers (Two-Tier Horizon) ────────────────
+MAX_TRADE_AGE_HOURS_PRE_TP1  = 12   # Stale exit for unproven trades (edge decay cutoff)
+MAX_TRADE_AGE_HOURS_POST_TP1 = 48   # Extended runway for risk-free TP2 runners (7.5x ATR)
