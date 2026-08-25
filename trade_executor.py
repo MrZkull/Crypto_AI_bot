@@ -1,4 +1,4 @@
-# trade_executor.py — V3.6: Dynamic Config Integration with Rolling Circuit Breaker & 4H Trend Alignment
+# trade_executor.py — V3.8: Master Build - Native EV Authority & 2-Cycle Reconciler
 
 import os, json, time, logging, requests, joblib, base64, math
 import pandas as pd, numpy as np
@@ -11,7 +11,7 @@ import config
 from config import (
     SYMBOLS, ATR_STOP_MULT, ATR_TARGET1_MULT, ATR_TARGET2_MULT,
     RISK_PER_TRADE, MODEL_FILE, LOG_FILE, get_tier,
-    TIMEFRAME_ENTRY, TIMEFRAME_CONFIRM, TIMEFRAME_TREND, LIVE_LIMIT, MAX_TRADE_AGE_HOURS
+    TIMEFRAME_ENTRY, TIMEFRAME_CONFIRM, TIMEFRAME_TREND, LIVE_LIMIT
 )
 from deribit_client import DeribitClient, TRADEABLE_SYMBOLS
 from feature_engineering import add_indicators
@@ -21,12 +21,16 @@ from smart_scheduler import (
 )
 from whale_tracker import get_exchange_netflow 
 
-TRADES_FILE        = "trades.json"
-HISTORY_FILE       = "trade_history.json"
-SIGNALS_FILE       = "signals.json"
-BALANCE_FILE       = "balance.json"
-LOCK_FILE          = "scan_lock.json"
-STALE_LOCK_MINUTES = 20
+TRADES_FILE            = "trades.json"
+HISTORY_FILE           = "trade_history.json"
+SIGNALS_FILE           = "signals.json"
+BALANCE_FILE           = "balance.json"
+LOCK_FILE              = "scan_lock.json"
+SCAN_STATUS_FILE       = "scan_status.json"
+STALE_LOCK_MINUTES     = 20
+EXECUTION_SANITY_FLOOR = 35.0         # Protects against corrupted/missing pipeline keys
+ORPHAN_TRACKER_FILE    = "orphan_candidates.json"
+ORPHAN_CONFIRM_SECONDS = 600          # 10 minutes (~1 full scan interval)
 
 # --- PRO & PROBATION CONSTANTS ---
 COOLDOWN_FILE        = "cooldown.json"
@@ -39,17 +43,16 @@ FUNDING_SKIP_PCT     = 0.10
 ENTRY_MAX_SPREAD_PCT = 0.005
 
 # ── DYNAMIC REGIME PROBATION & ROLLING CIRCUIT BREAKER ─────────────────
-CONSECUTIVE_LOSS_BENCH_THRESHOLD = 3      # 3 losses in a row -> Bench
-PROBATION_WIN_GOAL               = 3      # 3 accumulated wins in Probation -> Reinstatement
-PROBATION_MIN_WINS_FOR_TIME_EXIT = 2      # >= 2 wins to exit probation after 7 days
-PROBATION_CONSECUTIVE_LOSS_RESET = 3      # 3 consecutive losses in Probation -> Reset timer
-PROBATION_CONFIDENCE_OFFSET      = 10.0   # +10.0% confidence premium required
-BENCH_MAX_COOLDOWN_DAYS          = 7      # 7-Day evaluation window
+CONSECUTIVE_LOSS_BENCH_THRESHOLD = 3      
+PROBATION_WIN_GOAL               = 3      
+PROBATION_MIN_WINS_FOR_TIME_EXIT = 2      
+PROBATION_CONSECUTIVE_LOSS_RESET = 3      
+PROBATION_CONFIDENCE_OFFSET      = 10.0   
+BENCH_MAX_COOLDOWN_DAYS          = 7      
 
-# Rolling-Window Circuit Breaker (Catches alternating loss patterns like L-L-W-W-L-L)
 ROLLING_WINDOW_TRADES            = 6
-ROLLING_MIN_WIN_RATE             = 0.40   # Less than 40% win rate triggers bench
-ROLLING_MAX_NET_LOSS             = 0.0    # Negative net PnL over window triggers bench
+ROLLING_MIN_WIN_RATE             = 0.40   
+ROLLING_MAX_NET_LOSS             = 0.0    
 
 GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
 GH_REPO   = os.getenv("GITHUB_REPO", "MrZkull/Crypto_AI_bot")
@@ -182,7 +185,6 @@ def _record_ghost(symbol: str):
     save_reliability(rel)
 
 def _check_rolling_performance(symbol: str) -> bool:
-    """Benches symbols with poor rolling metrics even if losses don't occur strictly back-to-back."""
     hist = load_history()
     recent = [
         h for h in hist
@@ -216,7 +218,7 @@ def _check_rolling_performance(symbol: str) -> bool:
         return True
     return False
 
-def get_required_confidence(symbol: str, current_baseline_conf: float = 55.0) -> float:
+def get_required_confidence(symbol: str, current_baseline_conf: float = 35.0) -> float:
     rel = load_reliability()
     if symbol not in rel:
         return current_baseline_conf
@@ -237,7 +239,7 @@ def get_required_confidence(symbol: str, current_baseline_conf: float = 55.0) ->
                 data["probation_wins"] = 0
                 data["probation_consecutive_losses"] = 0
                 save_reliability(rel)
-                log.info(f"  ⏱️ {symbol}: 7 days elapsed with {p_wins} wins. Reinstated to baseline ({current_baseline_conf}%).")
+                log.info(f"  ⏱️ {symbol}: 7 days elapsed with {p_wins} wins. Reinstated to baseline ({current_baseline_conf:.1f}%).")
                 return current_baseline_conf
             else:
                 data["benched_at"] = now
@@ -254,7 +256,7 @@ def get_required_confidence(symbol: str, current_baseline_conf: float = 55.0) ->
 
     return current_baseline_conf
 
-def _is_unreliable(symbol: str, signal_conf: float = 0.0, current_baseline_conf: float = 55.0) -> bool:
+def _is_unreliable(symbol: str, signal_conf: float = 0.0, current_baseline_conf: float = 35.0) -> bool:
     rel = load_reliability()
     if symbol not in rel:
         return False
@@ -611,28 +613,32 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         sig  = pipeline["label_map"][int(pred)]
         conf = round(float(max(prob))*100, 1)
 
-        # ── Strict Config Baseline Resolution ──
-        cfg_min_conf = float(getattr(config, "MIN_CONFIDENCE", 45.0))
-        rec_buy  = float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.40))) * 100.0
-        rec_sell = float(pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.45))) * 100.0
-        model_ev_target = rec_buy if sig == "BUY" else rec_sell
+        # ── 1. Resolve Authoritative Model Threshold with Disaster Floor ──
+        rec_buy  = float(pipeline.get("recommended_threshold_buy", 0.40)) * 100.0
+        rec_sell = float(pipeline.get("recommended_threshold_sell", 0.45)) * 100.0
+        raw_target = rec_buy if sig == "BUY" else rec_sell
 
-        # Enforces config.MIN_CONFIDENCE as the minimum floor
-        effective_base_conf = max(cfg_min_conf, model_ev_target)
-
-        # Apply Probation offset if coin is benched
+        effective_base_conf = max(raw_target, EXECUTION_SANITY_FLOOR)
         min_required_conf = get_required_confidence(symbol, effective_base_conf)
 
         log.info(f"    ML: {sig} {conf:.1f}% (need ≥{min_required_conf:.1f}%)")
-        if sig == "NO_TRADE" or conf < min_required_conf: return None
+        if sig == "NO_TRADE" or conf < min_required_conf:
+            return None
 
+        # ── 2. Fear & Greed Macro Gate with Telemetry Hook ──
+        fg_override_active = False
         if fng_data:
-            if sig == "SELL" and fng_data.get("fg_blocks_sell", False):
-                log.info(f"    [FILTER:FG_HARD] F&G={fng_data.get('value')} — blocking new SELL at potential bottom")
-                return None
-            if sig == "BUY" and fng_data.get("fg_blocks_buy", False):
-                log.info(f"    [FILTER:FG_HARD] F&G={fng_data.get('value')} — blocking new BUY at potential top")
-                return None
+            is_blocked = (sig == "SELL" and fng_data.get("fg_blocks_sell", False)) or \
+                         (sig == "BUY" and fng_data.get("fg_blocks_buy", False))
+            
+            if is_blocked:
+                if conf >= 70.0:
+                    fg_override_active = True
+                    log.info(f"    ⚡ [FG_OVERRIDE] F&G={fng_data.get('value')} extreme bypassed (High Conviction: {conf:.1f}% ≥ 70%)")
+                else:
+                    direction_str = "SELL at panic bottom" if sig == "SELL" else "BUY at euphoric top"
+                    log.info(f"    [FILTER:FG_HARD] F&G={fng_data.get('value')} — blocking new {direction_str} (Conf: {conf:.1f}% < 70%)")
+                    return None
 
         adx = float(row.get("adx", 0))
         min_adx_req = thresholds.get("min_adx", getattr(config, "MIN_ADX", 15.0))
@@ -758,38 +764,46 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         return {
             "symbol": symbol, "signal": sig, "confidence": conf, "score": score,
             "entry": entry, "atr": atr, "stop": 0, "tp1": 0, "tp2": 0,
-            "reasons": reasons, "conf_tier": "high" if conf >= 60.0 else "normal"
+            "reasons": reasons, "conf_tier": "high" if conf >= 60.0 else "normal",
+            "fg_override": fg_override_active,
         }
     except Exception as e:
         log.error(f"    Signal {symbol}: {e}")
         return None
 
 
-# ════════════ EXECUTE TRADE (DYNAMIC LIMITS INTEGRATED) ═══════════════
+# ════════════ EXECUTE TRADE (DYNAMIC LIMITS & OVERRIDE HAIRCUUT) ═══════
 
-def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float, vol_state: str = "NORMAL", base_min_conf: float = 55.0) -> bool:
-    symbol=sig["symbol"]; signal=sig["signal"]
-    entry=sig["entry"]; atr=sig["atr"]
+def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float, vol_state: str = "NORMAL", base_min_conf: float = None) -> bool:
+    if base_min_conf is None:
+        raise ValueError("execute_trade() requires base_min_conf — no implicit default allowed to avoid silently reintroducing a static confidence floor.")
+
+    symbol = sig["symbol"]
+    signal = sig["signal"]
+    entry  = sig["entry"]
+    atr    = sig["atr"]
     
     trades     = load_trades()
-    open_count = len([t for t in trades.values() if not t.get("closed",False)])
+    open_count = len([t for t in trades.values() if not t.get("closed", False)])
     
-    # ── Dynamic Limits from config.py ──
     max_open_trades = int(getattr(config, "MAX_OPEN_TRADES", 8))
     max_same_dir    = int(getattr(config, "MAX_SAME_DIRECTION", 4))
 
     if open_count >= max_open_trades:
-        log.info(f"  🛑 MAX TRADES ({open_count}/{max_open_trades}) — skip {symbol}"); return False
+        log.info(f"  🛑 MAX TRADES ({open_count}/{max_open_trades}) — skip {symbol}")
+        return False
 
     same_dir_count = sum(1 for t in trades.values() if not t.get("closed", False) and t.get("signal") == signal)
     if same_dir_count >= max_same_dir:
         log.info(f"  🛑 MAX SAME DIRECTION ({same_dir_count}/{max_same_dir} {signal}) — skip {symbol}")
         return False
 
-    if symbol in trades and not trades[symbol].get("closed",False):
-        log.info(f"  {symbol}: already open — skip"); return False
+    if symbol in trades and not trades[symbol].get("closed", False):
+        log.info(f"  {symbol}: already open — skip")
+        return False
 
-    try: real_pos = abs(deribit.get_position_size(symbol))
+    try:
+        real_pos = abs(deribit.get_position_size(symbol))
     except Exception as e:
         real_pos = 0.0
         log.debug(f"  {symbol}: real position check failed ({e}) — proceeding on trades.json only")
@@ -798,22 +812,26 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         return False
 
     if not deribit.is_supported(symbol):
-        log.info(f"  {symbol}: not on Deribit — skip"); return False
+        log.info(f"  {symbol}: not on Deribit — skip")
+        return False
 
     daily_count = _get_daily_trade_count()
     if daily_count >= MAX_DAILY_TRADES:
         log.info(f"  📊 Daily trade limit reached ({daily_count}/{MAX_DAILY_TRADES}) — skip {symbol}")
         return False
-    if _is_on_cooldown(symbol): return False
-    if _is_unreliable(symbol, signal_conf=sig.get("confidence", 0.0), current_baseline_conf=base_min_conf): return False
+    if _is_on_cooldown(symbol):
+        return False
+    if _is_unreliable(symbol, signal_conf=sig.get("confidence", 0.0), current_baseline_conf=base_min_conf):
+        return False
     
     funding_mult = _check_funding_rate(deribit, symbol, signal)
-    if funding_mult <= 0: return False
+    if funding_mult <= 0:
+        return False
     risk_mult *= funding_mult
 
     spread_info = deribit.get_order_book_spread(symbol)
     if spread_info.get("spread_pct", 999) > ENTRY_MAX_SPREAD_PCT:
-        log.warning(f"  🚫 {symbol}: entry spread {spread_info.get('spread_pct',0)*100:.2f}% > {ENTRY_MAX_SPREAD_PCT*100:.2f}% ceiling — book too thin, skip entry")
+        log.warning(f"  🚫 {symbol}: entry spread {spread_info.get('spread_pct', 0)*100:.2f}% > {ENTRY_MAX_SPREAD_PCT*100:.2f}% ceiling — book too thin, skip entry")
         return False
     
     if risk_mult <= 0:
@@ -831,8 +849,12 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
     dyn_tp1 = ATR_TARGET1_MULT
     dyn_tp2 = ATR_TARGET2_MULT
-    if vol_state == "VERY_HIGH": dyn_tp1 *= 1.5; dyn_tp2 *= 1.5
-    elif vol_state in ("DEAD", "UNKNOWN"): dyn_tp1 *= 0.8; dyn_tp2 *= 0.8
+    if vol_state == "VERY_HIGH":
+        dyn_tp1 *= 1.5
+        dyn_tp2 *= 1.5
+    elif vol_state in ("DEAD", "UNKNOWN"):
+        dyn_tp1 *= 0.8
+        dyn_tp2 *= 0.8
 
     dec = 4 if entry < 10 else 2
     side    = "BUY"  if signal == "BUY" else "SELL"
@@ -853,8 +875,9 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
             log.error(f"  🚨 {symbol}: computed {name}={val!r} is invalid — aborting trade")
             return False
 
-    sig["stop"] = stop; sig["tp1"] = tp1; sig["tp2"] = tp2
-    risk_boost = 1.5 if sig.get("conf_tier") == "high" else 1.0
+    sig["stop"] = stop
+    sig["tp1"]  = tp1
+    sig["tp2"]  = tp2
 
     vol_scalar = 1.0
     try:
@@ -863,13 +886,31 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         if atr_pct_this > 0:
             vol_scalar = btc_ref_atr_pct / atr_pct_this
             vol_scalar = max(0.4, min(2.0, vol_scalar))
-    except Exception as e: log.debug(f"  vol_scalar calc failed for {symbol}: {e}")
+    except Exception as e:
+        log.debug(f"  vol_scalar calc failed for {symbol}: {e}")
 
-    final_risk_mult = risk_mult * risk_boost * vol_scalar
+    # ── Explicit Branching: Override Discount vs. High-Conf Boost ──
+    if sig.get("fg_override", False):
+        final_risk_mult = (risk_mult * vol_scalar) * 0.5
+        log.info(f"  🛡️ [FG_OVERRIDE_SIZING] 50% discount applied, high-conf boost suppressed (final_risk_mult={final_risk_mult:.3f})")
+    else:
+        risk_boost = 1.5 if sig.get("conf_tier") == "high" else 1.0
+        final_risk_mult = risk_mult * risk_boost * vol_scalar
 
-    # ── Pre-Execution Lot Gatekeeper Check ──
+    # ── Sizing & Conservative Lot Clamp ──
     total_q = deribit.calc_contracts(symbol, balance, entry, stop, final_risk_mult)
     min_lot = deribit.get_min_trade_amount(symbol)
+
+    if total_q < min_lot and sig.get("fg_override", False):
+        min_lot_risk = abs(entry - stop) * min_lot
+        # Strict normal-risk ceiling (1.0x baseline): Never exceeds normal budget
+        max_allowed_normal_risk = balance * RISK_PER_TRADE * 1.0
+        if min_lot_risk <= max_allowed_normal_risk:
+            total_q = min_lot
+            log.info(f"  ℹ️ [FG_OVERRIDE_SIZING] Clamped to min lot ({min_lot} {symbol}) | Risk: ${min_lot_risk:.2f} <= ${max_allowed_normal_risk:.2f}")
+        else:
+            log.info(f"  [SKIP] FG override {symbol}: min lot risk (${min_lot_risk:.2f}) > normal risk budget (${max_allowed_normal_risk:.2f}) — skip rather than oversize")
+            return False
 
     if total_q < min_lot or total_q <= 0:
         log.warning(f"  [SKIP] Sizing below exchange min lot size. symbol={symbol} target_qty={total_q} min_lot={min_lot}")
@@ -877,12 +918,13 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
     qty_tp1, qty_tp2 = deribit.split_amount(symbol, total_q)
     exit_mode = "DUAL_TP" if qty_tp2 > 0 else "SINGLE_TP"
-    risk_usd = round(balance * RISK_PER_TRADE * final_risk_mult, 2)
+    risk_usd  = round(balance * RISK_PER_TRADE * final_risk_mult, 2)
 
     log.info(f"  {signal} {symbol} Total={total_q} (TP1={qty_tp1}, TP2={qty_tp2} | Mode={exit_mode}) | Risk=${risk_usd:.2f}")
     log.info(f"  SL={stop:.{dec}f} TP1={tp1:.{dec}f} TP2={tp2:.{dec}f}")
 
-    order_ids = {}; actual_entry = entry
+    order_ids = {}
+    actual_entry = entry
     try:
         from deribit_client import DEFAULT_LEVERAGE
         existing_pos = abs(deribit.get_position_size(symbol))
@@ -894,7 +936,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
             log.warning(f"  {symbol}: entry order aborted (thin book / slippage) — skip")
             return False
         eo = er.get("order", er)
-        order_ids["entry"] = str(eo.get("order_id",""))
+        order_ids["entry"] = str(eo.get("order_id", ""))
         actual_entry = deribit.get_fill_price(er, entry) or entry
         
         o_state = eo.get("order_state", "").lower()
@@ -906,8 +948,10 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
             
         if o_state == "open" and filled == 0:
             log.warning("  Market order stuck as 'open' — cancelling & skipping")
-            try: deribit.cancel_order(order_ids["entry"])
-            except Exception: pass
+            try:
+                deribit.cancel_order(order_ids["entry"])
+            except Exception:
+                pass
             return False
 
         log.info(f"  ✅ Entry @ {actual_entry:.{dec}f}")
@@ -936,43 +980,51 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 qty_tp2 = min(qty_tp2, max(0, actual_pos_size - qty_tp1))
                 qty_tp1 = deribit.round_amount(symbol, qty_tp1)
                 qty_tp2 = deribit.round_amount(symbol, qty_tp2)
-        except Exception as pos_e: log.debug(f"  Position size check: {pos_e}")
+        except Exception as pos_e:
+            log.debug(f"  Position size check: {pos_e}")
 
         order_plan = [("SL", total_q, sl_limit, stop, "stop_loss"), ("TP1", qty_tp1, tp1, None, "tp1")]
-        if qty_tp2 > 0: order_plan.append(("TP2", qty_tp2, tp2, None, "tp2"))
+        if qty_tp2 > 0:
+            order_plan.append(("TP2", qty_tp2, tp2, None, "tp2"))
 
         for label, qty, price, sl_p, key in order_plan:
-            if qty <= 0: continue
+            if qty <= 0:
+                continue
             try:
                 res = deribit.place_limit_order(
                     symbol, sl_side if label == "SL" else tp_side,
                     qty, price, stop_price=sl_p, use_reduce_only=(label == "SL")
                 )
                 o   = res.get("order", res)
-                oid = str(o.get("order_id",""))
-                if oid: order_ids[key] = oid
+                oid = str(o.get("order_id", ""))
+                if oid:
+                    order_ids[key] = oid
                 log.info(f"  ✅ {label} @ {price:.{dec}f} × {qty} id:{oid or 'MISSING'}")
-            except Exception as e: log.warning(f"  {label} failed: {e}")
+            except Exception as e:
+                log.warning(f"  {label} failed: {e}")
 
     except Exception as e:
-        log.error(f"  Trade error {symbol}: {e}"); _send(f"⚠️ {symbol}: {e}"); return False
+        log.error(f"  Trade error {symbol}: {e}")
+        _send(f"⚠️ {symbol}: {e}")
+        return False
 
     record = {
-        "symbol":symbol,"signal":signal,"entry":actual_entry,
-        "stop":stop,"tp1":tp1,"tp2":tp2,
-        "qty":total_q,"qty_tp1":qty_tp1,"qty_tp2":qty_tp2,
-        "risk_usd":risk_usd,"balance_at_open":balance,
-        "risk_mult":final_risk_mult,"exit_mode":exit_mode,
-        "order_ids":order_ids,
-        "opened_at":datetime.now(timezone.utc).isoformat(),
-        "tp1_hit":False,"tp2_hit":False,"closed":False,
-        "confidence":sig["confidence"],"score":sig["score"],
-        "reasons":sig.get("reasons",[]),"tier":get_tier(symbol),
-        "exchange":"deribit_testnet",
+        "symbol": symbol, "signal": signal, "entry": actual_entry,
+        "stop": stop, "tp1": tp1, "tp2": tp2,
+        "qty": total_q, "qty_tp1": qty_tp1, "qty_tp2": qty_tp2,
+        "risk_usd": risk_usd, "balance_at_open": balance,
+        "risk_mult": final_risk_mult, "exit_mode": exit_mode,
+        "order_ids": order_ids,
+        "opened_at": datetime.now(timezone.utc).isoformat(),
+        "tp1_hit": False, "tp2_hit": False, "closed": False,
+        "confidence": sig["confidence"], "score": sig["score"],
+        "reasons": sig.get("reasons", []), "tier": get_tier(symbol),
+        "fg_override": sig.get("fg_override", False),
+        "exchange": "deribit_testnet",
     }
     trades[symbol] = record
     save_trades(trades)
-    save_signal({**record,"type":"executed"})
+    save_signal({**record, "type": "executed"})
     _send_open_alert(symbol, signal, sig["confidence"], sig["score"],
                      actual_entry, stop, tp1, tp2, total_q, qty_tp1, qty_tp2, risk_usd, balance)
     log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal} ({exit_mode})")
@@ -1359,34 +1411,51 @@ def check_stale_trades(deribit: DeribitClient):
     now    = datetime.now(timezone.utc)
     to_remove = []
 
+    pre_tp1_max  = getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12)
+    post_tp1_max = getattr(config, "MAX_TRADE_AGE_HOURS_POST_TP1", 48)
+
     for symbol, trade in trades.items():
-        if trade.get("closed") or trade.get("tp2_hit"): continue
+        if trade.get("closed") or trade.get("tp2_hit"):
+            continue
         try:
-            age_h = (now - datetime.fromisoformat(trade.get("opened_at", "").replace("Z", ""))).total_seconds() / 3600
-        except Exception: continue
+            opened_str = str(trade.get("opened_at", "")).replace("Z", "+00:00")
+            age_h = (now - datetime.fromisoformat(opened_str)).total_seconds() / 3600.0
+        except Exception:
+            continue
 
-        if age_h <= MAX_TRADE_AGE_HOURS: continue
+        # Dynamic two-tier ceiling
+        tp1_secured = trade.get("tp1_hit", False)
+        max_allowed_age = post_tp1_max if tp1_secured else pre_tp1_max
 
-        log.warning(f"  ⏰ {symbol}: {age_h:.0f}h — time-based exit")
+        if age_h <= max_allowed_age:
+            continue
+
+        tier_label = "POST-TP1 RUNNER" if tp1_secured else "PRE-TP1 STALL"
+        log.warning(f"  ⏰ {symbol}: {age_h:.1f}h exceeds {max_allowed_age}h ({tier_label}) — time exit")
+
         try:
             _cancel_all_open_orders_for_symbol(deribit, symbol)
             live = deribit.get_live_price(symbol)
             close_side, close_qty = _get_safe_close_info(deribit, symbol, trade)
             if close_qty > 0:
-                try: deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
-                except Exception as me: log.warning(f"  Time-exit market order {symbol}: {me}")
+                try:
+                    deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
+                except Exception as me:
+                    log.warning(f"  Time-exit market order {symbol}: {me}")
 
             if _verify_actually_closed(deribit, symbol):
                 close_price = live if live > 0 else float(trade["entry"])
                 pnl         = _pnl(trade, close_price, "sl")
-                reason      = f"Time exit ({age_h:.0f}h)"
+                reason      = f"Time exit ({age_h:.0f}h [{tier_label}])"
                 _close_record(trade, close_price, pnl, reason)
-                _send(f"⏰ *TIME EXIT — {symbol}*\n{age_h:.0f}h | PnL≈`{pnl:+.4f}` | @ `{close_price:.4f}`")
+                _send(f"⏰ *TIME EXIT ({tier_label}) — {symbol}*\n{age_h:.1f}h | PnL≈`{pnl:+.4f}` | @ `{close_price:.4f}`")
                 to_remove.append(symbol)
-        except Exception as e: log.error(f"  Time exit {symbol}: {e}")
+        except Exception as e:
+            log.error(f"  Time exit {symbol}: {e}")
 
     if to_remove:
-        for sym in to_remove: trades.pop(sym, None)
+        for sym in to_remove:
+            trades.pop(sym, None)
         save_trades(trades)
 
 
@@ -1524,9 +1593,14 @@ def run_execution_scan():
 
 
 def _run_execution_scan_locked():
+    scan_started_at = datetime.now(timezone.utc).isoformat()
+    save_json(SCAN_STATUS_FILE, {"phase": "started", "started_at": scan_started_at, "completed_at": None})
+
     run, mode, vol, reason = should_scan()
     if not run:
-        log.info(f"  Scan skipped: {reason}"); return
+        log.info(f"  Scan skipped: {reason}")
+        save_json(SCAN_STATUS_FILE, {"phase": "completed", "started_at": scan_started_at, "completed_at": datetime.now(timezone.utc).isoformat()})
+        return
 
     deribit    = DeribitClient(os.getenv("DERIBIT_CLIENT_ID",""), os.getenv("DERIBIT_CLIENT_SECRET",""))
     deribit.test_connection()
@@ -1534,18 +1608,14 @@ def _run_execution_scan_locked():
     thresholds = get_mode_thresholds(mode)
     risk_mult  = get_effective_risk(mode, vol)
 
-    # ── Dynamic Config Parameters Resolution ──
-    cfg_min_conf    = float(getattr(config, "MIN_CONFIDENCE", 45.0))
     max_open_trades = int(getattr(config, "MAX_OPEN_TRADES", 8))
     max_same_dir    = int(getattr(config, "MAX_SAME_DIRECTION", 4))
 
+    # Authoritative Model EV Targets
     rec_buy  = float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.40))) * 100.0
     rec_sell = float(pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.45))) * 100.0
-    
-    eff_buy  = max(cfg_min_conf, rec_buy)
-    eff_sell = max(cfg_min_conf, rec_sell)
 
-    log.info(f"  {mode['label']} | Active Targets: BUY≥{eff_buy:.1f}% SELL≥{eff_sell:.1f}% (Config Base: {cfg_min_conf:.1f}%) "
+    log.info(f"  {mode['label']} | Active Targets: BUY≥{rec_buy:.1f}% SELL≥{rec_sell:.1f}% "
              f"| score≥{thresholds['min_score']} | ADX≥{thresholds['min_adx']} | risk:{risk_mult:.2f}")
 
     log.info("\n[0] Balance..."); balance = save_balance(deribit)
@@ -1554,20 +1624,27 @@ def _run_execution_scan_locked():
     log.info("\n[3] Ghost trade recovery..."); clean_ghost_trades(deribit)
     log.info("\n[3b] Funding rate check..."); check_funding_rates(deribit)
     
-    # ── [3c] RECONCILER & ANTI-ORPHAN SELF-HEALING ROUTINE ──
+    # ── [3c] RECONCILER: TWO-CYCLE CONFIRMATION ANTI-ORPHAN ENGINE ──
     log.info("\n[3c] Reconciler: Auditing exchange positions vs local ledger...")
     trades = load_trades()
-    tracked = set(trades.keys())
+    tracked_symbols = set(trades.keys())
+
+    orphan_tracker = load_json(ORPHAN_TRACKER_FILE, {})
+    now_ts = time.time()
+    active_orphans_this_scan = set()
 
     try:
         raw_positions = deribit.get_positions()
+        fetch_succeeded = True
     except Exception as e:
         raw_positions = []
+        fetch_succeeded = False
         log.warning(f"  [3c] could not fetch live positions: {e}")
 
     for p in raw_positions:
         inst = p.get("instrument_name", "")
-        if not inst: continue
+        if not inst:
+            continue
         base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
         sym  = f"{base}USDT"
         size = deribit.get_position_size(sym)
@@ -1575,8 +1652,22 @@ def _run_execution_scan_locked():
         if abs(size) <= 0.0001:
             continue
 
-        if sym not in tracked:
-            log.warning(f"  🚨 [RECONCILER] Orphaned position detected: {sym} (size={size}) — Flattening immediately...")
+        if sym not in tracked_symbols:
+            active_orphans_this_scan.add(sym)
+            first_seen = orphan_tracker.get(sym)
+
+            if first_seen is None:
+                orphan_tracker[sym] = now_ts
+                log.warning(f"  ⚠️ [RECONCILER] Candidate orphan detected: {sym} (size={size}) — awaiting confirmation on next scan cycle.")
+                continue
+
+            elapsed = now_ts - float(first_seen)
+            if elapsed < ORPHAN_CONFIRM_SECONDS:
+                log.info(f"  ⏳ [RECONCILER] Candidate {sym} pending confirmation ({elapsed:.0f}s / {ORPHAN_CONFIRM_SECONDS}s).")
+                continue
+
+            # Confirmed across consecutive scans -> Flatten safely
+            log.warning(f"  🚨 [RECONCILER] Confirmed orphan across multiple cycles: {sym} (size={size}, active {elapsed/60:.1f}m) — Flattening...")
             _cancel_all_open_orders_for_symbol(deribit, sym)
             
             flatten_side = "SELL" if size > 0 else "BUY"
@@ -1587,13 +1678,23 @@ def _run_execution_scan_locked():
                     deribit.place_market_order(symbol=sym, side=flatten_side, amount=flatten_qty, reduce_only=True)
                 
                 if _verify_actually_closed(deribit, sym):
+                    orphan_tracker.pop(sym, None)
                     log.info(f"  ✓ [RECONCILER] Successfully flattened orphan position for {sym}")
-                    _send(f"🛡️ *[RECONCILER] Orphaned Position Flattened — {sym}*\nClosed `{flatten_qty}` contracts via reduce_only market order.")
+                    _send(f"🛡️ *[RECONCILER] Orphan Flattened — {sym}*\nConfirmed across scans. Closed `{flatten_qty}` contracts via reduce_only.")
                 else:
-                    log.error(f"  🚨 [RECONCILER] Flatten failed to verify for {sym} — Check Deribit manually!")
+                    log.error(f"  🚨 [RECONCILER] Flatten failed to verify for {sym} — Check exchange!")
             except Exception as re_err:
                 log.error(f"  [RECONCILER] Flatten failed: {re_err}")
 
+    # ONLY prune if we successfully verified the exchange state this cycle
+    if fetch_succeeded:
+        for tracked_cand in list(orphan_tracker.keys()):
+            if tracked_cand not in active_orphans_this_scan:
+                orphan_tracker.pop(tracked_cand, None)
+        save_json(ORPHAN_TRACKER_FILE, orphan_tracker)
+    else:
+        log.warning("  [3c] Exchange fetch failed — preserving orphan_tracker state for next cycle.")
+        
     save_balance(deribit)
 
     open_count = len([t for t in load_trades().values() if not t.get("closed",False)])
@@ -1618,13 +1719,22 @@ def _run_execution_scan_locked():
         if sig is None: time.sleep(0.2); continue
         
         found += 1
-        base_hurdle = eff_buy if sig["signal"] == "BUY" else eff_sell
+        
+        # ── Trust the model's EV target directly; no max() override ──
+        base_hurdle = rec_buy if sig["signal"] == "BUY" else rec_sell
+        
         if execute_trade(deribit, sig, risk_mult, balance, vol_state, base_min_conf=base_hurdle):
             time.sleep(1.5)
 
     save_balance(deribit)
     log.info(f"\n{'═'*56}\nDONE — {found} signal(s) | ${balance:.2f}\n{'═'*56}")
 
+    # Mark Scan Completed
+    save_json(SCAN_STATUS_FILE, {
+        "phase": "completed", 
+        "started_at": scan_started_at, 
+        "completed_at": datetime.now(timezone.utc).isoformat()
+    })
 
 if __name__ == "__main__":
     run_execution_scan()
