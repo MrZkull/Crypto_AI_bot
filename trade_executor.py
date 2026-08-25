@@ -772,7 +772,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         return None
 
 
-# ════════════ EXECUTE TRADE (DYNAMIC LIMITS & OVERRIDE HAIRCUUT) ═══════
+# ════════════ EXECUTE TRADE (DYNAMIC LIMITS & REALIZED RISK CALC) ═══════
 
 def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float, vol_state: str = "NORMAL", base_min_conf: float = None) -> bool:
     if base_min_conf is None:
@@ -918,9 +918,13 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
     qty_tp1, qty_tp2 = deribit.split_amount(symbol, total_q)
     exit_mode = "DUAL_TP" if qty_tp2 > 0 else "SINGLE_TP"
-    risk_usd  = round(balance * RISK_PER_TRADE * final_risk_mult, 2)
+    
+    # ── Realized Dollar Risk at Stop Loss vs Theoretical Budget ──
+    budget_risk_usd = round(balance * RISK_PER_TRADE * final_risk_mult, 2)
+    actual_risk_usd = round(abs(entry - stop) * total_q, 2)
+    risk_usd        = actual_risk_usd
 
-    log.info(f"  {signal} {symbol} Total={total_q} (TP1={qty_tp1}, TP2={qty_tp2} | Mode={exit_mode}) | Risk=${risk_usd:.2f}")
+    log.info(f"  {signal} {symbol} Total={total_q} (TP1={qty_tp1}, TP2={qty_tp2} | Mode={exit_mode}) | Real Risk=${actual_risk_usd:.2f} (Budget: ${budget_risk_usd:.2f})")
     log.info(f"  SL={stop:.{dec}f} TP1={tp1:.{dec}f} TP2={tp2:.{dec}f}")
 
     order_ids = {}
@@ -969,6 +973,10 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
             tp1  = deribit.round_price(symbol, actual_entry - atr * dyn_tp1)
             tp2  = deribit.round_price(symbol, actual_entry - atr * dyn_tp2)
 
+        # Recompute exact realized dollar risk with actual confirmed fill price
+        actual_risk_usd = round(abs(actual_entry - stop) * total_q, 2)
+        risk_usd = actual_risk_usd
+
         tick = deribit.get_tick_size(symbol)
         sl_limit = deribit.round_price(symbol, stop - (tick * 3) if signal == "BUY" else stop + (tick * 3))
 
@@ -1012,7 +1020,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         "symbol": symbol, "signal": signal, "entry": actual_entry,
         "stop": stop, "tp1": tp1, "tp2": tp2,
         "qty": total_q, "qty_tp1": qty_tp1, "qty_tp2": qty_tp2,
-        "risk_usd": risk_usd, "balance_at_open": balance,
+        "risk_usd": actual_risk_usd, "budget_risk_usd": budget_risk_usd, "balance_at_open": balance,
         "risk_mult": final_risk_mult, "exit_mode": exit_mode,
         "order_ids": order_ids,
         "opened_at": datetime.now(timezone.utc).isoformat(),
@@ -1026,7 +1034,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     save_trades(trades)
     save_signal({**record, "type": "executed"})
     _send_open_alert(symbol, signal, sig["confidence"], sig["score"],
-                     actual_entry, stop, tp1, tp2, total_q, qty_tp1, qty_tp2, risk_usd, balance)
+                     actual_entry, stop, tp1, tp2, total_q, qty_tp1, qty_tp2, actual_risk_usd, balance)
     log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal} ({exit_mode})")
     return True
 
