@@ -76,45 +76,6 @@
     "fg_override": false,
     "exchange": "deribit_testnet"
   },
-  "ETHUSDT": {
-    "symbol": "ETHUSDT",
-    "signal": "BUY",
-    "entry": 2471.08,
-    "stop": 2448.93,
-    "tp1": 2502.1,
-    "tp2": 2537.54,
-    "qty": 2.168,
-    "qty_tp1": 1.084,
-    "qty_tp2": 1.084,
-    "risk_usd": 48.02,
-    "budget_risk_usd": 3227.12,
-    "balance_at_open": 107152.91,
-    "risk_mult": 1.003899029251644,
-    "exit_mode": "DUAL_TP",
-    "order_ids": {
-      "entry": "USDC-210049221813463801",
-      "stop_loss": "USDC-SLMS-37334",
-      "tp1": "USDC-210049221813469027",
-      "tp2": "USDC-210049221813469376"
-    },
-    "opened_at": "2026-08-26T10:54:47.893202+00:00",
-    "tp1_hit": false,
-    "tp2_hit": false,
-    "closed": false,
-    "confidence": 52.9,
-    "score": 6,
-    "reasons": [
-      "Valid conf (53%)",
-      "Strong ADX 36",
-      "RSI not overbought (62)",
-      "4h trend aligns (RSI 60)",
-      "4h trend established (20h)",
-      "Volume surge 2.4\u00d7"
-    ],
-    "tier": "\ud83d\udc51 Majors",
-    "fg_override": false,
-    "exchange": "deribit_testnet"
-  },
   "SOLUSDT": {
     "symbol": "SOLUSDT",
     "signal": "BUY",
@@ -151,6 +112,45 @@
       "4h trend established (20h)"
     ],
     "tier": "\ud83d\udc51 Majors",
+    "fg_override": false,
+    "exchange": "deribit_testnet"
+  },
+  "PUMPUSDT": {
+    "symbol": "PUMPUSDT",
+    "signal": "BUY",
+    "entry": 0.00469999,
+    "stop": 0.00454,
+    "tp1": 0.00492,
+    "tp2": 0.00518,
+    "qty": 1140000,
+    "qty_tp1": 570000,
+    "qty_tp2": 569000,
+    "risk_usd": 182.39,
+    "budget_risk_usd": 1538.48,
+    "balance_at_open": 106838.77,
+    "risk_mult": 0.48,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049221852225939",
+      "stop_loss": "USDC-SLMS-37505",
+      "tp1": "USDC-210049221852238656",
+      "tp2": "USDC-210049221852239856"
+    },
+    "opened_at": "2026-08-26T13:30:19.975556+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 52.7,
+    "score": 6,
+    "reasons": [
+      "Valid conf (53%)",
+      "Strong ADX 42",
+      "RSI not overbought (41)",
+      "EMA bullish",
+      "4h trend aligns (RSI 52)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc8e Micro-Granular Gems",
     "fg_override": false,
     "exchange": "deribit_testnet"
   }
