@@ -8812,5 +8812,48 @@
     "pnl": 93.2575,
     "closed_at": "2026-08-26T10:54:36.823960+00:00",
     "close_reason": "Time exit (13h [PRE-TP1 STALL])"
+  },
+  {
+    "symbol": "BNBUSDT",
+    "signal": "BUY",
+    "entry": 707.18,
+    "stop": 700.25,
+    "tp1": 716.88,
+    "tp2": 727.96,
+    "qty": 7.578,
+    "qty_tp1": 3.789,
+    "qty_tp2": 3.789,
+    "risk_usd": 52.52,
+    "budget_risk_usd": 2953.19,
+    "balance_at_open": 107152.91,
+    "risk_mult": 0.9186840828531798,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049221813493108",
+      "stop_loss": "USDC-SLMS-37335",
+      "tp1": "USDC-210049221813498640",
+      "tp2": "USDC-210049221813498945"
+    },
+    "opened_at": "2026-08-26T10:54:55.307522+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 53.8,
+    "score": 6,
+    "reasons": [
+      "Valid conf (54%)",
+      "Strong ADX 36",
+      "EMA bullish",
+      "4h trend aligns (RSI 60)",
+      "4h trend established (20h)",
+      "Volume surge 3.7\u00d7"
+    ],
+    "tier": "\ud83d\udc51 Majors",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "close_price": 700.22,
+    "pnl": -52.7429,
+    "closed_at": "2026-08-26T11:38:10.032565+00:00",
+    "close_reason": "SL hit"
   }
 ]
