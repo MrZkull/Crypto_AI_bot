@@ -9155,5 +9155,46 @@
     "closed_at": "2026-08-27T03:23:45.742162+00:00",
     "close_reason": "TP1 hit [order]",
     "partial": true
+  },
+  {
+    "symbol": "TRUMPUSDT",
+    "signal": "BUY",
+    "entry": 2.1671379,
+    "stop": 2.279,
+    "tp1": 2.279,
+    "tp2": 2.4069,
+    "qty": 2464.45,
+    "qty_tp1": 1232.22,
+    "qty_tp2": 1232.23,
+    "risk_usd": 197.0,
+    "budget_risk_usd": 1536.21,
+    "balance_at_open": 106681.48,
+    "risk_mult": 0.48,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049221896673717",
+      "stop_loss": "USDC-SLMS-38453",
+      "tp1": "USDC-210049221896680556",
+      "tp2": "USDC-210049221896681218"
+    },
+    "opened_at": "2026-08-26T16:04:39.896729+00:00",
+    "tp1_hit": true,
+    "tp2_hit": true,
+    "closed": true,
+    "confidence": 59.9,
+    "score": 5,
+    "reasons": [
+      "Strong conf (60%)",
+      "Strong ADX 43",
+      "RSI not overbought (37)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc8e Micro-Granular Gems",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "close_price": 2.4069,
+    "pnl": 295.4421,
+    "closed_at": "2026-08-27T14:34:49.856914+00:00",
+    "close_reason": "TP2 hit"
   }
 ]
