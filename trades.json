@@ -38,5 +38,82 @@
     "tier": "\ud83d\udc51 Majors",
     "fg_override": false,
     "exchange": "deribit_testnet"
+  },
+  "TRUMPUSDT": {
+    "symbol": "TRUMPUSDT",
+    "signal": "BUY",
+    "entry": 2.53552457,
+    "stop": 2.48,
+    "tp1": 2.6133,
+    "tp2": 2.7022,
+    "qty": 2102.65,
+    "qty_tp1": 1051.32,
+    "qty_tp2": 1051.33,
+    "risk_usd": 116.75,
+    "budget_risk_usd": 638.57,
+    "balance_at_open": 106427.84,
+    "risk_mult": 0.2,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049223388665125",
+      "stop_loss": "USDC-SLMS-40691",
+      "tp1": "USDC-210049223388671310",
+      "tp2": "USDC-210049223388671513"
+    },
+    "opened_at": "2026-08-30T20:06:48.206371+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 44.2,
+    "score": 5,
+    "reasons": [
+      "Valid conf (44%)",
+      "Strong ADX 26",
+      "RSI not overbought (44)",
+      "4h trend aligns (RSI 48)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc8e Micro-Granular Gems",
+    "fg_override": false,
+    "exchange": "deribit_testnet"
+  },
+  "ADAUSDT": {
+    "symbol": "ADAUSDT",
+    "signal": "SELL",
+    "entry": 0.20327,
+    "stop": 0.20568,
+    "tp1": 0.1999,
+    "tp2": 0.19605,
+    "qty": 26154,
+    "qty_tp1": 13077,
+    "qty_tp2": 13077,
+    "risk_usd": 63.03,
+    "budget_risk_usd": 1012.31,
+    "balance_at_open": 106427.84,
+    "risk_mult": 0.31705547729424083,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049223388735888",
+      "stop_loss": "USDC-SLMB-40692",
+      "tp1": "USDC-210049223388743218",
+      "tp2": "USDC-210049223388743707"
+    },
+    "opened_at": "2026-08-30T20:07:07.023318+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 57.0,
+    "score": 6,
+    "reasons": [
+      "Valid conf (57%)",
+      "ADX 24",
+      "RSI not oversold (46)",
+      "1h confirms",
+      "4h trend aligns (RSI 45)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfdb Deep Liquidity Alts",
+    "fg_override": false,
+    "exchange": "deribit_testnet"
   }
 }
