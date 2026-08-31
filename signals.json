@@ -11222,5 +11222,47 @@
     "exchange": "deribit_testnet",
     "type": "executed",
     "generated_at": "2026-08-31T15:02:44.687543+00:00"
+  },
+  {
+    "symbol": "TRXUSDT",
+    "signal": "SELL",
+    "entry": 0.33294359,
+    "stop": 0.33374,
+    "tp1": 0.33184,
+    "tp2": 0.33057,
+    "qty": 15965,
+    "qty_tp1": 7982,
+    "qty_tp2": 7983,
+    "risk_usd": 12.71,
+    "budget_risk_usd": 4785.38,
+    "balance_at_open": 106341.79,
+    "risk_mult": 1.5,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049223746768428",
+      "stop_loss": "USDC-SLMB-42000",
+      "tp1": "USDC-210049223746774309",
+      "tp2": "USDC-210049223746775187"
+    },
+    "opened_at": "2026-08-31T20:48:19.236163+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 67.7,
+    "score": 7,
+    "reasons": [
+      "Valid conf (68%)",
+      "ADX 23",
+      "RSI not oversold (42)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 34)",
+      "4h trend established (16h)"
+    ],
+    "tier": "\ud83c\udfdb Deep Liquidity Alts",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "type": "executed",
+    "generated_at": "2026-08-31T20:48:19.239642+00:00"
   }
 ]
