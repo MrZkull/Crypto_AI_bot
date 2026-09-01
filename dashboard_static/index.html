@@ -792,7 +792,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-bal"></span>Balance Fetch</span><span class="mon-val" id="v-bal">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-pos"></span>Open Positions</span><span class="mon-val" id="v-pos">—</span></div>
           <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-margin"></span>Margin Available</span><span class="mon-val" id="v-margin">—</span></div>
-          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-stale"></span>Stale Trades (&gt;48h)</span><span class="mon-val" id="v-stale">—</span></div>
+          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-stale-pre"></span>Stalled Pre-TP1 (&gt;12h)</span><span class="mon-val" id="v-stale-pre">—</span></div>
+          <div class="mon-row"><span class="mon-label"><span class="mon-dot idle" id="d-stale-post"></span>Running Post-TP1 (&gt;48h)</span><span class="mon-val" id="v-stale-post">—</span></div>
         </div>
       </div>
       <div class="mon-card">
@@ -1984,11 +1985,17 @@ async function fetchConfig() {
 
   const bind = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   
-  bind('cfg-act-conf', `${d.active_conf}%`);
+  // Show BUY/SELL split like the Model tab does — a single "active_conf"
+  // number is misleading now that thresholds are EV-calibrated and
+  // direction-specific, not one shared static value.
+  bind('cfg-act-conf', `BUY ≥${d.active_buy_conf ?? d.active_conf}% | SELL ≥${d.active_sell_conf ?? d.active_conf}%`);
   bind('cfg-act-score', `${d.active_score} / 6`);
   bind('cfg-act-adx', d.active_adx);
 
-  bind('cfg-q-conf', `${d.quiet_conf}%`);
+  // NOTE: "Quiet Hours" confidence no longer reflects live behavior — see
+  // note in the accompanying review. Labeled explicitly as informational
+  // until the backend confirms what (if anything) still changes at night.
+  bind('cfg-q-conf', d.quiet_conf_is_live ? `BUY ≥${d.quiet_buy_conf}% | SELL ≥${d.quiet_sell_conf}%` : `${d.quiet_conf}% (reference only — verify against live execution)`);
   bind('cfg-q-score', `${d.quiet_score} / 6`);
   bind('cfg-q-adx', d.quiet_adx);
 
@@ -2100,7 +2107,16 @@ function renderMonEvents() {
 
 async function runMonitorChecks() {
   const t0 = performance.now();
-  const d = await apiFetch('/api/monitor', null);
+  // NOTE: previously only /api/monitor was fetched here, which left ~12 rows
+  // (v-pos, v-margin, v-ghost, v-scan, v-fresh, v-sigs, v-circuit, v-gh, v-tg,
+  // v-sync, v-regime, v-atr) permanently unset — they exist in the HTML but
+  // nothing ever wrote to them. Pulling /api/status alongside /api/monitor
+  // covers most of these from fields the backend already returns elsewhere
+  // in this file (last_scan_completed_at, today_signals, open_trades, etc).
+  const [d, status] = await Promise.all([
+    apiFetch('/api/monitor', null),
+    apiFetch('/api/status', null),
+  ]);
   const apiMs = Math.round(performance.now() - t0);
   if (!d || !d.ok) {
     sd('d-conn','err'); sv('v-conn','Unreachable','var(--red)');
@@ -2108,9 +2124,12 @@ async function runMonitorChecks() {
     document.getElementById('monRing').className = 'mon-ring err'; document.getElementById('monRing').textContent = '✕';
     return;
   }
-  const ex = d.deribit, mk = d.market, integ = d.integrity;
+  const ex = d.deribit, mk = d.market, integ = d.integrity || {};
   let ok = 0, total = 0;
   const mark = (dot, val, cond, text) => { total++; if (cond) ok++; sd(dot, cond?'ok':'err'); sv(val, text, cond?'var(--green)':'var(--red)'); };
+  // Softer variant for rows that are informational rather than pass/fail —
+  // avoids painting things like "Signals Today: 0" red just because 0 isn't truthy.
+  const info = (dot, val, text, warn) => { sd(dot, warn?'warn':'idle'); sv(val, text, warn?'var(--amber)':'var(--text3)'); };
 
   mark('d-conn','v-conn', ex.ok, ex.ok ? 'Connected' : ex.msg);
   mark('d-bal','v-bal', !!ex.balance, ex.balance ? '$'+Number(ex.balance).toFixed(2) : 'Unavailable');
@@ -2122,6 +2141,57 @@ async function runMonitorChecks() {
   mark('d-sltp','v-sltp', integ.sltp_missing===0, integ.sltp_missing===0?'OK':integ.sltp_missing+' missing');
   mark('d-wr','v-wr', true, (integ.win_rate??'—')+'%');
   sv('v-slots', integ.open_slots || '0 / 2');
+
+  // ── Two-tier stale trade counts ──
+  // Requires backend to add `stale_pre_tp1` / `stale_post_tp1` counts to the
+  // /api/monitor `integrity` object (mirror the logic check_stale_trades()
+  // already uses). Falls back to '—' gracefully until that field exists —
+  // this will NOT silently show a wrong number, just an honest placeholder.
+  if (integ.stale_pre_tp1 !== undefined) {
+    mark('d-stale-pre','v-stale-pre', integ.stale_pre_tp1===0, integ.stale_pre_tp1===0?'0':integ.stale_pre_tp1+' stalled');
+  } else {
+    info('d-stale-pre','v-stale-pre','— (backend field pending)');
+  }
+  if (integ.stale_post_tp1 !== undefined) {
+    info('d-stale-post','v-stale-post', integ.stale_post_tp1+' running', integ.stale_post_tp1>0);
+  } else {
+    info('d-stale-post','v-stale-post','— (backend field pending)');
+  }
+
+  // ── Fields sourced from /api/status (already fetched elsewhere in this
+  // file for the header/summary cards — reused here rather than re-fetched) ──
+  if (status && status.ok) {
+    info('d-pos','v-pos', `${status.open_trades ?? '—'} / ${status.max_trades ?? '—'}`);
+    info('d-sigs','v-sigs', `${status.today_signals ?? '—'} (${status.today_buys ?? 0} BUY / ${status.today_sells ?? 0} SELL)`);
+
+    if (status.last_scan_completed_at && status.last_scan_completed_at !== 'Unknown') {
+      const scanTime = new Date(status.last_scan_completed_at).getTime();
+      const diffMin = Math.floor((Date.now() - scanTime) / 60000);
+      const stalled = status.last_scan_phase && status.last_scan_phase !== 'completed';
+      info('d-scan','v-scan', stalled ? `Stalled (${status.last_scan_phase})` : `${diffMin}m ago`, stalled || diffMin > 20);
+      info('d-fresh','v-fresh', stalled ? 'Unreliable' : (diffMin > 20 ? 'Stale' : 'Fresh'), stalled || diffMin > 20);
+    } else {
+      info('d-scan','v-scan','—');
+      info('d-fresh','v-fresh','—');
+    }
+
+    if (status.model_accuracy) mark('d-model','v-model-health-acc', true, status.model_accuracy);
+  } else {
+    info('d-pos','v-pos','—'); info('d-sigs','v-sigs','—'); info('d-scan','v-scan','—'); info('d-fresh','v-fresh','—');
+  }
+
+  // ── Fields with NO current backend source — deliberately left as
+  // explicit "not wired" rather than fake-passing, so this doesn't quietly
+  // regress into "always green" placeholder rows the way the old blank
+  // dashes did. See accompanying review for the exact backend fields needed
+  // (integrity.ghost_trades_count, integrity.circuit_breaker_active,
+  // env booleans for GH_TOKEN/TELEGRAM_TOKEN, integrity.github_sync_ok,
+  // market.regime_label, market.btc_atr_pct).
+  ['v-margin','v-ghost','v-circuit','v-gh','v-tg','v-sync','v-regime','v-atr'].forEach(id => {
+    if (document.getElementById(id) && document.getElementById(id).textContent === '—') {
+      sv(id, 'Not wired', 'var(--text3)');
+    }
+  });
 
   const pct2 = total ? Math.round(ok/total*100) : 100;
   const state = pct2>=90?'ok':pct2>=60?'warn':'err', color = state==='ok'?'var(--green)':state==='warn'?'var(--amber)':'var(--red)';
