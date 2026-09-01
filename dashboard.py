@@ -355,6 +355,20 @@ def check_deribit_health():
 
 # ── Resilient GitHub & State Persistence Helpers ──────────────────────
 
+# Tracks whether the last GitHub fetch/push actually succeeded, so
+# integrity.github_sync_ok (added below) reflects reality instead of
+# always silently claiming everything is fine.
+_gh_sync_state = {"ok": True, "last_success_at": None, "last_error": None}
+
+
+def _mark_gh_sync(success: bool, error: str = None):
+    _gh_sync_state["ok"] = success
+    if success:
+        _gh_sync_state["last_success_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        _gh_sync_state["last_error"] = error
+
+
 def gh_fetch(filename: str):
     if not GH_TOKEN or not GH_REPO:
         return None
@@ -362,11 +376,13 @@ def gh_fetch(filename: str):
     for path in [filename, f"data/{filename}"]:
         try:
             url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}?ref={GH_BRANCH}"
-            r = requests.get(url, headers=headers, timeout=4)
+            r = requests.get(url, headers=headers, timeout=8)
             if r.status_code == 200:
                 raw_content = base64.b64decode(r.json()["content"]).decode("utf-8")
+                _mark_gh_sync(True)
                 return json.loads(raw_content) if filename.endswith(".json") else raw_content
-        except Exception: pass
+        except Exception as e:
+            _mark_gh_sync(False, str(e))
     return None
 
 
@@ -385,7 +401,9 @@ def gh_push(filename: str, content_dict):
         }
         if sha: payload["sha"] = sha
         requests.put(url, headers=headers, json=payload, timeout=8)
+        _mark_gh_sync(True)
     except Exception as e:
+        _mark_gh_sync(False, str(e))
         log.warning(f"gh_push failed for {filename}: {e}")
 
 
@@ -394,20 +412,31 @@ def get(filename: str, default):
     # 1. Use memory cache if still fresh within TTL window
     if filename in _cache and (now - _cache_ts.get(filename, 0) < CACHE_TTL):
         return _cache[filename]
-    
-    data = None
-    # 2. Check local disk first (instant & immune to GitHub rate limits)
-    for p in [Path(filename), Path("data") / filename]:
-        try:
-            if p.exists() and p.stat().st_size > 2:
-                txt = p.read_text(encoding="utf-8")
-                data = json.loads(txt) if filename.endswith(".json") else txt
-                break
-        except Exception: pass
 
-    # 3. Fall back to GitHub fetch
+    data = None
+
+    # 2. GitHub is the SOURCE OF TRUTH — the trading bot (GitHub Actions)
+    # commits trades.json/balance.json/etc. there, not to this Render
+    # instance's local disk. Try this FIRST. Previously local disk was
+    # checked first, which meant this dashboard could serve a frozen
+    # snapshot from its last deploy indefinitely, since bust() only clears
+    # the in-memory cache and never forced a fresh GitHub read past a
+    # local file that always "existed."
+    data = gh_fetch(filename)
+
+    # 3. Local disk is now only a fallback for when GitHub is rate-limited
+    # or briefly unreachable — a genuine "protect against transient
+    # failure" path, not the primary source it was accidentally acting as.
     if data is None:
-        data = gh_fetch(filename)
+        for p in [Path(filename), Path("data") / filename]:
+            try:
+                if p.exists() and p.stat().st_size > 2:
+                    txt = p.read_text(encoding="utf-8")
+                    data = json.loads(txt) if filename.endswith(".json") else txt
+                    log.warning(f"  [get] {filename}: GitHub fetch failed — served from local disk fallback (may be stale)")
+                    break
+            except Exception:
+                pass
 
     if data is not None:
         _cache[filename] = data
@@ -705,14 +734,38 @@ def api_config():
     cfg = get_live_config()
     model_meta = get_model_metadata()
     import config
+
+    # FIX: expose BUY/SELL thresholds separately instead of one combined
+    # "active_conf" number — a single value has been misleading since
+    # thresholds became direction-specific and EV-calibrated.
+    active_buy_conf = model_meta["rec_buy_conf"]
+    active_sell_conf = model_meta["rec_sell_conf"]
+
+    # HONESTY FIX: quiet_conf was previously computed as rec_buy_conf+10,
+    # implying quiet hours raise the confidence bar by 10 points. Since
+    # generate_signal() in trade_executor.py no longer applies any
+    # mode-based confidence adjustment — only the per-symbol PROBATION
+    # offset changes required confidence now — this flag defaults to False
+    # so the frontend labels the figure as reference-only rather than live.
+    # Quiet hours still affect min_score/min_adx via smart_scheduler.py,
+    # just not confidence.
+    quiet_conf_is_live = False  # flip to True only if smart_scheduler.py is confirmed to still adjust confidence at night
+
     return jsonify({
         "ok": True,
-        "active_conf": model_meta["rec_buy_conf"],
+        "active_conf": active_buy_conf,          # kept for backward compat with any old caller
+        "active_buy_conf": active_buy_conf,
+        "active_sell_conf": active_sell_conf,
         "active_score": cfg["min_score"],
         "active_adx": cfg["min_adx"],
-        "quiet_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
+
+        "quiet_conf": round(active_buy_conf + 10.0, 1),   # kept as-is for backward compat
+        "quiet_conf_is_live": quiet_conf_is_live,
+        "quiet_buy_conf": active_buy_conf,
+        "quiet_sell_conf": active_sell_conf,
         "quiet_score": cfg["min_score"],
         "quiet_adx": cfg["min_adx"] + 3,
+
         "max_open_trades": cfg["max_open_trades"],
         "risk_per_trade_pct": round(cfg["risk_per_trade"] * 100, 1),
         "max_same_direction": cfg["max_same_direction"],
@@ -878,9 +931,13 @@ def api_probation():
         _cache[RELIABILITY_FILE] = rel
 
     model_meta = get_model_metadata()
-    cfg = get_live_config()
-    base_model_conf = min(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"])
-    active_baseline = max(base_model_conf, cfg["min_confidence"])
+
+    # FIX: removed max(model_threshold, cfg.min_confidence). Live execution
+    # (trade_executor.py's get_required_confidence()) adds the +10% probation
+    # offset DIRECTLY on top of the model's per-direction threshold — it no
+    # longer applies config.MIN_CONFIDENCE as a floor. Mirror that exactly
+    # here so this panel can't disagree with what's actually enforced live.
+    PROBATION_OFFSET = 10.0  # keep in sync with PROBATION_CONFIDENCE_OFFSET in trade_executor.py
 
     probated_coins = []
     for symbol, data in rel.items():
@@ -892,7 +949,11 @@ def api_probation():
                 "probation_wins": data.get("probation_wins", 0),
                 "probation_consecutive_losses": data.get("probation_consecutive_losses", 0),
                 "time_left_hrs": round(time_left_sec / 3600, 1),
-                "required_conf": round(active_baseline + 10.0, 1),
+                "required_conf_buy": round(model_meta["rec_buy_conf"] + PROBATION_OFFSET, 1),
+                "required_conf_sell": round(model_meta["rec_sell_conf"] + PROBATION_OFFSET, 1),
+                # Kept for any old frontend code expecting one value — uses
+                # the stricter (higher) of the two directions.
+                "required_conf": round(max(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"]) + PROBATION_OFFSET, 1),
                 "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
             })
     return jsonify({"ok": True, "probated_coins": probated_coins})
@@ -964,15 +1025,102 @@ def api_monitor():
     real = [h for h in history if h.get("signal") != "RECOVERED"]
     wins = [h for h in real if (h.get("pnl") or 0) > 0]
     cfg = get_live_config()
+    import config
+
+    # NEW: two-tier stale trade counts — mirrors check_stale_trades()'s
+    # logic in trade_executor.py, re-derived here from trades.json so this
+    # endpoint doesn't need trade_executor.py to write a separate file.
+    pre_tp1_hrs = getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12)
+    post_tp1_hrs = getattr(config, "MAX_TRADE_AGE_HOURS_POST_TP1", 48)
+    now_dt = datetime.now(timezone.utc)
+    stale_pre_tp1, stale_post_tp1 = 0, 0
+    for t in open_trades:
+        try:
+            opened = datetime.fromisoformat(str(t.get("opened_at", "")).replace("Z", "+00:00"))
+            age_h = (now_dt - opened).total_seconds() / 3600.0
+        except Exception:
+            continue
+        tp1_hit = t.get("tp1_hit", False)
+        if not tp1_hit and age_h > pre_tp1_hrs:
+            stale_pre_tp1 += 1
+        elif tp1_hit and age_h > post_tp1_hrs:
+            stale_post_tp1 += 1
+
+    # NEW: ghost trades count, summed from reliability.json
+    rel = get(RELIABILITY_FILE, {})
+    ghost_trades_count = sum(
+        int(v.get("ghosts", 0)) for v in rel.values() if isinstance(v, dict)
+    ) if isinstance(rel, dict) else 0
+
+    # NEW: circuit breaker (drawdown ratchet) status — recomputes the same
+    # math as smart_scheduler.get_drawdown_ratchet(). Kept as an inline
+    # recomputation (rather than importing smart_scheduler) so dashboard.py
+    # stays decoupled from the trading engine's runtime dependencies. Keep
+    # this in sync manually if the ratchet thresholds ever change there.
+    circuit_breaker_active = False
+    circuit_breaker_level = "normal"
+    try:
+        current_balance = float(bal.get("usdt", 0) or 0)
+        if current_balance > 0:
+            today_pl = sum(
+                float(h.get("pnl", 0) or 0) for h in real
+                if (h.get("closed_at", "") or h.get("opened_at", ""))[:10] == today
+                and "Ghost" not in h.get("close_reason", "")
+                and "auto-removed" not in h.get("close_reason", "")
+            )
+            drawdown_pct = (today_pl / current_balance) * 100
+            if drawdown_pct <= -5.0:
+                circuit_breaker_active = True
+                circuit_breaker_level = "halted"
+            elif drawdown_pct <= -2.0:
+                circuit_breaker_active = True
+                circuit_breaker_level = "risk_halved"
+    except Exception:
+        pass
+
+    # NEW: env/config health — reflects the DASHBOARD process's own
+    # environment (Render), not the GitHub Actions runner's secrets.
+    gh_token_configured = bool(GH_TOKEN)
+    telegram_configured = bool(os.getenv("TELEGRAM_TOKEN", "")) and bool(os.getenv("TELEGRAM_CHAT_ID", ""))
+
+    # NEW: market regime + BTC ATR
+    regime_label, btc_atr_pct = "Unknown", None
+    try:
+        r_k = requests.get("https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=30", timeout=5)
+        if r_k.ok:
+            kd = [{"h": float(d[2]), "l": float(d[3]), "c": float(d[4])} for d in r_k.json()]
+            trs = [kd[i]["h"] - kd[i]["l"] if i == 0 else max(kd[i]["h"] - kd[i]["l"], abs(kd[i]["h"] - kd[i-1]["c"]), abs(kd[i]["l"] - kd[i-1]["c"])) for i in range(len(kd))]
+            atr = sum(trs[-14:]) / 14
+            price = kd[-1]["c"]
+            btc_atr_pct = round(atr / price * 100, 2)
+            if btc_atr_pct > 4.0: regime_label = "Very High Volatility"
+            elif btc_atr_pct > 2.0: regime_label = "High Volatility"
+            elif btc_atr_pct < 0.05: regime_label = "Dead Market"
+            else: regime_label = "Normal"
+    except Exception:
+        pass
+
     return jsonify({
         "ok": True,
         "deribit": {"ok": deribit["status"] == "ONLINE", "msg": deribit["msg"], "latency_ms": round((time.time()-t0)*1000),
                     "balance": bal.get("usdt"), "open_positions": len(open_trades)},
-        "market": {"ok": binance_ok, "btc_price": btc_price, "latency_ms": round((time.time()-t1)*1000), "error": err},
+        "market": {"ok": binance_ok, "btc_price": btc_price, "latency_ms": round((time.time()-t1)*1000), "error": err,
+                   "regime_label": regime_label, "btc_atr_pct": btc_atr_pct},
         "bot": {"signals_today": len([s for s in signals if str(s.get("generated_at","")).startswith(today)])},
-        "integrity": {"open_slots": f"{len(open_trades)}/{cfg['max_open_trades']}",
-                      "win_rate": round(len(wins)/len(real)*100,1) if real else None,
-                      "sltp_missing": sum(1 for t in trades.values() if not t.get("stop") or not t.get("tp1"))}
+        "integrity": {
+            "open_slots": f"{len(open_trades)}/{cfg['max_open_trades']}",
+            "win_rate": round(len(wins)/len(real)*100,1) if real else None,
+            "sltp_missing": sum(1 for t in trades.values() if not t.get("stop") or not t.get("tp1")),
+            "stale_pre_tp1": stale_pre_tp1,
+            "stale_post_tp1": stale_post_tp1,
+            "ghost_trades_count": ghost_trades_count,
+            "circuit_breaker_active": circuit_breaker_active,
+            "circuit_breaker_level": circuit_breaker_level,
+            "gh_token_configured": gh_token_configured,
+            "telegram_configured": telegram_configured,
+            "github_sync_ok": _gh_sync_state["ok"],
+            "github_sync_last_success": _gh_sync_state["last_success_at"],
+        }
     })
 
 
