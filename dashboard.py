@@ -573,7 +573,8 @@ def api_open_trades():
 @app.route("/api/trades/history")
 def api_trade_history():
     h = get("trade_history.json", [])
-    return jsonify(list(reversed([x for x in h if x.get("signal"] != "RECOVERED"][-100:])))
+    return jsonify(list(reversed([x for x in h if x.get("signal") != "RECOVERED"][-100:])))
+
 
 @app.route("/api/signals")
 def api_signals():
@@ -598,7 +599,7 @@ def api_probation():
     symbols_in_history = set(t.get("symbol") for t in history if t.get("symbol"))
     
     for symbol in symbols_in_history:
-        s_trades = [t for t in history if t.get("symbol"] == symbol and t.get("signal"] != "RECOVERED"]
+        s_trades = [t for t in history if t.get("symbol") == symbol and t.get("signal") != "RECOVERED"]
         last_3 = s_trades[-3:] if len(s_trades) >= 3 else []
         last_6 = s_trades[-6:] if len(s_trades) >= 6 else []
         
@@ -733,7 +734,7 @@ def api_monitor():
     history = get("trade_history.json", [])
     
     # EXCLUDE UNVERIFIED & RECOVERED ROWS FROM MONITOR WIN RATE
-    real = [h for h in history if h.get("signal"] != "RECOVERED" and not h.get("pnl_unverified", False)]
+    real = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
     wins = [h for h in real if (float(h.get("pnl") or 0)) > 0]
 
     return jsonify({
@@ -768,7 +769,7 @@ def api_monitor():
 @app.route("/api/execution")
 def api_execution():
     history = get("trade_history.json", [])
-    real = [h for h in history if h.get("signal"] != "RECOVERED" and not h.get("pnl_unverified", False)]
+    real = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
     durations = []
     total_volume_usd = 0.0
     gross_pnl = 0.0
@@ -798,7 +799,7 @@ def api_execution():
 def api_model_health():
     perf_data = get(PERFORMANCE_FILE, {})
     history = get("trade_history.json", [])
-    real = [h for h in history if h.get("signal"] != "RECOVERED" and not h.get("pnl_unverified", False)]
+    real = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
     model_meta = get_model_metadata()
     buckets = {
         "45-55%": {"wins": 0, "total": 0, "target": 55}, "55-65%": {"wins": 0, "total": 0, "target": 65},
@@ -828,7 +829,7 @@ def api_model_health():
 @app.route("/api/analytics")
 def api_analytics():
     history = get("trade_history.json", [])
-    real_trades = [t for t in history if t.get("signal"] != "RECOVERED" and not t.get("pnl_unverified", False)]
+    real_trades = [t for t in history if t.get("signal") != "RECOVERED" and not t.get("pnl_unverified", False)]
     pnls = [float(t.get("pnl", 0)) for t in real_trades]
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p <= 0]
