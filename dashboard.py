@@ -1,4 +1,4 @@
-# dashboard.py — V5.11: Scan Phase Telemetry & Ad-Hoc Analytics (Full Version)
+# dashboard.py — V5.13: GitHub-First Priority & Real-Cost PnL Recovery
 
 import os
 import json
@@ -24,7 +24,6 @@ try:
 except ImportError:
     def audit_fg_overrides(history): return {"error": "fg_override_audit.py not found on server"}
 
-# Safe ReportLab import check
 try:
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -52,11 +51,10 @@ EMAIL_REGEX        = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 _cache = {}
 _cache_ts = {}
-CACHE_TTL = 30  # 30-second cache window protects against GitHub rate limits
+CACHE_TTL = 30  
 
 REPORT_STORE = {}
 REPORT_TTL_SECONDS = 60 * 60 * 48
-
 
 def _cleanup_reports():
     now = time.time()
@@ -64,25 +62,17 @@ def _cleanup_reports():
     for k in expired:
         REPORT_STORE.pop(k, None)
 
-
 def _store_report(pdf_bytes: bytes) -> str:
     _cleanup_reports()
     rid = uuid.uuid4().hex
     REPORT_STORE[rid] = {"data": pdf_bytes, "created": time.time()}
     return rid
 
-
-# ── IPv4 Socket Resolution Helper (Fixes Render [Errno 101]) ────────────
-
 orig_getaddrinfo = socket.getaddrinfo
 def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
-
-# ── Dynamic Model & Config Introspection ────────────────────────────────
-
 def get_live_config():
-    """Dynamically reloads and reads live variables directly from config.py."""
     try:
         import config
         importlib.reload(config)
@@ -112,9 +102,7 @@ def get_live_config():
             "max_trade_age_hours_pre_tp1": 12, "max_trade_age_hours_post_tp1": 48
         }
 
-
 def get_model_metadata():
-    """Inspects the serialized model pipeline for EV thresholds and estimators."""
     for p in [Path(MODEL_FILE), Path("data") / MODEL_FILE]:
         if p.exists():
             try:
@@ -151,9 +139,6 @@ def get_model_metadata():
         "label_map": {0: "SELL", 1: "NO_TRADE", 2: "BUY"}
     }
 
-
-# ── PDF Generation Helper ──────────────────────────────────────────────
-
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     if not HAS_REPORTLAB:
         raise ImportError("ReportLab package is not installed on this server.")
@@ -163,41 +148,19 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
-        buffer, 
-        pagesize=letter, 
+        buffer, pagesize=letter, 
         rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
     )
     styles = getSampleStyleSheet()
     
-    title_style = ParagraphStyle(
-        'RepTitle', parent=styles['Heading1'], 
-        fontSize=14, leading=18, textColor=colors.HexColor('#0f172a'), spaceAfter=2, fontName='Helvetica-Bold'
-    )
-    subtitle_style = ParagraphStyle(
-        'RepSub', parent=styles['Normal'], 
-        fontSize=8, leading=10, textColor=colors.HexColor('#64748b'), spaceAfter=10, fontName='Helvetica'
-    )
-    section_heading = ParagraphStyle(
-        'RepSec', parent=styles['Heading2'], 
-        fontSize=10, leading=14, textColor=colors.HexColor('#1e293b'), spaceBefore=10, spaceAfter=6, fontName='Helvetica-Bold'
-    )
-    cell_style = ParagraphStyle(
-        'RepCell', parent=styles['Normal'], 
-        fontSize=7, leading=9, textColor=colors.HexColor('#334155'), fontName='Helvetica'
-    )
-    cell_bold = ParagraphStyle(
-        'RepCellBold', parent=cell_style, fontName='Helvetica-Bold'
-    )
-    cell_green = ParagraphStyle(
-        'RepCellGreen', parent=cell_style, textColor=colors.HexColor('#10b981'), fontName='Helvetica-Bold'
-    )
-    cell_red = ParagraphStyle(
-        'RepCellRed', parent=cell_style, textColor=colors.HexColor('#f43f5e'), fontName='Helvetica-Bold'
-    )
-    header_cell = ParagraphStyle(
-        'RepHeaderCell', parent=styles['Normal'], 
-        fontSize=7, leading=9, textColor=colors.white, fontName='Helvetica-Bold', alignment=1
-    )
+    title_style = ParagraphStyle('RepTitle', parent=styles['Heading1'], fontSize=14, leading=18, textColor=colors.HexColor('#0f172a'), spaceAfter=2, fontName='Helvetica-Bold')
+    subtitle_style = ParagraphStyle('RepSub', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor('#64748b'), spaceAfter=10, fontName='Helvetica')
+    section_heading = ParagraphStyle('RepSec', parent=styles['Heading2'], fontSize=10, leading=14, textColor=colors.HexColor('#1e293b'), spaceBefore=10, spaceAfter=6, fontName='Helvetica-Bold')
+    cell_style = ParagraphStyle('RepCell', parent=styles['Normal'], fontSize=7, leading=9, textColor=colors.HexColor('#334155'), fontName='Helvetica')
+    cell_bold = ParagraphStyle('RepCellBold', parent=cell_style, fontName='Helvetica-Bold')
+    cell_green = ParagraphStyle('RepCellGreen', parent=cell_style, textColor=colors.HexColor('#10b981'), fontName='Helvetica-Bold')
+    cell_red = ParagraphStyle('RepCellRed', parent=cell_style, textColor=colors.HexColor('#f43f5e'), fontName='Helvetica-Bold')
+    header_cell = ParagraphStyle('RepHeaderCell', parent=styles['Normal'], fontSize=7, leading=9, textColor=colors.white, fontName='Helvetica-Bold', alignment=1)
 
     elements = []
     elements.append(Paragraph("CryptoBot AI — Institutional Performance Report", title_style))
@@ -206,21 +169,26 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     meta_text = f"<b>Scope:</b> {scope} | <b>Generated:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
     elements.append(Paragraph(meta_text, ParagraphStyle('Meta', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor('#475569'), spaceAfter=8)))
 
-    pnl_val = float(summary.get('net_pnl') or 0)
-    wins_val = int(summary.get('wins') or 0)
-    losses_val = int(summary.get('losses') or 0)
-    total_trades_val = int(summary.get('total_trades') or 0)
-    win_rate_val = summary.get('win_rate', '0%')
-    profit_factor_val = summary.get('profit_factor', '0.00')
-    max_win_val = float(summary.get('max_win') or 0)
-    max_loss_val = float(summary.get('max_loss') or 0)
+    # EXCLUDE UNVERIFIED TRADES FROM PDF SUMMARY TOTALS
+    verified_trades = [t for t in trades if not t.get("pnl_unverified", False)]
+    
+    pnl_val = sum(float(t.get('pnl') or 0) for t in verified_trades)
+    wins_val = sum(1 for t in verified_trades if float(t.get('pnl') or 0) > 0)
+    losses_val = sum(1 for t in verified_trades if float(t.get('pnl') or 0) < 0)
+    total_trades_val = len(verified_trades)
+    win_rate_val = f"{(wins_val / total_trades_val * 100):.1f}%" if total_trades_val > 0 else "0.0%"
+    
+    win_pnls = [float(t.get('pnl') or 0) for t in verified_trades if float(t.get('pnl') or 0) > 0]
+    loss_pnls = [float(t.get('pnl') or 0) for t in verified_trades if float(t.get('pnl') or 0) < 0]
+    gross_p = sum(win_pnls)
+    gross_l = abs(sum(loss_pnls))
+    profit_factor_val = f"{(gross_p / gross_l):.2f}" if gross_l > 0 else f"{gross_p:.2f}"
+    max_win_val = max(win_pnls) if win_pnls else 0.0
+    max_loss_val = min(loss_pnls) if loss_pnls else 0.0
 
-    win_pnls, loss_pnls, durations_min, symbol_pnl = [], [], [], {}
-    for t in trades:
-        t = t or {}
+    durations_min, symbol_pnl = [], {}
+    for t in verified_trades:
         p = float(t.get('pnl') or 0)
-        if p > 0: win_pnls.append(p)
-        elif p < 0: loss_pnls.append(p)
         sym = str(t.get('symbol') or '—')
         symbol_pnl[sym] = symbol_pnl.get(sym, 0.0) + p
         try:
@@ -228,8 +196,7 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
                 o = datetime.fromisoformat(str(t['opened_at']).replace('Z', '+00:00'))
                 c = datetime.fromisoformat(str(t['closed_at']).replace('Z', '+00:00'))
                 durations_min.append((c - o).total_seconds() / 60.0)
-        except Exception:
-            pass
+        except Exception: pass
 
     avg_win_val = (sum(win_pnls) / len(win_pnls)) if win_pnls else 0.0
     avg_loss_val = (sum(loss_pnls) / len(loss_pnls)) if loss_pnls else 0.0
@@ -276,7 +243,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     elements.append(Spacer(1, 10))
 
     elements.append(Paragraph("Executed Trade Records", section_heading))
-    
     headers = ["#", "Date (UTC)", "Symbol", "Dir", "Entry", "Close", "Qty", "PnL (USDT)", "Reason"]
     header_row = [Paragraph(h, header_cell) for h in headers]
     trade_rows = [header_row]
@@ -287,9 +253,11 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
         entry = float(t.get('entry') or 0)
         close_price = float(t.get('close_price') or entry)
         sig = str(t.get('signal', ''))
+        unverified = t.get('pnl_unverified', False)
         
         dir_style = cell_green if sig == 'BUY' else cell_red
-        pnl_style = cell_green if pnl >= 0 else cell_red
+        pnl_style = cell_red if unverified else (cell_green if pnl >= 0 else cell_red)
+        pnl_str = f"~${pnl:.4f} (Unverified)" if unverified else f"{pnl:+.4f}"
 
         row = [
             Paragraph(str(idx), cell_style),
@@ -299,7 +267,7 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
             Paragraph(f"{entry:.4f}", cell_style),
             Paragraph(f"{close_price:.4f}", cell_style),
             Paragraph(str(t.get('qty', 0)), cell_style),
-            Paragraph(f"{pnl:+.4f}", pnl_style),
+            Paragraph(pnl_str, pnl_style),
             Paragraph(str(t.get('close_reason', 'Closed'))[:25], cell_style)
         ]
         trade_rows.append(row)
@@ -316,10 +284,7 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     ]
     
     for r_idx in range(1, len(trade_rows)):
-        if r_idx % 2 == 0:
-            t_style.append(('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#f8fafc')))
-        else:
-            t_style.append(('BACKGROUND', (0, r_idx), (-1, r_idx), colors.white))
+        t_style.append(('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#f8fafc') if r_idx % 2 == 0 else colors.white))
 
     trade_table.setStyle(TableStyle(t_style))
     elements.append(trade_table)
@@ -337,9 +302,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     buffer.seek(0)
     return buffer.getvalue()
 
-
-# ── Deribit Health Check ───────────────────────────────────────────────
-
 def check_deribit_health():
     try:
         r = requests.get("https://test.deribit.com/api/v2/public/test", timeout=4)
@@ -352,14 +314,7 @@ def check_deribit_health():
     except Exception as e:
         return {"status": "OFFLINE", "msg": f"Deribit Outage ({str(e)})", "code": 0}
 
-
-# ── Resilient GitHub & State Persistence Helpers ──────────────────────
-
-# Tracks whether the last GitHub fetch/push actually succeeded, so
-# integrity.github_sync_ok (added below) reflects reality instead of
-# always silently claiming everything is fine.
 _gh_sync_state = {"ok": True, "last_success_at": None, "last_error": None}
-
 
 def _mark_gh_sync(success: bool, error: str = None):
     _gh_sync_state["ok"] = success
@@ -367,7 +322,6 @@ def _mark_gh_sync(success: bool, error: str = None):
         _gh_sync_state["last_success_at"] = datetime.now(timezone.utc).isoformat()
     else:
         _gh_sync_state["last_error"] = error
-
 
 def gh_fetch(filename: str):
     if not GH_TOKEN or not GH_REPO:
@@ -385,10 +339,10 @@ def gh_fetch(filename: str):
             _mark_gh_sync(False, str(e))
     return None
 
-
-def gh_push(filename: str, content_dict):
+def gh_push(filename: str, content_dict) -> bool:
     if not GH_TOKEN or not GH_REPO:
-        return
+        _mark_gh_sync(False, "Missing GH_TOKEN or GH_REPO")
+        return False
     headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     url = f"https://api.github.com/repos/{GH_REPO}/contents/{filename}?ref={GH_BRANCH}"
     try:
@@ -400,59 +354,47 @@ def gh_push(filename: str, content_dict):
             "branch": GH_BRANCH
         }
         if sha: payload["sha"] = sha
-        requests.put(url, headers=headers, json=payload, timeout=8)
-        _mark_gh_sync(True)
+        put_r = requests.put(url, headers=headers, json=payload, timeout=8)
+        if put_r.status_code in (200, 201):
+            _mark_gh_sync(True)
+            return True
+        else:
+            err_msg = f"HTTP {put_r.status_code}: {put_r.text[:120]}"
+            _mark_gh_sync(False, err_msg)
+            log.error(f"  🚨 gh_push failed for {filename}: {err_msg}")
+            return False
     except Exception as e:
         _mark_gh_sync(False, str(e))
-        log.warning(f"gh_push failed for {filename}: {e}")
-
+        log.error(f"  🚨 gh_push exception for {filename}: {e}")
+        return False
 
 def get(filename: str, default):
     now = time.time()
-    # 1. Use memory cache if still fresh within TTL window
     if filename in _cache and (now - _cache_ts.get(filename, 0) < CACHE_TTL):
         return _cache[filename]
-
-    data = None
-
-    # 2. GitHub is the SOURCE OF TRUTH — the trading bot (GitHub Actions)
-    # commits trades.json/balance.json/etc. there, not to this Render
-    # instance's local disk. Try this FIRST. Previously local disk was
-    # checked first, which meant this dashboard could serve a frozen
-    # snapshot from its last deploy indefinitely, since bust() only clears
-    # the in-memory cache and never forced a fresh GitHub read past a
-    # local file that always "existed."
+    
     data = gh_fetch(filename)
-
-    # 3. Local disk is now only a fallback for when GitHub is rate-limited
-    # or briefly unreachable — a genuine "protect against transient
-    # failure" path, not the primary source it was accidentally acting as.
     if data is None:
         for p in [Path(filename), Path("data") / filename]:
             try:
                 if p.exists() and p.stat().st_size > 2:
                     txt = p.read_text(encoding="utf-8")
                     data = json.loads(txt) if filename.endswith(".json") else txt
-                    log.warning(f"  [get] {filename}: GitHub fetch failed — served from local disk fallback (may be stale)")
                     break
-            except Exception:
-                pass
+            except Exception: pass
 
     if data is not None:
         _cache[filename] = data
         _cache_ts[filename] = now
         return data
 
-    # 4. If fetch temporarily fails, retain last known good memory cache
     if filename in _cache:
         return _cache[filename]
 
     return default
 
-
 def bust(filename: str):
     _cache_ts[filename] = 0
-
 
 def deribit_client():
     cid = os.getenv("DERIBIT_CLIENT_ID", "")
@@ -466,221 +408,6 @@ def deribit_client():
         return None
 
 
-# ══════════════════════════════════════════════════════════════════════
-# ALL API ENDPOINTS (PRECEDENCE OVER CATCH-ALL ROUTE)
-# ══════════════════════════════════════════════════════════════════════
-
-@app.route("/api/send_report", methods=["POST", "OPTIONS"])
-def api_send_report():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
-    data = request.get_json() or {}
-    recipient = str(data.get("email") or "").strip()
-    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
-    summary = data.get("summary") or {}
-    trades = data.get("trades") or []
-
-    if not recipient or not re.match(EMAIL_REGEX, recipient):
-        return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
-
-    report_url = None
-    pdf_bytes = None
-    if HAS_REPORTLAB:
-        try:
-            pdf_bytes = generate_pdf_bytes(scope, summary, trades)
-            rid = _store_report(pdf_bytes)
-            report_url = request.host_url.rstrip("/") + f"/api/report/{rid}.pdf"
-        except Exception as e:
-            log.warning(f"PDF pre-generation for email failed: {e}")
-
-    emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID", "").strip()
-    emailjs_template_id = os.getenv("EMAILJS_TEMPLATE_ID", "").strip()
-    emailjs_public_key = os.getenv("EMAILJS_PUBLIC_KEY", "").strip()
-    emailjs_private_key = os.getenv("EMAILJS_PRIVATE_KEY", "").strip()
-
-    brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
-    brevo_sender = os.getenv("BREVO_SENDER_EMAIL", "").strip()
-    resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
-
-    # 1. EMAILJS REST API
-    if emailjs_service_id and emailjs_template_id and emailjs_public_key:
-        try:
-            payload = {
-                "service_id": emailjs_service_id,
-                "template_id": emailjs_template_id,
-                "user_id": emailjs_public_key,
-                "accessToken": emailjs_private_key,
-                "template_params": {
-                    "to_email": recipient,
-                    "scope": scope,
-                    "net_pnl": summary.get('net_pnl', 0),
-                    "total_trades": summary.get('total_trades', 0),
-                    "wins": summary.get('wins', 0),
-                    "losses": summary.get('losses', 0),
-                    "win_rate": summary.get('win_rate', '0%'),
-                    "report_url": report_url or "PDF unavailable — ReportLab not installed on server."
-                }
-            }
-
-            r = requests.post(
-                "https://api.emailjs.com/api/v1.0/email/send",
-                headers={"Content-Type": "application/json"},
-                json=payload,
-                timeout=12
-            )
-
-            if r.ok or r.text.strip() == "OK":
-                log.info(f"Report emailed via EmailJS API to {recipient}")
-                _log_email_attempt(recipient, scope, summary, "SENT (EmailJS API)")
-                return jsonify({
-                    "ok": True, "recipient": recipient,
-                    "message": f"Report shared with {recipient}",
-                    "report_url": report_url
-                })
-            else:
-                err_text = r.text
-                log.error(f"EmailJS API Error ({r.status_code}): {err_text}")
-                _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS API: {err_text}")
-                return jsonify({"ok": False, "error": "EMAILJS_API_ERROR", "message": f"EmailJS API Error: {err_text}"}), 400
-        except Exception as api_err:
-            log.error(f"EmailJS Exception: {api_err}")
-            _log_email_attempt(recipient, scope, summary, f"FAILED EmailJS Exception: {api_err}")
-            return jsonify({"ok": False, "error": "EMAILJS_EXCEPTION", "message": str(api_err)}), 500
-
-    # 2. BREVO HTTP API
-    if brevo_api_key and brevo_sender:
-        try:
-            pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8") if pdf_bytes else None
-            link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
-            brevo_payload = {
-                "sender": {"name": "CryptoBot AI", "email": brevo_sender},
-                "to": [{"email": recipient}],
-                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-                "htmlContent": f"<h3>CryptoBot AI Performance Report</h3><p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
-            }
-            if pdf_b64:
-                brevo_payload["attachment"] = [{"name": f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf", "content": pdf_b64}]
-
-            r = requests.post(
-                "https://api.brevo.com/v3/smtp/email",
-                headers={"api-key": brevo_api_key, "Content-Type": "application/json"},
-                json=brevo_payload,
-                timeout=12
-            )
-            if r.ok:
-                _log_email_attempt(recipient, scope, summary, "SENT (Brevo API)")
-                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
-            else:
-                return jsonify({"ok": False, "error": "BREVO_API_ERROR", "message": r.text}), 400
-        except Exception as e:
-            log.error(f"Brevo API error: {e}")
-            return jsonify({"ok": False, "error": "BREVO_EXCEPTION", "message": str(e)}), 500
-
-    # 3. RESEND HTTP API
-    if resend_api_key:
-        try:
-            link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
-            payload = {
-                "from": os.getenv("RESEND_FROM", "CryptoBot AI <reports@alorix.io>"),
-                "to": [recipient],
-                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-                "html": f"<p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
-            }
-            r = requests.post("https://api.resend.com/emails", headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"}, json=payload, timeout=12)
-            if r.ok:
-                _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
-                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
-            else:
-                return jsonify({"ok": False, "error": "RESEND_API_ERROR", "message": r.text}), 400
-        except Exception as e:
-            log.error(f"Resend API error: {e}")
-            return jsonify({"ok": False, "error": "RESEND_EXCEPTION", "message": str(e)}), 500
-
-    _log_email_attempt(recipient, scope, summary, "FAILED: No Active API Key")
-    return jsonify({
-        "ok": False, 
-        "error": "NOT_CONFIGURED", 
-        "message": "No active HTTP email service detected. Configure EmailJS or Brevo in Render environment variables."
-    }), 500
-
-
-def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
-    bust(EMAIL_TRACKER_FILE)
-    logs = get(EMAIL_TRACKER_FILE, [])
-    log_entry = {
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "recipient": recipient, "scope": scope,
-        "total_trades": summary.get('total_trades', 0),
-        "net_pnl": summary.get('net_pnl', 0), "status": status
-    }
-    logs.append(log_entry)
-    
-    for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(logs, indent=2))
-        except Exception: pass
-    gh_push(EMAIL_TRACKER_FILE, logs)
-
-
-@app.route("/api/download_report_pdf", methods=["POST", "OPTIONS"])
-def api_download_report_pdf():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
-    if not HAS_REPORTLAB:
-        return jsonify({
-            "ok": False, "error": "REPORTLAB_MISSING",
-            "message": "ReportLab is not installed on the server. Add 'reportlab' to requirements.txt."
-        }), 500
-
-    data = request.get_json() or {}
-    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
-    summary = data.get("summary") or {}
-    trades = data.get("trades") or []
-
-    try:
-        pdf_bytes = generate_pdf_bytes(scope, summary, trades)
-    except Exception as e:
-        log.error(f"PDF generation failed: {e}")
-        return jsonify({"ok": False, "error": "PDF_GENERATION_FAILED", "message": str(e)}), 500
-
-    buffer = BytesIO(pdf_bytes)
-    buffer.seek(0)
-    filename = f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
-    return send_file(
-        buffer,
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=filename
-    )
-
-
-@app.route("/api/report/<report_id>.pdf")
-def api_get_stored_report(report_id):
-    _cleanup_reports()
-    entry = REPORT_STORE.get(report_id)
-    if not entry:
-        return jsonify({
-            "ok": False, "error": "NOT_FOUND",
-            "message": "This report link has expired (links last 48h) or does not exist. Generate a new report from the History tab."
-        }), 404
-
-    buffer = BytesIO(entry["data"])
-    buffer.seek(0)
-    filename = f"CryptoBot_Report_{report_id[:8]}.pdf"
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
-
-
-@app.route("/api/email_tracker")
-def api_email_tracker():
-    logs = get(EMAIL_TRACKER_FILE, [])
-    return jsonify(list(reversed(logs[-50:])))
-
-
-# ── CORE DASHBOARD & STATUS APIS ──────────────────────────────────────
-
 @app.route("/api/status")
 def api_status():
     history = get("trade_history.json", [])
@@ -691,9 +418,10 @@ def api_status():
     perf_data = get(PERFORMANCE_FILE, {})
     scan_status = get("scan_status.json", {})
 
-    real = [h for h in history if h.get("signal") != "RECOVERED"]
-    wins = [h for h in real if (h.get("pnl") or 0) > 0]
-    tpnl = sum(h.get("pnl", 0) for h in real)
+    # EXCLUDE RECOVERED & UNVERIFIED ROWS FROM STATUS METRICS
+    real = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
+    wins = [h for h in real if (float(h.get("pnl") or 0)) > 0]
+    tpnl = sum(float(h.get("pnl", 0) or 0) for h in real)
     win_rate = round(len(wins) / len(real) * 100, 1) if real else 0.0
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -733,48 +461,25 @@ def api_status():
 def api_config():
     cfg = get_live_config()
     model_meta = get_model_metadata()
-    import config
-
-    # FIX: expose BUY/SELL thresholds separately instead of one combined
-    # "active_conf" number — a single value has been misleading since
-    # thresholds became direction-specific and EV-calibrated.
-    active_buy_conf = model_meta["rec_buy_conf"]
-    active_sell_conf = model_meta["rec_sell_conf"]
-
-    # HONESTY FIX: quiet_conf was previously computed as rec_buy_conf+10,
-    # implying quiet hours raise the confidence bar by 10 points. Since
-    # generate_signal() in trade_executor.py no longer applies any
-    # mode-based confidence adjustment — only the per-symbol PROBATION
-    # offset changes required confidence now — this flag defaults to False
-    # so the frontend labels the figure as reference-only rather than live.
-    # Quiet hours still affect min_score/min_adx via smart_scheduler.py,
-    # just not confidence.
-    quiet_conf_is_live = False  # flip to True only if smart_scheduler.py is confirmed to still adjust confidence at night
-
     return jsonify({
         "ok": True,
-        "active_conf": active_buy_conf,          # kept for backward compat with any old caller
-        "active_buy_conf": active_buy_conf,
-        "active_sell_conf": active_sell_conf,
+        "active_buy_conf": model_meta["rec_buy_conf"],
+        "active_sell_conf": model_meta["rec_sell_conf"],
+        "active_conf": model_meta["rec_buy_conf"],
         "active_score": cfg["min_score"],
         "active_adx": cfg["min_adx"],
-
-        "quiet_conf": round(active_buy_conf + 10.0, 1),   # kept as-is for backward compat
-        "quiet_conf_is_live": quiet_conf_is_live,
-        "quiet_buy_conf": active_buy_conf,
-        "quiet_sell_conf": active_sell_conf,
+        "quiet_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
+        "quiet_conf_is_live": False,
         "quiet_score": cfg["min_score"],
         "quiet_adx": cfg["min_adx"] + 3,
-
         "max_open_trades": cfg["max_open_trades"],
         "risk_per_trade_pct": round(cfg["risk_per_trade"] * 100, 1),
         "max_same_direction": cfg["max_same_direction"],
         "atr_stop_mult": cfg["atr_stop_mult"],
         "atr_target1_mult": cfg["atr_target1_mult"],
         "atr_target2_mult": cfg["atr_target2_mult"],
-        "max_trade_age_hours_pre_tp1": getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12),
-        "max_trade_age_hours_post_tp1": getattr(config, "MAX_TRADE_AGE_HOURS_POST_TP1", 48),
-        "max_trade_age_hours": getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12),
+        "max_trade_age_hours_pre_tp1": cfg["max_trade_age_hours_pre_tp1"],
+        "max_trade_age_hours_post_tp1": cfg["max_trade_age_hours_post_tp1"],
         "symbols": cfg["symbols"],
         "coin_tiers": cfg["coin_tiers"],
         "exchange": "Deribit Testnet (USDC Linear Perpetuals)"
@@ -811,8 +516,7 @@ def api_open_trades():
             result = []
             for p in positions:
                 size = float(p.get("size", 0))
-                if size == 0:
-                    continue
+                if size == 0: continue
                 inst   = p.get("instrument_name", "")
                 base   = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
                 symbol = f"{base}USDT"
@@ -824,7 +528,6 @@ def api_open_trades():
                 tp1  = float(t.get("tp1", 0) or 0)
                 tp2  = float(t.get("tp2", 0) or 0)
 
-                # Fallback: Read live SL/TP orders directly from Deribit if trades.json is delayed
                 if stop <= 0 or tp1 <= 0:
                     try:
                         open_orders = client.get_open_orders(symbol)
@@ -839,11 +542,10 @@ def api_open_trades():
                             elif "limit" in otype and price > 0:
                                 tp_prices.append(price)
 
-                        tp_prices.sort(reverse=(size > 0))  
+                        tp_prices.sort(reverse=(size < 0))
                         if tp_prices:
                             tp1 = tp_prices[0]
-                            if len(tp_prices) > 1:
-                                tp2 = tp_prices[1]
+                            if len(tp_prices) > 1: tp2 = tp_prices[1]
                     except Exception as e:
                         log.warning(f"Error fetching live orders for {symbol}: {e}")
 
@@ -871,8 +573,7 @@ def api_open_trades():
 @app.route("/api/trades/history")
 def api_trade_history():
     h = get("trade_history.json", [])
-    return jsonify(list(reversed([x for x in h if x.get("signal") != "RECOVERED"][-100:])))
-
+    return jsonify(list(reversed([x for x in h if x.get("signal"] != "RECOVERED"][-100:])))
 
 @app.route("/api/signals")
 def api_signals():
@@ -880,15 +581,12 @@ def api_signals():
     if isinstance(sigs, dict): sigs = sigs.get("signals", [])
     return jsonify(list(reversed(sigs[-100:])))
 
-
 @app.route("/api/log")
 def api_log():
     content = get("bot.log", "")
     lines = content.splitlines(keepends=True)[-200:] if content else ["✓ Bot standby."]
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
-
-# ── PROBATION, MARKET & MONITOR APIS ──────────────────────────────────
 
 @app.route("/api/probation")
 def api_probation():
@@ -900,7 +598,7 @@ def api_probation():
     symbols_in_history = set(t.get("symbol") for t in history if t.get("symbol"))
     
     for symbol in symbols_in_history:
-        s_trades = [t for t in history if t.get("symbol") == symbol and t.get("signal") != "RECOVERED"]
+        s_trades = [t for t in history if t.get("symbol"] == symbol and t.get("signal"] != "RECOVERED"]
         last_3 = s_trades[-3:] if len(s_trades) >= 3 else []
         last_6 = s_trades[-6:] if len(s_trades) >= 6 else []
         
@@ -931,14 +629,6 @@ def api_probation():
         _cache[RELIABILITY_FILE] = rel
 
     model_meta = get_model_metadata()
-
-    # FIX: removed max(model_threshold, cfg.min_confidence). Live execution
-    # (trade_executor.py's get_required_confidence()) adds the +10% probation
-    # offset DIRECTLY on top of the model's per-direction threshold — it no
-    # longer applies config.MIN_CONFIDENCE as a floor. Mirror that exactly
-    # here so this panel can't disagree with what's actually enforced live.
-    PROBATION_OFFSET = 10.0  # keep in sync with PROBATION_CONFIDENCE_OFFSET in trade_executor.py
-
     probated_coins = []
     for symbol, data in rel.items():
         if isinstance(data, dict) and data.get("is_benched", False):
@@ -949,11 +639,9 @@ def api_probation():
                 "probation_wins": data.get("probation_wins", 0),
                 "probation_consecutive_losses": data.get("probation_consecutive_losses", 0),
                 "time_left_hrs": round(time_left_sec / 3600, 1),
-                "required_conf_buy": round(model_meta["rec_buy_conf"] + PROBATION_OFFSET, 1),
-                "required_conf_sell": round(model_meta["rec_sell_conf"] + PROBATION_OFFSET, 1),
-                # Kept for any old frontend code expecting one value — uses
-                # the stricter (higher) of the two directions.
-                "required_conf": round(max(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"]) + PROBATION_OFFSET, 1),
+                "required_buy_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
+                "required_sell_conf": round(model_meta["rec_sell_conf"] + 10.0, 1),
+                "required_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
                 "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
             })
     return jsonify({"ok": True, "probated_coins": probated_coins})
@@ -1011,6 +699,26 @@ def api_monitor():
     trades = get("trades.json", {})
     open_trades = [t for t in trades.values() if not t.get("closed")]
     bal = get("balance.json", {})
+    rel = get("reliability.json", {})
+    cfg = get_live_config()
+    now_utc = datetime.now(timezone.utc)
+
+    stale_pre_tp1, stale_post_tp1 = 0, 0
+    pre_max = cfg["max_trade_age_hours_pre_tp1"]
+    post_max = cfg["max_trade_age_hours_post_tp1"]
+
+    for t in open_trades:
+        try:
+            o_time = datetime.fromisoformat(str(t.get("opened_at", "")).replace("Z", "+00:00"))
+            age_h = (now_utc - o_time).total_seconds() / 3600.0
+            if t.get("tp1_hit"):
+                if age_h > post_max: stale_post_tp1 += 1
+            else:
+                if age_h > pre_max: stale_pre_tp1 += 1
+        except Exception: pass
+
+    ghost_count = sum(d.get("ghosts", 0) for d in rel.values() if isinstance(d, dict))
+
     t1 = time.time()
     binance_ok, btc_price, err = False, None, None
     try:
@@ -1019,107 +727,40 @@ def api_monitor():
         if r.ok: btc_price = float(r.json()["price"])
         else: err = f"HTTP {r.status_code}"
     except Exception as e: err = str(e)
+
     signals = get("signals.json", [])
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = now_utc.strftime("%Y-%m-%d")
     history = get("trade_history.json", [])
-    real = [h for h in history if h.get("signal") != "RECOVERED"]
-    wins = [h for h in real if (h.get("pnl") or 0) > 0]
-    cfg = get_live_config()
-    import config
-
-    # NEW: two-tier stale trade counts — mirrors check_stale_trades()'s
-    # logic in trade_executor.py, re-derived here from trades.json so this
-    # endpoint doesn't need trade_executor.py to write a separate file.
-    pre_tp1_hrs = getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12)
-    post_tp1_hrs = getattr(config, "MAX_TRADE_AGE_HOURS_POST_TP1", 48)
-    now_dt = datetime.now(timezone.utc)
-    stale_pre_tp1, stale_post_tp1 = 0, 0
-    for t in open_trades:
-        try:
-            opened = datetime.fromisoformat(str(t.get("opened_at", "")).replace("Z", "+00:00"))
-            age_h = (now_dt - opened).total_seconds() / 3600.0
-        except Exception:
-            continue
-        tp1_hit = t.get("tp1_hit", False)
-        if not tp1_hit and age_h > pre_tp1_hrs:
-            stale_pre_tp1 += 1
-        elif tp1_hit and age_h > post_tp1_hrs:
-            stale_post_tp1 += 1
-
-    # NEW: ghost trades count, summed from reliability.json
-    rel = get(RELIABILITY_FILE, {})
-    ghost_trades_count = sum(
-        int(v.get("ghosts", 0)) for v in rel.values() if isinstance(v, dict)
-    ) if isinstance(rel, dict) else 0
-
-    # NEW: circuit breaker (drawdown ratchet) status — recomputes the same
-    # math as smart_scheduler.get_drawdown_ratchet(). Kept as an inline
-    # recomputation (rather than importing smart_scheduler) so dashboard.py
-    # stays decoupled from the trading engine's runtime dependencies. Keep
-    # this in sync manually if the ratchet thresholds ever change there.
-    circuit_breaker_active = False
-    circuit_breaker_level = "normal"
-    try:
-        current_balance = float(bal.get("usdt", 0) or 0)
-        if current_balance > 0:
-            today_pl = sum(
-                float(h.get("pnl", 0) or 0) for h in real
-                if (h.get("closed_at", "") or h.get("opened_at", ""))[:10] == today
-                and "Ghost" not in h.get("close_reason", "")
-                and "auto-removed" not in h.get("close_reason", "")
-            )
-            drawdown_pct = (today_pl / current_balance) * 100
-            if drawdown_pct <= -5.0:
-                circuit_breaker_active = True
-                circuit_breaker_level = "halted"
-            elif drawdown_pct <= -2.0:
-                circuit_breaker_active = True
-                circuit_breaker_level = "risk_halved"
-    except Exception:
-        pass
-
-    # NEW: env/config health — reflects the DASHBOARD process's own
-    # environment (Render), not the GitHub Actions runner's secrets.
-    gh_token_configured = bool(GH_TOKEN)
-    telegram_configured = bool(os.getenv("TELEGRAM_TOKEN", "")) and bool(os.getenv("TELEGRAM_CHAT_ID", ""))
-
-    # NEW: market regime + BTC ATR
-    regime_label, btc_atr_pct = "Unknown", None
-    try:
-        r_k = requests.get("https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=30", timeout=5)
-        if r_k.ok:
-            kd = [{"h": float(d[2]), "l": float(d[3]), "c": float(d[4])} for d in r_k.json()]
-            trs = [kd[i]["h"] - kd[i]["l"] if i == 0 else max(kd[i]["h"] - kd[i]["l"], abs(kd[i]["h"] - kd[i-1]["c"]), abs(kd[i]["l"] - kd[i-1]["c"])) for i in range(len(kd))]
-            atr = sum(trs[-14:]) / 14
-            price = kd[-1]["c"]
-            btc_atr_pct = round(atr / price * 100, 2)
-            if btc_atr_pct > 4.0: regime_label = "Very High Volatility"
-            elif btc_atr_pct > 2.0: regime_label = "High Volatility"
-            elif btc_atr_pct < 0.05: regime_label = "Dead Market"
-            else: regime_label = "Normal"
-    except Exception:
-        pass
+    
+    # EXCLUDE UNVERIFIED & RECOVERED ROWS FROM MONITOR WIN RATE
+    real = [h for h in history if h.get("signal"] != "RECOVERED" and not h.get("pnl_unverified", False)]
+    wins = [h for h in real if (float(h.get("pnl") or 0)) > 0]
 
     return jsonify({
         "ok": True,
-        "deribit": {"ok": deribit["status"] == "ONLINE", "msg": deribit["msg"], "latency_ms": round((time.time()-t0)*1000),
-                    "balance": bal.get("usdt"), "open_positions": len(open_trades)},
-        "market": {"ok": binance_ok, "btc_price": btc_price, "latency_ms": round((time.time()-t1)*1000), "error": err,
-                   "regime_label": regime_label, "btc_atr_pct": btc_atr_pct},
-        "bot": {"signals_today": len([s for s in signals if str(s.get("generated_at","")).startswith(today)])},
+        "deribit": {
+            "ok": deribit["status"] == "ONLINE", "msg": deribit["msg"], 
+            "latency_ms": round((time.time()-t0)*1000),
+            "balance": bal.get("usdt"), "open_positions": len(open_trades)
+        },
+        "market": {
+            "ok": binance_ok, "btc_price": btc_price, 
+            "latency_ms": round((time.time()-t1)*1000), "error": err
+        },
+        "bot": {
+            "signals_today": len([s for s in signals if str(s.get("generated_at","")).startswith(today)]),
+            "gh_token_configured": bool(GH_TOKEN),
+            "telegram_configured": bool(os.getenv("TELEGRAM_TOKEN")),
+            "github_sync_ok": _gh_sync_state["ok"],
+            "github_sync_last_success": _gh_sync_state["last_success_at"]
+        },
         "integrity": {
             "open_slots": f"{len(open_trades)}/{cfg['max_open_trades']}",
-            "win_rate": round(len(wins)/len(real)*100,1) if real else None,
+            "win_rate": round(len(wins)/len(real)*100, 1) if real else None,
             "sltp_missing": sum(1 for t in trades.values() if not t.get("stop") or not t.get("tp1")),
             "stale_pre_tp1": stale_pre_tp1,
             "stale_post_tp1": stale_post_tp1,
-            "ghost_trades_count": ghost_trades_count,
-            "circuit_breaker_active": circuit_breaker_active,
-            "circuit_breaker_level": circuit_breaker_level,
-            "gh_token_configured": gh_token_configured,
-            "telegram_configured": telegram_configured,
-            "github_sync_ok": _gh_sync_state["ok"],
-            "github_sync_last_success": _gh_sync_state["last_success_at"],
+            "ghost_trades_count": ghost_count
         }
     })
 
@@ -1127,7 +768,7 @@ def api_monitor():
 @app.route("/api/execution")
 def api_execution():
     history = get("trade_history.json", [])
-    real = [h for h in history if h.get("signal") != "RECOVERED"]
+    real = [h for h in history if h.get("signal"] != "RECOVERED" and not h.get("pnl_unverified", False)]
     durations = []
     total_volume_usd = 0.0
     gross_pnl = 0.0
@@ -1157,7 +798,7 @@ def api_execution():
 def api_model_health():
     perf_data = get(PERFORMANCE_FILE, {})
     history = get("trade_history.json", [])
-    real = [h for h in history if h.get("signal") != "RECOVERED"]
+    real = [h for h in history if h.get("signal"] != "RECOVERED" and not h.get("pnl_unverified", False)]
     model_meta = get_model_metadata()
     buckets = {
         "45-55%": {"wins": 0, "total": 0, "target": 55}, "55-65%": {"wins": 0, "total": 0, "target": 65},
@@ -1187,7 +828,7 @@ def api_model_health():
 @app.route("/api/analytics")
 def api_analytics():
     history = get("trade_history.json", [])
-    real_trades = [t for t in history if t.get("signal") != "RECOVERED"]
+    real_trades = [t for t in history if t.get("signal"] != "RECOVERED" and not t.get("pnl_unverified", False)]
     pnls = [float(t.get("pnl", 0)) for t in real_trades]
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p <= 0]
@@ -1257,6 +898,9 @@ def api_kill_switch():
     try:
         positions = client.get_positions()
         cancelled_count, flattened_count = 0, 0
+        flattened_records = []
+        now_iso = datetime.now(timezone.utc).isoformat()
+        
         for p in positions:
             inst = p.get("instrument_name", "")
             if not inst: continue
@@ -1274,11 +918,41 @@ def api_kill_switch():
                 if amount > 0:
                     client.place_market_order(sym, side, amount, reduce_only=True)
                     flattened_count += 1
+                    
+                    entry_p = float(p.get("average_price", 0) or 0)
+                    mark_p = float(p.get("mark_price", 0) or 0)
+                    flattened_records.append({
+                        "symbol": sym, "side": "BUY" if size > 0 else "SELL",
+                        "size": amount, "entry": entry_p, "close": mark_p
+                    })
+
+        if flattened_records:
+            history = get("trade_history.json", [])
+            for rec in flattened_records:
+                sym = rec["symbol"]; entry_p = rec["entry"]; close_p = rec["close"]; qty = rec["size"]; side = rec["side"]
+                pnl = round(((close_p - entry_p) if side == "BUY" else (entry_p - close_p)) * qty, 4) if entry_p > 0 else 0.0
+                history.append({
+                    "symbol": sym, "signal": side, "entry": entry_p, "close_price": close_p,
+                    "qty": qty, "pnl": pnl, "pnl_unverified": entry_p <= 0,
+                    "opened_at": now_iso, "closed_at": now_iso,
+                    "close_reason": "Kill Switch — Emergency Flatten", "closed": True
+                })
+            for p in [Path("trade_history.json"), Path("data/trade_history.json")]:
+                try: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(history, indent=2))
+                except Exception: pass
+            _cache["trade_history.json"] = history
+            _cache_ts["trade_history.json"] = time.time()
+            gh_push("trade_history.json", history)
+
         for p in [Path("trades.json"), Path("data/trades.json")]:
             try: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps({}, indent=2))
             except Exception: pass
-        bust("trades.json"); bust("balance.json")
-        return jsonify({"ok": True, "status": "FLATTENED", "cancelled_orders": cancelled_count, "flattened_positions": flattened_count})
+        _cache["trades.json"] = {}
+        _cache_ts["trades.json"] = time.time()
+        push_ok = gh_push("trades.json", {})
+
+        bust("trades.json"); bust("trade_history.json"); bust("balance.json")
+        return jsonify({"ok": True, "status": "FLATTENED" if push_ok else "FLATTENED_PARTIAL_SYNC", "cancelled_orders": cancelled_count, "flattened_positions": flattened_count})
     except Exception as e: log.error(f"Kill switch error: {e}"); return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -1288,49 +962,127 @@ def api_close_trade():
     data = request.get_json() or {}
     symbol = str(data.get("symbol", "")).strip().upper()
     if not symbol: return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
     bust("trades.json"); bust("trade_history.json"); bust("balance.json")
     trades = get("trades.json", {})
-    trade = trades.get(symbol, {})
-    entry_price = float(trade.get("entry", 0) or 0)
-    sig = trade.get("signal", "BUY")
-    recorded_qty = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
+    trade = trades.get(symbol)
+
     client = deribit_client()
-    actual_close_price = entry_price
+    if not client:
+        return jsonify({"ok": False, "error": "Deribit client unavailable"}), 500
+
+    real_pos = 0.0
+    deribit_entry = 0.0
+    try:
+        real_pos = client.get_position_size(symbol)
+        for p in client.get_positions():
+            inst = p.get("instrument_name", "")
+            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+            if f"{base}USDT" == symbol:
+                deribit_entry = float(p.get("average_price", 0) or 0)
+                break
+    except Exception as e:
+        log.error(f"Error querying Deribit position for {symbol}: {e}")
+
+    has_ledger_trade = bool(trade and not trade.get("closed", False))
+    has_exchange_pos = abs(real_pos) > 0.0001
+
+    if not has_ledger_trade and not has_exchange_pos:
+        return jsonify({"ok": False, "error": f"No active position on Deribit or open record in trades.json for {symbol}."}), 404
+
     cancelled_orders = 0
+    try:
+        for o in client.get_open_orders(symbol):
+            oid = str(o.get("order_id", ""))
+            if oid:
+                try: client.cancel_order(oid); cancelled_orders += 1
+                except Exception: pass
+    except Exception as e: log.warning(f"Error cancelling orders for {symbol}: {e}")
+
     flattened_size = 0.0
-    if client:
-        try:
-            for o in client.get_open_orders(symbol):
-                oid = str(o.get("order_id", ""))
-                if oid:
-                    try: client.cancel_order(oid); cancelled_orders += 1
-                    except Exception: pass
-            real_pos = client.get_position_size(symbol)
-            if abs(real_pos) > 0.0001:
-                close_side = "SELL" if real_pos > 0 else "BUY"
-                close_amount = client.round_amount(symbol, abs(real_pos))
-                if close_amount > 0:
-                    client.place_market_order(symbol, close_side, close_amount, reduce_only=True)
-                    flattened_size = close_amount
-            live_p = client.get_live_price(symbol)
-            if live_p > 0: actual_close_price = live_p
-        except Exception as ex_err: log.error(f"Deribit exchange close error for {symbol}: {ex_err}")
+    if has_exchange_pos:
+        close_side = "SELL" if real_pos > 0 else "BUY"
+        close_amount = client.round_amount(symbol, abs(real_pos))
+        if close_amount > 0:
+            try:
+                client.place_market_order(symbol, close_side, close_amount, reduce_only=True)
+                flattened_size = close_amount
+            except Exception as ex_err:
+                return jsonify({"ok": False, "error": f"Failed to execute market close on Deribit: {ex_err}"}), 502
+
+    live_p = client.get_live_price(symbol)
+    actual_close_price = live_p if live_p > 0 else (deribit_entry or float(trade.get("entry", 0) if trade else 0))
+
+    entry_price = float(trade.get("entry", 0) if trade else 0)
+    sig = trade.get("signal") if trade else None
+
+    if entry_price <= 0 and deribit_entry > 0:
+        entry_price = deribit_entry
+
+    if not sig:
+        sig = "BUY" if real_pos > 0 else "SELL"
+
+    recorded_qty = float(trade.get("qty_tp2", 0)) if (trade and trade.get("tp1_hit")) else float(trade.get("qty", 0) if trade else 0)
     calc_qty = flattened_size if flattened_size > 0 else (recorded_qty if recorded_qty > 0 else 1.0)
-    if sig == "BUY": pnl = round((actual_close_price - entry_price) * calc_qty, 4) if entry_price > 0 else 0.0
-    else: pnl = round((entry_price - actual_close_price) * calc_qty, 4) if entry_price > 0 else 0.0
+
+    is_unverified = entry_price <= 0
+    if entry_price > 0:
+        if sig == "BUY": pnl = round((actual_close_price - entry_price) * calc_qty, 4)
+        else: pnl = round((entry_price - actual_close_price) * calc_qty, 4)
+        close_reason = "Manual Close (Dashboard)"
+    else:
+        pnl = 0.0
+        close_reason = "Manual Close (Entry Unrecorded — Excluded from PnL)"
+
     history = get("trade_history.json", [])
-    history.append({**trade, "symbol": symbol, "signal": sig, "entry": entry_price, "close_price": actual_close_price, "qty": calc_qty, "pnl": pnl, "opened_at": trade.get("opened_at", datetime.now(timezone.utc).isoformat()), "closed_at": datetime.now(timezone.utc).isoformat(), "close_reason": "Manual Close (Dashboard)", "closed": True})
-    for p in [Path("trade_history.json"), Path("data/trade_history.json")]:
-        try: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(history, indent=2))
+    base_record = trade if trade else {}
+    history_record = {
+        **base_record,
+        "symbol": symbol, "signal": sig, "entry": entry_price,
+        "close_price": actual_close_price, "qty": calc_qty, "pnl": pnl,
+        "pnl_unverified": is_unverified,
+        "opened_at": base_record.get("opened_at", datetime.now(timezone.utc).isoformat()),
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "close_reason": close_reason, "closed": True
+    }
+    history.append(history_record)
+
+    for p in [Path("trade_history.json"), Path("data") / "trade_history.json"]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(history, indent=2))
         except Exception: pass
-    gh_push("trade_history.json", history)
-    trades.pop(symbol, None)
-    for p in [Path("trades.json"), Path("data/trades.json")]:
-        try: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(trades, indent=2))
-        except Exception: pass
-    gh_push("trades.json", trades)
+
+    if symbol in trades:
+        trades.pop(symbol, None)
+        for p in [Path("trades.json"), Path("data") / "trades.json"]:
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps(trades, indent=2))
+            except Exception: pass
+
+    _cache["trade_history.json"] = history
+    _cache_ts["trade_history.json"] = time.time()
+    _cache["trades.json"] = trades
+    _cache_ts["trades.json"] = time.time()
+
+    push_hist = gh_push("trade_history.json", history)
+    push_trades = gh_push("trades.json", trades)
+
     bust("trades.json"); bust("trade_history.json"); bust("balance.json")
-    return jsonify({"ok": True, "status": "closed", "symbol": symbol, "close_price": actual_close_price, "pnl": pnl, "cancelled_orders": cancelled_orders})
+
+    if not (push_hist and push_trades):
+        return jsonify({
+            "ok": True, "warning": "closed_on_exchange_but_sync_failed",
+            "message": f"{symbol} was flattened on Deribit, but GitHub commit failed. Next scan will reconcile.",
+            "symbol": symbol, "close_price": actual_close_price, "pnl": pnl, "pnl_unverified": is_unverified, "cancelled_orders": cancelled_orders
+        }), 200
+
+    return jsonify({
+        "ok": True, "status": "closed", "symbol": symbol,
+        "close_price": actual_close_price, "entry_price": entry_price,
+        "pnl": pnl, "pnl_unverified": is_unverified, "cancelled_orders": cancelled_orders
+    }), 200
 
 
 @app.route("/health")
