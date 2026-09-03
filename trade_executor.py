@@ -766,6 +766,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     entry  = sig["entry"]
     atr    = sig["atr"]
     
+    
     trades     = load_trades()
     open_count = len([t for t in trades.values() if not t.get("closed", False)])
     
@@ -776,7 +777,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         log.info(f"  🛑 MAX TRADES ({open_count}/{max_open_trades}) — skip {symbol}")
         return False
 
-    same_dir_count = sum(1 for t in trades.values() if not t.get("closed", False) and t.get("signal"] == signal)
+    same_dir_count = sum(1 for t in trades.values() if not t.get("closed", False) and t.get("signal") == signal)
     if same_dir_count >= max_same_dir:
         log.info(f"  🛑 MAX SAME DIRECTION ({same_dir_count}/{max_same_dir} {signal}) — skip {symbol}")
         return False
