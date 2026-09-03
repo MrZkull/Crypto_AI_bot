@@ -38,5 +38,44 @@
     "tier": "\ud83d\udc8e Micro-Granular Gems",
     "fg_override": false,
     "exchange": "deribit_testnet"
+  },
+  "LINKUSDT": {
+    "symbol": "LINKUSDT",
+    "signal": "SELL",
+    "entry": 11.203,
+    "stop": 11.337,
+    "tp1": 11.015,
+    "tp2": 10.8,
+    "qty": 472.88,
+    "qty_tp1": 236.44,
+    "qty_tp2": 236.44,
+    "risk_usd": 63.37,
+    "budget_risk_usd": 995.29,
+    "balance_at_open": 105970.5,
+    "risk_mult": 0.31307196171599977,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049224557891826",
+      "stop_loss": "USDC-SLMB-43201",
+      "tp1": "USDC-210049224557897348",
+      "tp2": "USDC-210049224557897998"
+    },
+    "opened_at": "2026-09-03T06:26:50.750850+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 49.2,
+    "score": 6,
+    "reasons": [
+      "Valid conf (49%)",
+      "ADX 23",
+      "RSI not oversold (54)",
+      "1h confirms",
+      "4h trend aligns (RSI 45)",
+      "4h trend established (16h)"
+    ],
+    "tier": "\ud83c\udfdb Deep Liquidity Alts",
+    "fg_override": false,
+    "exchange": "deribit_testnet"
   }
 }
