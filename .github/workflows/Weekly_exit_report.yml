@@ -1,0 +1,68 @@
+name: Weekly Exit Distribution Report
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Every Monday 06:00 UTC — adjust to taste
+  workflow_dispatch: {}    # lets you trigger it manually from the Actions tab too
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run exit distribution analysis
+        id: run_analysis
+        run: |
+          # Locate trade_history.json wherever it lives in the repo (root or data/)
+          FILE=$( [ -f trade_history.json ] && echo trade_history.json || echo data/trade_history.json )
+          if [ ! -f "$FILE" ]; then
+            echo "::error::trade_history.json not found — nothing to analyze."
+            exit 1
+          fi
+          python exit_distribution_analysis.py "$FILE" | tee exit_report.txt
+
+      - name: Commit report to repo
+        run: |
+          git config user.name  "CryptoBot AI"
+          git config user.email "bot@cryptobot.ai"
+
+          REPORT_DATE=$(date -u +"%Y-%m-%d")
+          mkdir -p reports
+          cp exit_report.txt "reports/exit_distribution_${REPORT_DATE}.txt"
+
+          git add "reports/exit_distribution_${REPORT_DATE}.txt"
+          git commit -m "📊 Weekly exit distribution report — ${REPORT_DATE}" || echo "No changes to commit"
+          git pull origin main --rebase --autostash
+          git push origin main || { git pull --rebase origin main && git push origin main; }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send summary to Telegram
+        if: always() && steps.run_analysis.outcome == 'success'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram not configured — skipping notification."
+            exit 0
+          fi
+          SUMMARY=$(head -c 3500 exit_report.txt)
+          MSG="📊 Weekly Exit Distribution Report"$'\n\n'"\`\`\`"$'\n'"${SUMMARY}"$'\n'"\`\`\`"
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${MSG}" \
+            --data-urlencode "parse_mode=Markdown" > /dev/null || echo "Telegram send failed, ignoring."
