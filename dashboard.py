@@ -1,4 +1,4 @@
-# dashboard.py — V5.13: GitHub-First Priority & Real-Cost PnL Recovery
+# dashboard.py — V5.13: GitHub-First Priority & Real-Cost PnL Recovery.
 
 import os
 import json
