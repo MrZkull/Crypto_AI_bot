@@ -11613,5 +11613,47 @@
     "pnl": -56.62,
     "closed_at": "2026-09-05T00:51:02.171352+00:00",
     "close_reason": "SL hit"
+  },
+  {
+    "symbol": "FILUSDT",
+    "signal": "BUY",
+    "entry": 0.7508,
+    "stop": 0.7576,
+    "tp1": 0.7576,
+    "tp2": 0.7654,
+    "qty": 7017,
+    "qty_tp1": 3508,
+    "qty_tp2": 3509,
+    "risk_usd": 34.38,
+    "budget_risk_usd": 1828.74,
+    "balance_at_open": 105297.62,
+    "risk_mult": 0.5789129021131968,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049225153630025",
+      "stop_loss": "USDC-SLMS-43551",
+      "tp1": "USDC-210049225153636279",
+      "tp2": "USDC-210049225153636508"
+    },
+    "opened_at": "2026-09-04T23:00:22.116296+00:00",
+    "tp1_hit": true,
+    "tp2_hit": true,
+    "closed": true,
+    "confidence": 48.4,
+    "score": 5,
+    "reasons": [
+      "Valid conf (48%)",
+      "Strong ADX 28",
+      "RSI not overbought (50)",
+      "4h trend aligns (RSI 47)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83e\uddea Verified Regime Additions",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "close_price": 0.7654,
+    "pnl": 51.2314,
+    "closed_at": "2026-09-05T05:36:09.741270+00:00",
+    "close_reason": "TP2 hit"
   }
 ]
