@@ -227,6 +227,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     <div class="nav-item" onclick="showPage('performance')" id="nav-performance"><span class="nav-icon">△</span><span>Performance</span></div>
     <div class="nav-item" onclick="showPage('quant')" id="nav-quant"><span class="nav-icon">📈</span><span>Quant</span></div>
     <div class="nav-item" onclick="showPage('execution')" id="nav-execution"><span class="nav-icon">⚡</span><span>Execution</span></div>
+    <div class="nav-item" onclick="showPage('intel')" id="nav-intel"><span class="nav-icon">🧬</span><span>Intelligence</span><span class="nav-badge amber" id="proposalBadge" style="display:none">0</span></div>
     <div class="nav-item" onclick="showPage('modelhealth')" id="nav-modelhealth"><span class="nav-icon">🧠</span><span>Model</span></div>
     <div class="nav-item" onclick="showPage('config')" id="nav-config"><span class="nav-icon">⊙</span><span>Config</span></div>
     <div class="nav-item" onclick="showPage('monitor')" id="nav-monitor"><span class="nav-icon">◉</span><span>Monitor</span><span class="nav-badge amber" id="monitorAlertBadge" style="display:none">0</span></div>
@@ -672,6 +673,31 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
+  <!-- 12. INTELLIGENCE PAGE (PREDICTION LEDGER & ADAPTATION PROPOSALS) -->
+<div class="page" id="page-intel">  
+  <div class="stats-row">    
+    <div class="stat-card c-purple"><div class="stat-label">Prediction Ledger</div><div class="stat-value purple" id="intel-total-preds">—</div><div class="stat-sub" id="intel-unaudited">— unaudited</div></div>    
+    <div class="stat-card c-green"><div class="stat-label">Overall Hit Rate</div><div class="stat-value green" id="intel-hitrate">—</div><div class="stat-sub">audited predictions</div></div>    
+    <div class="stat-card c-cyan"><div class="stat-label">Avg Disagreement</div><div class="stat-value cyan" id="intel-disagreement">—</div><div class="stat-sub">ensemble spread</div></div>    
+    <div class="stat-card c-amber"><div class="stat-label">Pending Proposals</div><div class="stat-value amber" id="intel-pending">0</div><div class="stat-sub">awaiting review</div></div>  
+  </div>  
+  <div class="panel">    
+    <div class="panel-header"><span class="panel-title">Per-Coin Calibration &amp; Failure Tags</span></div>    
+    <div class="panel-body" style="overflow-x:auto">      
+      <table class="htable">        
+        <thead><tr><th>Symbol</th><th>Audited</th><th>Hit Rate</th><th>Disagreement (Correct)</th><th>Disagreement (Incorrect)</th><th>Failure Tags</th></tr></thead>        
+        <tbody id="dossierBody"><tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text3)">Loading...</td></tr></tbody>      
+      </table>    
+    </div>  
+  </div>  
+  <div class="panel">    
+    <div class="panel-header"><span class="panel-title">🧪 Adaptation Proposals — Requires Approval</span></div>    
+    <div class="panel-body" id="proposalsBody">      
+      <div class="empty"><div class="emsg">Loading proposals...</div></div>    
+    </div>  
+  </div>
+</div> 
+  
   <!-- 9. MODEL HEALTH PAGE -->
   <div class="page" id="page-modelhealth">
     <div class="stats-row">
@@ -935,7 +961,7 @@ let COIN_TIERS_MAP = {};
 const PAGES = {
   dashboard:'Dashboard', signals:'Signals', market:'Market', trades:'Open Trades',
   history:'History', performance:'Performance', quant:'Quant Analytics',
-  execution:'Execution', modelhealth:'Model Health', config:'Configuration', monitor:'System Monitor'
+  execution:'Execution', intel:'Intelligence' , modelhealth:'Model Health', config:'Configuration', monitor:'System Monitor'
 };
 
 let allSignals = [], allTrades = {}, allHistory = [];
@@ -964,6 +990,7 @@ function showPage(id) {
   if (id === 'market') fetchMarketData();
   if (id === 'trades') fetchOpenTrades();
   if (id === 'signals') renderSignals();
+  if (id === 'intel') fetchIntel();
 }
 
 const fp = (v, d) => {
@@ -1268,6 +1295,67 @@ async function fetchOpenTrades() {
     const el = document.getElementById(id);
     if (el) el.innerHTML = html;
   });
+}
+
+async function fetchIntel() {  
+  const [preds, dossier, proposals] = await Promise.all([    
+    apiFetch('/api/predictions', {}),    
+    apiFetch('/api/dossier', {coins:[]}),    
+    apiFetch('/api/adaptation_proposals?status=pending', {proposals:[]}),  
+  ]);  
+  
+  if (preds.ok) {    
+    document.getElementById('intel-total-preds').textContent = preds.total_predictions;    
+    document.getElementById('intel-unaudited').textContent = preds.unaudited_count + ' unaudited';    
+    document.getElementById('intel-hitrate').textContent = preds.overall_hit_rate != null ? preds.overall_hit_rate + '%' : '—';    
+    document.getElementById('intel-disagreement').textContent = preds.avg_ensemble_disagreement ?? '—';  
+  }  
+  
+  const dBody = document.getElementById('dossierBody');  
+  if (dossier.ok && dossier.coins.length) {    
+    dBody.innerHTML = dossier.coins.map(c => `      
+      <tr>        
+        <td style="color:#fff;font-weight:600">${c.symbol}</td>        
+        <td>${c.total_audited}</td>        
+        <td style="color:${c.hit_rate >= 55 ? 'var(--green)' : c.hit_rate >= 40 ? 'var(--amber)' : 'var(--red)'}">${c.hit_rate ?? '—'}%</td>        
+        <td>${c.avg_disagreement_when_correct ?? '—'}</td>        
+        <td>${c.avg_disagreement_when_incorrect ?? '—'}</td>        
+        <td>${Object.entries(c.tags||{}).map(([t,n]) => `<span class="tag" style="background:var(--amber2);color:var(--amber);margin-right:4px">${t}×${n}</span>`).join('') || '—'}</td>      
+      </tr>`).join('');  
+  } else {    
+    dBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text3)">No audited data yet</td></tr>';  
+  }  
+  
+  const pBody = document.getElementById('proposalsBody');  
+  const pending = proposals.ok ? proposals.proposals : [];  
+  document.getElementById('intel-pending').textContent = pending.length;  
+  const badge = document.getElementById('proposalBadge');  
+  badge.textContent = pending.length;  
+  badge.style.display = pending.length ? '' : 'none';  
+  
+  pBody.innerHTML = pending.length ? pending.map(p => `    
+    <div class="trade-card" style="border-left:3px solid var(--amber)">      
+      <div class="tc-top">        
+        <span class="tc-sym">${p.symbol} <span class="tag" style="background:var(--amber2);color:var(--amber)">${p.tag}</span></span>        
+        <span style="font-size:9px;color:var(--text3)">${p.occurrences} occurrences</span>      
+      </div>      
+      <div style="font-size:10px;color:var(--text2);margin:6px 0">${p.suggested_change}</div>      
+      <div style="display:flex;gap:8px;justify-content:flex-end">        
+        <button class="fbtn" style="border-color:var(--red);color:var(--red)" onclick="rejectProposal('${p.id}')">✕ Reject</button>        
+        <button class="fbtn" style="border-color:var(--green);color:var(--green)" onclick="approveProposal('${p.id}')">✓ Approve</button>      
+      </div>    
+    </div>`).join('') : '<div class="empty"><div class="emsg">No pending proposals</div></div>';
+}
+
+async function approveProposal(id) {  
+  if (!confirm('Approve this adaptation? It will take effect on the next scan.')) return;  
+  await fetch(`/api/adaptation_proposals/${id}/approve`, {method:'POST'});  
+  fetchIntel();
+}
+
+async function rejectProposal(id) {  
+  await fetch(`/api/adaptation_proposals/${id}/reject`, {method:'POST'});  
+  fetchIntel();
 }
 
 function renderTradeCard(t) {
