@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CryptoBot AI — Dashboard</title>
+<title>CryptoBot AI — Institutional Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
 <!-- Chart.js v4 + Hammer.js + Zoom Plugin -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -24,8 +24,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 /* 🏛️ ALWAYS-OPEN PINNED ACCESSIBLE SIDEBAR */
 .sidebar { width: var(--nav-w); min-height: 100vh; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; z-index: 200; flex-shrink: 0; }
 .sidebar-logo { padding: 18px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
-.logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 2s ease-in-out infinite; flex-shrink: 0; }
-@keyframes pulse { 0%, 100% { box-shadow: 0 0 8px var(--green); } 50% { box-shadow: 0 0 2px var(--green); } }
+.logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); flex-shrink: 0; }
 .logo-text { font-family: var(--sans); font-size: 14px; font-weight: 800; color: #fff; }
 .logo-sub { font-size: 8px; color: var(--text3); letter-spacing: 1px; text-transform: uppercase; margin-top: 1px; }
 .sidebar-section { padding: 12px 10px 4px; font-size: 8px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text3); }
@@ -35,15 +34,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .nav-icon { font-size: 13px; width: 16px; text-align: center; flex-shrink: 0; }
 .nav-badge { margin-left: auto; font-size: 8px; background: var(--red); color: #fff; border-radius: 10px; padding: 1px 5px; font-weight: 700; }
 .nav-badge.green { background: var(--green); }
+.nav-badge.amber { background: var(--amber); color: #000; }
 .sidebar-bottom { margin-top: auto; padding: 10px; border-top: 1px solid var(--border); }
 .mode-badge { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 6px; font-size: 10px; font-weight: 500; }
 .mode-badge.active-mode { background: var(--green2); border: 1px solid #10b98130; color: var(--green); }
 .sidebar-coins { padding: 8px 10px; }
 .coins-label { font-size: 8px; letter-spacing: 1px; color: var(--text3); text-transform: uppercase; margin-bottom: 6px; }
+
+/* 🔒 CONSTANT SOLID COLOR CHIPS (ZERO BLINKING/FLASHING) */
 .coin-chips { display: flex; flex-wrap: wrap; gap: 3px; max-height: 220px; overflow-y: auto; }
-.coin-chip { font-size: 8px; padding: 2px 5px; border-radius: 3px; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); cursor: pointer; }
-.coin-chip.has-signal { border-color: var(--green); color: var(--green); background: var(--green2); }
-.coin-chip.probated-chip { border-color: var(--amber) !important; color: var(--amber) !important; background: var(--amber2) !important; font-weight: 700; }
+.coin-chip { font-size: 8px; padding: 3px 6px; border-radius: 4px; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); cursor: pointer; user-select: none; }
+.coin-chip.has-signal { border-color: var(--green) !important; color: var(--green) !important; background: rgba(16, 185, 129, 0.18) !important; font-weight: 600; }
+.coin-chip.probated-chip { border-color: var(--amber) !important; color: var(--amber) !important; background: rgba(245, 158, 11, 0.22) !important; font-weight: 700; }
+.coin-chip.cooldown-chip { border-color: var(--cyan) !important; color: var(--cyan) !important; background: rgba(6, 182, 212, 0.20) !important; font-weight: 600; }
 
 /* MAIN CONTENT AREA */
 .main { margin-left: var(--nav-w); flex: 1; display: flex; flex-direction: column; min-height: 100vh; min-width: 0; width: calc(100% - var(--nav-w)); }
@@ -226,7 +229,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     <div class="nav-item" onclick="showPage('execution')" id="nav-execution"><span class="nav-icon">⚡</span><span>Execution</span></div>
     <div class="nav-item" onclick="showPage('modelhealth')" id="nav-modelhealth"><span class="nav-icon">🧠</span><span>Model</span></div>
     <div class="nav-item" onclick="showPage('config')" id="nav-config"><span class="nav-icon">⊙</span><span>Config</span></div>
-    <div class="nav-item" onclick="showPage('monitor')" id="nav-monitor"><span class="nav-icon">◉</span><span>Monitor</span><span class="nav-badge" id="monitorAlertBadge" style="display:none">!</span></div>
+    <div class="nav-item" onclick="showPage('monitor')" id="nav-monitor"><span class="nav-icon">◉</span><span>Monitor</span><span class="nav-badge amber" id="monitorAlertBadge" style="display:none">0</span></div>
   </nav>
   <div class="sidebar-coins">
     <div class="coins-label">Monitored Coins</div>
@@ -267,7 +270,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- DASHBOARD PAGE -->
+  <!-- 1. DASHBOARD PAGE -->
   <div class="page active" id="page-dashboard">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Testnet Balance</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub">USDT Live Balance</div></div>
@@ -354,7 +357,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- SIGNALS PAGE -->
+  <!-- 2. SIGNALS PAGE -->
   <div class="page" id="page-signals">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Total Signals Today</div><div class="stat-value green" id="sig-total">0</div><div class="stat-sub">last 24 hours</div></div>
@@ -377,13 +380,23 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
           <button class="fbtn" onclick="filterConf(70,this)">70%+</button>
         </div>
       </div>
-      <div id="signalsBody" style="padding:10px 12px;max-height:calc(100vh - 280px);overflow-y:auto">
+      <div id="signalsBody" style="padding:10px 12px;max-height:calc(100vh - 400px);overflow-y:auto">
         <div class="empty"><div class="eicon">⚡</div><div class="emsg">No signals yet. Bot scans every 15 min.</div></div>
+      </div>
+    </div>
+
+    <!-- SIGNAL REJECTION INSPECTOR -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">🚫 Signal Rejection Inspector (Why Signals Were Blocked)</span>
+      </div>
+      <div id="rejectedSignalsBody" style="padding:10px 12px;max-height:220px;overflow-y:auto">
+        <div class="empty"><div class="emsg">No rejected signals recorded</div></div>
       </div>
     </div>
   </div>
 
-  <!-- MARKET PAGE -->
+  <!-- 3. MARKET PAGE -->
   <div class="page" id="page-market">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Gainers</div><div class="stat-value green" id="mkt-gainers">0</div><div class="stat-sub" id="mkt-gainers-sub">loading...</div></div>
@@ -420,7 +433,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- OPEN TRADES PAGE -->
+  <!-- 4. OPEN TRADES PAGE -->
   <div class="page" id="page-trades">
     <div class="stats-row">
       <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub" id="ot-max-sub">—</div></div>
@@ -436,7 +449,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- HISTORY PAGE & INSTITUTIONAL REPORT ENGINE -->
+  <!-- 5. HISTORY PAGE & INSTITUTIONAL REPORT ENGINE -->
   <div class="page" id="page-history">
     <div class="stats-row">
       <div class="stat-card c-purple"><div class="stat-label">Total Trades</div><div class="stat-value purple" id="h-total">0</div><div class="stat-sub">filtered range</div></div>
@@ -577,13 +590,13 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- PERFORMANCE PAGE -->
+  <!-- 6. PERFORMANCE PAGE -->
   <div class="page" id="page-performance">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Best Trade</div><div class="stat-value green" id="p-best">—</div><div class="stat-sub" id="p-best-sym">USDT profit</div></div>
       <div class="stat-card c-red"><div class="stat-label">Worst Trade</div><div class="stat-value red" id="p-worst">—</div><div class="stat-sub" id="p-worst-sym">USDT loss</div></div>
-      <div class="stat-card c-cyan"><div class="stat-label">Avg Win</div><div class="stat-value cyan" id="p-avgwin">—</div><div class="stat-sub">USDT per win</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Avg Loss</div><div class="stat-value amber" id="p-avgloss">—</div><div class="stat-sub">USDT per loss</div></div>
+      <div class="stat-card c-cyan"><div class="stat-label">Avg Win</div><div class="stat-value cyan" id="p-avgwin">—</div><div class="stat-sub" id="p-avgwin-sub">USDT per win</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Avg Loss</div><div class="stat-value amber" id="p-avgloss">—</div><div class="stat-sub" id="p-avgloss-sub">USDT per loss</div></div>
     </div>
     <div class="g2">
       <div class="panel">
@@ -610,7 +623,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- QUANT ANALYTICS PAGE (WITH VERTICAL TRACKING LINE) -->
+  <!-- 7. QUANT ANALYTICS PAGE -->
   <div class="page" id="page-quant">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">—</div><div class="stat-sub">Annualized</div></div>
@@ -620,7 +633,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">—</div><div class="stat-sub">Peak to Trough</div></div>
     </div>
 
-    <!-- CUMULATIVE EQUITY CHART -->
     <div class="panel">
       <div class="panel-header">
         <span class="panel-title">Cumulative Equity Trajectory</span>
@@ -631,7 +643,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       </div>
     </div>
 
-    <!-- DAILY REALISED PNL CHART -->
     <div class="panel">
       <div class="panel-header">
         <span class="panel-title">Daily Realized PnL &amp; Growth Tracker</span>
@@ -643,7 +654,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
   
-  <!-- EXECUTION MICROSTRUCTURE PAGE -->
+  <!-- 8. EXECUTION MICROSTRUCTURE PAGE -->
   <div class="page" id="page-execution">
     <div class="stats-row">
       <div class="stat-card c-blue"><div class="stat-label">Avg Slippage</div><div class="stat-value blue" id="ex-slip">—</div><div class="stat-sub">Limit vs Fill</div></div>
@@ -661,7 +672,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- MODEL HEALTH PAGE -->
+  <!-- 9. MODEL HEALTH PAGE -->
   <div class="page" id="page-modelhealth">
     <div class="stats-row">
       <div class="stat-card c-purple"><div class="stat-label">Active Model Ensemble</div><div class="stat-value purple" id="mh-name">—</div><div class="stat-sub">Live Serialization</div></div>
@@ -676,7 +687,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- CONFIGURATION PAGE -->
+  <!-- 10. CONFIGURATION PAGE -->
   <div class="page" id="page-config">
     <div class="g2" style="align-items:start">
       <div class="panel">
@@ -733,7 +744,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-  <!-- SYSTEM MONITOR PAGE -->
+  <!-- 11. SYSTEM MONITOR PAGE -->
   <div class="page" id="page-monitor">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div>
@@ -743,11 +754,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       <button onclick="runMonitorChecks()" style="background:var(--blue2);border:1px solid var(--blue);color:var(--blue);padding:6px 12px;border-radius:5px;cursor:pointer;font-size:10px;font-weight:600;font-family:var(--mono)">↻ Refresh</button>
     </div>
     
-    <!-- 🔒 PROBATION & COOLDOWN TRACKER PANEL -->
+    <!-- 🔒 PROBATION TRACKER PANEL -->
     <div class="mon-card" style="margin-bottom:14px;">
       <div class="mon-card-hd">
-        <span class="mon-card-title">🔒 Probation &amp; Cooldown Tracker</span>
-        <span style="font-size:9px;color:var(--amber);">+10.0% Confidence Premium Required</span>
+        <span class="mon-card-title">🔒 Probation Tracker (+10.0% Confidence Premium Required)</span>
       </div>
       <div style="overflow-x:auto;">
         <table class="htable">
@@ -758,11 +768,38 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
               <th>Consecutive Losses</th>
               <th>7-Day Cooldown Timer</th>
               <th>Required Threshold</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody id="probationTrackerBody">
             <tr>
-              <td colspan="5" style="text-align:center;padding:12px;color:var(--text3)">Loading probation state...</td>
+              <td colspan="6" style="text-align:center;padding:12px;color:var(--text3)">Loading probation state...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ⏳ ACTIVE COOLDOWN TRACKER PANEL -->
+    <div class="mon-card" style="margin-bottom:14px;">
+      <div class="mon-card-hd">
+        <span class="mon-card-title">⏳ Active Loss Cooldowns</span>
+        <span style="font-size:9px;color:var(--text3);">Post-loss re-entry blocks</span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="htable">
+          <thead>
+            <tr>
+              <th>Coin Symbol</th>
+              <th>Reason</th>
+              <th>Blocked At</th>
+              <th>Time Remaining</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="cooldownTrackerBody">
+            <tr>
+              <td colspan="5" style="text-align:center;padding:12px;color:var(--text3)">Loading cooldown state...</td>
             </tr>
           </tbody>
         </table>
@@ -858,7 +895,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     </div>
   </div>
 
-</div><!-- /main -->
+</div>
 
 <!-- EMERGENCY KILL SWITCH MODAL -->
 <div class="modal-overlay" id="killModal">
@@ -893,9 +930,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 </div>
 
 <script>
-// ═══════════════════════════════════════════════════════
-// DYNAMIC STATE & UTILITIES
-// ═══════════════════════════════════════════════════════
 let ALL_COINS = [];
 let COIN_TIERS_MAP = {};
 const PAGES = {
@@ -905,7 +939,8 @@ const PAGES = {
 };
 
 let allSignals = [], allTrades = {}, allHistory = [];
-let probatedCoinsSet = new Set(), probatedCoinsData = [];
+let probatedCoinsSet = new Set(), cooldownCoinsSet = new Set();
+let probatedCoinsData = [], cooldownCoinsData = [];
 let histRange = 'all', histResultFilter = 'all', sigFilter = 'all', confFilter = 0;
 let scanRunning = false, monTimer = null;
 let equityChartInst = null, dailyPnlChartInst = null, calibrationChartInst = null;
@@ -961,7 +996,25 @@ async function apiFetch(path, fallback, opts) {
   }
 }
 
-// ── PROBATION & COOLDOWN TRACKER (REAL BACKEND AUDIT) ──────────────────
+// ── INTERACTIVE SL/TP ATTACHER (HEAL NAKED POSITIONS) ──
+async function healTradeBracket(symbol) {
+  if (!confirm(`Attach fresh Stop-Loss and Take-Profit brackets to ${symbol} on Deribit?`)) return;
+  try {
+    const r = await apiFetch('/api/trades/heal', { ok: false }, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol })
+    });
+    if (r && r.ok) {
+      alert(`✅ ${symbol} Repaired!\n${r.message}`);
+      await fetchOpenTrades();
+    } else {
+      alert(`🚨 Repair Failed: ${r.error || 'Server error'}`);
+    }
+  } catch(e) { alert(`🚨 Error: ${e.message}`); }
+}
+
+// ── PROBATION & COOLDOWN TRACKER (REAL AUDIT) ──
 async function fetchProbationData() {
   const d = await apiFetch('/api/probation', { ok: false, probated_coins: [] });
   if (d && d.ok) {
@@ -977,7 +1030,7 @@ function renderProbationTracker() {
   if (!tbody) return;
 
   if (!probatedCoinsData.length) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:12px;color:var(--green)">✓ All ${ALL_COINS.length || 'monitored'} coins operating under standard confidence thresholds</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:12px;color:var(--green)">✓ All ${ALL_COINS.length || 'monitored'} coins operating under standard confidence thresholds</td></tr>`;
     return;
   }
 
@@ -988,8 +1041,77 @@ function renderProbationTracker() {
       <td style="color:var(--red);">${c.probation_consecutive_losses} / 3 Losses</td>
       <td style="color:var(--amber);">${c.time_left_hrs}h remaining</td>
       <td><span class="tag" style="background:var(--amber2);color:var(--amber);border:1px solid #f59e0b40">${c.required_conf.toFixed(1)}% Min Conf</span></td>
+      <td><button onclick="releaseProbation('${c.symbol}')" style="background:var(--green2);border:1px solid var(--green);color:var(--green);padding:4px 9px;border-radius:5px;cursor:pointer;font-size:9px;font-weight:600;font-family:var(--mono)">🔓 Release</button></td>
     </tr>
   `).join('');
+}
+
+async function releaseProbation(symbol) {
+  if (!confirm(`Manually release ${symbol} from probation?\n\nThis clears its loss streak and restores baseline thresholds immediately.`)) return;
+  try {
+    const r = await fetch('/api/probation/release', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol })
+    });
+    const body = await r.json().catch(() => ({}));
+    if (r.ok && body.ok) {
+      await fetchProbationData();
+    } else {
+      alert(`🚨 Release failed: ${body.error || `HTTP ${r.status}`}`);
+    }
+  } catch (e) {
+    alert(`🚨 Connection error: ${e.message}`);
+  }
+}
+
+async function fetchCooldownData() {
+  const d = await apiFetch('/api/cooldown', { ok: false, cooldowns: [] });
+  if (d && d.ok) {
+    cooldownCoinsData = d.cooldowns || [];
+    cooldownCoinsSet = new Set(cooldownCoinsData.map(c => c.symbol));
+    renderCooldownTracker(cooldownCoinsData);
+    updateCoinChips();
+  }
+}
+
+function renderCooldownTracker(cooldowns) {
+  const tbody = document.getElementById('cooldownTrackerBody');
+  if (!tbody) return;
+
+  if (!cooldowns.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:12px;color:var(--green)">✓ No active loss cooldowns — all coins clear for entry</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = cooldowns.map(c => `
+    <tr>
+      <td style="color:#fff;font-weight:700;">${c.symbol}</td>
+      <td style="color:var(--text2);font-size:9px;">${c.reason}</td>
+      <td style="color:var(--text3);font-size:9px;">${c.blocked_at}</td>
+      <td style="color:var(--amber);">${c.time_left_hrs}h remaining</td>
+      <td><button onclick="releaseCooldown('${c.symbol}')" style="background:var(--green2);border:1px solid var(--green);color:var(--green);padding:4px 9px;border-radius:5px;cursor:pointer;font-size:9px;font-weight:600;font-family:var(--mono)">🔓 Release</button></td>
+    </tr>
+  `).join('');
+}
+
+async function releaseCooldown(symbol) {
+  if (!confirm(`Manually clear the cooldown for ${symbol}? It will become eligible for scanning immediately.`)) return;
+  try {
+    const r = await fetch('/api/cooldown/release', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol })
+    });
+    const body = await r.json().catch(() => ({}));
+    if (r.ok && body.ok) {
+      await fetchCooldownData();
+    } else {
+      alert(`🚨 Release failed: ${body.error || `HTTP ${r.status}`}`);
+    }
+  } catch (e) {
+    alert(`🚨 Connection error: ${e.message}`);
+  }
 }
 
 async function fetchStatus() {
@@ -1003,38 +1125,35 @@ async function fetchStatus() {
   document.getElementById('liveBadge').textContent = 'LIVE';
   document.getElementById('liveBadge').className   = 'live-badge';
   
-  // ── True Scan Phase & Staleness Indicator ──
   const phase = d.last_scan_phase;
   const completedAt = d.last_scan_completed_at;
   const updLabel = document.getElementById('lastUpd');
 
   if (updLabel) {
-      if (phase !== 'completed' && phase !== 'unknown') {
-          updLabel.innerHTML = `⚠️ Scan Stalled (Phase: ${phase})`;
-          updLabel.style.color = "#f43f5e";
-          updLabel.style.fontWeight = "700";
-      } else if (completedAt && completedAt !== "Unknown") {
-          // Native ISO 8601 parsing
-          const scanTime = new Date(completedAt).getTime();
-          const now = new Date().getTime();
-          const diffMinutes = Math.floor((now - scanTime) / 60000);
+    if (phase !== 'completed' && phase !== 'unknown') {
+      updLabel.innerHTML = `⚠️ Scan Stalled (Phase: ${phase})`;
+      updLabel.style.color = "#f43f5e";
+      updLabel.style.fontWeight = "700";
+    } else if (completedAt && completedAt !== "Unknown") {
+      const scanTime = new Date(completedAt).getTime();
+      const now = new Date().getTime();
+      const diffMinutes = Math.floor((now - scanTime) / 60000);
 
-          if (isNaN(diffMinutes)) {
-              updLabel.innerHTML = `⚠️ Date Parse Error`;
-              updLabel.style.color = "#f43f5e";
-          } else if (diffMinutes > 20) {
-              updLabel.innerHTML = `⚠️ STALE (Scan: ${diffMinutes}m ago)`;
-              updLabel.style.color = "#f43f5e";
-              updLabel.style.fontWeight = "700";
-          } else {
-              updLabel.innerHTML = `✓ Live (Scan: ${diffMinutes}m ago)`;
-              updLabel.style.color = "var(--text3)";
-              updLabel.style.fontWeight = "normal";
-          }
+      if (isNaN(diffMinutes)) {
+        updLabel.innerHTML = `⚠️ Date Parse Error`;
+        updLabel.style.color = "#f43f5e";
+      } else if (diffMinutes > 20) {
+        updLabel.innerHTML = `⚠️ STALE (Scan: ${diffMinutes}m ago)`;
+        updLabel.style.color = "#f43f5e";
+        updLabel.style.fontWeight = "700";
       } else {
-          // Fallback if the backend hasn't generated the status file yet
-          updLabel.textContent = new Date().toLocaleTimeString();
+        updLabel.innerHTML = `✓ Live (Scan: ${diffMinutes}m ago)`;
+        updLabel.style.color = "var(--text3)";
+        updLabel.style.fontWeight = "normal";
       }
+    } else {
+      updLabel.textContent = new Date().toLocaleTimeString();
+    }
   }
 
   if (d.deribit_status && d.deribit_status.status !== 'ONLINE') {
@@ -1056,8 +1175,8 @@ async function fetchStatus() {
   document.getElementById('statWR').className    = 'stat-value ' + (wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red');
   document.getElementById('statWRSub').textContent = (d.wins||0) + ' W / ' + (d.losses||0) + ' L';
   document.getElementById('statOpen').textContent  = d.open_trades || 0;
-  document.getElementById('statOpenSub').textContent = `of ${d.max_trades || 2} max`;
-  document.getElementById('ot-max-sub').textContent = `of ${d.max_trades || 2} max`;
+  document.getElementById('statOpenSub').textContent = `of ${d.max_trades || 8} max`;
+  document.getElementById('ot-max-sub').textContent = `of ${d.max_trades || 8} max`;
 
   const modelAcc = d.model_accuracy || '—';
   ['topAccuracy', 'statModelAcc', 'mh-acc', 'v-model-health-acc'].forEach(id => {
@@ -1117,8 +1236,10 @@ async function fetchOpenTrades() {
 
   const count   = data.length;
   const tradeEl = document.getElementById('tradeCount');
-  if (tradeEl) tradeEl.textContent = count;
-  if (tradeEl) tradeEl.style.display = count > 0 ? '' : 'none';
+  if (tradeEl) {
+    tradeEl.textContent = count;
+    tradeEl.style.display = count > 0 ? '' : 'none';
+  }
 
   const badge = document.getElementById('openBadge');
   if (badge) badge.textContent = count + ' active';
@@ -1198,6 +1319,7 @@ function renderTradeCard(t) {
   </div>`;
 }
 
+// ── FIXED PROGRESS BAR: SUPPORTS DUAL AND SINGLE TP WITHOUT FALSE WARNINGS ──
 function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const entry  = parseFloat(t.entry      || 0);
   const sl     = parseFloat(t.stop       || 0);
@@ -1206,13 +1328,18 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const live   = parseFloat(t.live_price || 0);
   const tp1Hit = t.tp1_hit || false;
 
-  if (!entry || !sl || !tp1 || !tp2 || sl === 0) {
-    return `<div style="padding:4px 0">
-      <div style="height:5px;background:rgba(255,255,255,0.07);border-radius:3px"></div>
-      <div style="font-size:8px;color:var(--red);margin-top:2px">⚠ SL/TP missing — check orders</div>
+  // Genuine bracket failure condition: missing entry, invalid stop, or both take-profits missing
+  if (!entry || sl <= 0 || (tp1 <= 0 && tp2 <= 0)) {
+    return `<div style="padding:6px 0">
+      <div style="height:6px;background:rgba(244,63,94,0.15);border-radius:3px;border:1px dashed var(--red)"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+        <span style="font-size:9px;color:var(--red);font-weight:700">⚠️ SL/TP Missing on Deribit</span>
+        <button onclick="healTradeBracket('${t.symbol}')" style="background:var(--blue2);border:1px solid var(--blue);color:var(--blue);padding:2px 8px;border-radius:4px;cursor:pointer;font-size:9px;font-weight:700;font-family:var(--mono)">🛡️ Attach SL/TP</button>
+      </div>
     </div>`;
   }
 
+  const effectiveTp = tp2 > 0 ? tp2 : tp1;
   const slTrailedInProfit = isBuy ? (sl >= entry) : (sl <= entry);
   const slAtTp1 = Math.abs(sl - tp1) < (entry * 0.0005);
   const norm = v => isBuy ? v : (2 * entry - v);
@@ -1220,7 +1347,7 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const nEntry = norm(entry);
   const nSl    = norm(sl);
   const nTp1   = norm(tp1);
-  const nTp2   = norm(tp2);
+  const nTp2   = tp2 > 0 ? norm(tp2) : nTp1;
   const nLive  = norm(live);
 
   const rawRiskDist = Math.abs(nEntry - nSl);
@@ -1236,10 +1363,10 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
 
   const toPct = v => Math.min(98, Math.max(2, (v - displayLow) / displayRange * 100));
 
-  const slPct   = toPct(nSl);
+  const slPct    = toPct(nSl);
   const entryPct = toPct(nEntry);
   const tp1Pct   = toPct(nTp1);
-  const tp2Pct   = toPct(nTp2);
+  const tp2Pct   = tp2 > 0 ? toPct(nTp2) : null;
   const dotPct   = toPct(nLive);
 
   const inProfit = isBuy ? live >= entry : live <= entry;
@@ -1259,7 +1386,7 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
 
   const dec = v => (v < 10 ? 4 : 2);
   const rewardWidth = Math.max(0, tp1Pct - entryPct);
-  const targetWidth = Math.max(0, tp2Pct - tp1Pct);
+  const targetWidth = tp2 > 0 ? Math.max(0, tp2Pct - tp1Pct) : 0;
 
   return `
   <div style="font-size:9px;color:var(--text3);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
@@ -1270,12 +1397,12 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   <div style="position:relative;height:8px;border-radius:4px;background:rgba(255,255,255,0.05);margin-bottom:2px;overflow:visible">
     <div style="position:absolute;left:0%;top:0;height:100%;width:${entryPct.toFixed(2)}%;background:rgba(244,63,94,0.18);border-radius:4px 0 0 4px"></div>
     <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:0;height:100%;width:${rewardWidth.toFixed(2)}%;background:rgba(59,130,246,0.25)"></div>
-    <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${targetWidth.toFixed(2)}%;background:rgba(16,185,129,0.25);border-radius:0 4px 4px 0"></div>
+    ${tp2 > 0 ? `<div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${targetWidth.toFixed(2)}%;background:rgba(16,185,129,0.25);border-radius:0 4px 4px 0"></div>` : ''}
 
     <div style="position:absolute;left:${slPct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:${slTrailedInProfit ? 'var(--green)' : 'var(--red)'};border-radius:1px;z-index:3"></div>
     <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:var(--text3);border-radius:1px;z-index:2"></div>
     <div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:var(--blue);border-radius:1px;z-index:2"></div>
-    <div style="position:absolute;left:${tp2Pct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:var(--green);border-radius:1px;z-index:2"></div>
+    ${tp2 > 0 ? `<div style="position:absolute;left:${tp2Pct.toFixed(2)}%;top:-3px;bottom:-3px;width:2px;background:var(--green);border-radius:1px;z-index:2"></div>` : ''}
 
     <div style="
       position:absolute; top:50%; left:${dotPct.toFixed(2)}%;
@@ -1290,7 +1417,7 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
     <span style="position:absolute;left:${slPct.toFixed(2)}%;transform:translateX(-50%);top:0;font-size:8px;color:${slTrailedInProfit ? 'var(--green)' : 'var(--red)'};white-space:nowrap;font-weight:700">${slTrailedInProfit ? 'SL🔒' : 'SL'}</span>
     <span style="position:absolute;left:${entryPct.toFixed(2)}%;transform:translateX(-50%);top:11px;font-size:8px;color:var(--text3);white-space:nowrap">Entry</span>
     <span style="position:absolute;left:${tp1Pct.toFixed(2)}%;transform:translateX(-50%);top:0;font-size:8px;color:${tp1Color};white-space:nowrap;font-weight:700">TP1${tp1Hit ? '✓' : ''}</span>
-    <span style="position:absolute;left:${tp2Pct.toFixed(2)}%;transform:translateX(-50%);top:11px;font-size:8px;color:var(--green);white-space:nowrap;font-weight:700">TP2</span>
+    ${tp2 > 0 ? `<span style="position:absolute;left:${tp2Pct.toFixed(2)}%;transform:translateX(-50%);top:11px;font-size:8px;color:var(--green);white-space:nowrap;font-weight:700">TP2</span>` : ''}
   </div>`;
 }
 
@@ -1367,6 +1494,26 @@ async function fetchSignals() {
       recent.innerHTML = allSignals.slice(0,5).map(s => renderSignalCard(s, true)).join('');
     }
   }
+
+  // Populate Signal Rejection Inspector
+  const rejBody = document.getElementById('rejectedSignalsBody');
+  if (rejBody) {
+    const rejSigs = allSignals.filter(s => s.isRejected);
+    if (!rejSigs.length) {
+      rejBody.innerHTML = '<div class="empty"><div class="emsg">No rejected signals recorded</div></div>';
+    } else {
+      rejBody.innerHTML = rejSigs.slice(0, 20).map(s => `
+        <div class="signal-card" style="border-left:3px solid var(--amber);background:var(--bg3);margin-bottom:6px;padding:8px">
+          <div class="sc-top" style="margin-bottom:2px">
+            <span class="sc-sym">${s.symbol} <span class="dir-tag sell">${s.signal}</span></span>
+            <span style="color:var(--text3);font-size:9px">${timeAgo(s.generated_at)}</span>
+          </div>
+          <div style="font-size:10px;color:var(--red);font-weight:600;">Blocked by: ${s.reject_reason || 'Confidence/Score threshold'}</div>
+        </div>
+      `).join('');
+    }
+  }
+
   renderSignals();
 }
 
@@ -1447,7 +1594,6 @@ function setHistResult(res, btn) {
 function applyCustomRange() { renderHistoryFiltered(); }
 
 function populateDynamicPicklists() {
-  // Populate Symbol dropdown dynamically
   const symSelect = document.getElementById('histSymbolPick');
   if (symSelect && ALL_COINS.length) {
     const current = symSelect.value;
@@ -1456,7 +1602,6 @@ function populateDynamicPicklists() {
     symSelect.value = current || 'all';
   }
 
-  // Populate Category dropdown dynamically
   const catSelect = document.getElementById('histCategoryPick');
   if (catSelect && Object.keys(COIN_TIERS_MAP).length) {
     const current = catSelect.value;
@@ -1603,7 +1748,6 @@ function renderHistoryFiltered() {
 async function fetchHistory() {
   const data = await apiFetch('/api/trades/history', []);
   allHistory = data;
-
   renderHistoryFiltered();
 
   const real  = data.filter(t => t.signal !== 'RECOVERED');
@@ -1659,7 +1803,6 @@ function renderCoinPerformance(realTrades) {
   }).join('');
 }
 
-// 🎯 Market Data & ATR (Dynamic Fetch for Active Universe)
 async function fetchMarketData() {
   try {
     let fg = await fetch('https://api.alternative.me/fng/?limit=1').then(r=>r.json()).catch(()=>null);
@@ -1794,7 +1937,6 @@ async function fetchModelHealth() {
   renderDynamicCalibrationChart(d.calibration);
 }
 
-// ── Straight Vertical Line Crosshair Plugin ────────────────────────
 const verticalLinePlugin = {
   id: 'verticalCrosshair',
   afterDraw: (chart) => {
@@ -1971,8 +2113,6 @@ async function triggerScan() {
   }
 }
 
-// ── DYNAMIC CONFIGURATION & TIERS SYNC (index.html) ──────────────────
-
 async function fetchConfig() {
   const d = await apiFetch('/api/config', null);
   if (!d || !d.ok) return;
@@ -1985,17 +2125,11 @@ async function fetchConfig() {
 
   const bind = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   
-  // Show BUY/SELL split like the Model tab does — a single "active_conf"
-  // number is misleading now that thresholds are EV-calibrated and
-  // direction-specific, not one shared static value.
   bind('cfg-act-conf', `BUY ≥${d.active_buy_conf ?? d.active_conf}% | SELL ≥${d.active_sell_conf ?? d.active_conf}%`);
   bind('cfg-act-score', `${d.active_score} / 6`);
   bind('cfg-act-adx', d.active_adx);
 
-  // NOTE: "Quiet Hours" confidence no longer reflects live behavior — see
-  // note in the accompanying review. Labeled explicitly as informational
-  // until the backend confirms what (if anything) still changes at night.
-  bind('cfg-q-conf', d.quiet_conf_is_live ? `BUY ≥${d.quiet_buy_conf}% | SELL ≥${d.quiet_sell_conf}%` : `${d.quiet_conf}% (reference only — verify against live execution)`);
+  bind('cfg-q-conf', d.quiet_conf_is_live ? `BUY ≥${d.quiet_buy_conf}% | SELL ≥${d.quiet_sell_conf}%` : `${d.quiet_conf}% (reference only)`);
   bind('cfg-q-score', `${d.quiet_score} / 6`);
   bind('cfg-q-adx', d.quiet_adx);
 
@@ -2005,9 +2139,9 @@ async function fetchConfig() {
   bind('cfg-stop-mult', `${d.atr_stop_mult}x ATR`);
   bind('cfg-tp1-mult',  `${d.atr_target1_mult}x ATR`);
   bind('cfg-tp2-mult',  `${d.atr_target2_mult}x ATR`);
-  bind('cfg-max-age',   `${d.max_trade_age_hours}h without TP1`);
+  bind('cfg-max-age',   `${d.max_trade_age_hours_pre_tp1}h without TP1`);
   bind('v-risk', `${d.risk_per_trade_pct}%`);
-  bind('v-maxage', `${d.max_trade_age_hours}h without TP1`);
+  bind('v-maxage', `${d.max_trade_age_hours_pre_tp1}h without TP1`);
   bind('cfgTiersHeader', `Active Monitored Asset Tiers (${ALL_COINS.length} Pairs Across ${Object.keys(COIN_TIERS_MAP).length} Tiers)`);
 
   const tierGrid = document.getElementById('cfgTiersDynamicGrid');
@@ -2042,21 +2176,21 @@ async function triggerKillSwitch() {
   finally { btn.textContent = '🚨 Kill Switch'; }
 }
 
+// ── PERSISTENT DOM COIN CHIPS: ONLY BUILT ONCE (ZERO FLICKERING) ──
 function buildCoinChips() {
   const el = document.getElementById('coinChips');
   if (!el || !ALL_COINS.length) return;
+  if (el.children.length === ALL_COINS.length) return;
   el.innerHTML = ALL_COINS.map(c =>
     `<span class="coin-chip" id="chip-${c}">${c.replace('USDT','')}</span>`
   ).join('');
 }
 
-// ── FLICKER-PROOF ATOMIC CHIP UPDATER ──────────────────────────────────
 function updateCoinChips() {
   if (!ALL_COINS.length) return;
   const today = new Date().toISOString().slice(0, 10);
   const openSyms = new Set(Object.keys(allTrades || {}));
   
-  // Highlight green only for pairs with an active signal today or an open trade
   const sigSyms = new Set(
     allSignals
       .filter(s => !s.isRejected && (s.generated_at || '').startsWith(today))
@@ -2067,19 +2201,34 @@ function updateCoinChips() {
     const el = document.getElementById('chip-' + c);
     if (el) {
       const isProbated = probatedCoinsSet.has(c);
-      const hasSignal = sigSyms.has(c) || openSyms.has(c);
-      const coinName = c.replace('USDT', '');
-      const targetText = isProbated ? `${coinName} 🔒` : coinName;
+      const isCooldown = cooldownCoinsSet.has(c);
+      const hasSignal  = sigSyms.has(c) || openSyms.has(c);
+      const coinName   = c.replace('USDT', '');
       
       let targetClass = 'coin-chip';
-      if (isProbated) targetClass += ' probated-chip';
-      else if (hasSignal) targetClass += ' has-signal';
+      let targetText = coinName;
 
-      // Atomic diffing prevents DOM re-renders if state is unchanged
+      if (isProbated) {
+        targetClass += ' probated-chip';
+        targetText += ' 🔒';
+      } else if (isCooldown) {
+        targetClass += ' cooldown-chip';
+        targetText += ' ⏳';
+      } else if (hasSignal) {
+        targetClass += ' has-signal';
+      }
+
       if (el.textContent !== targetText) el.textContent = targetText;
       if (el.className !== targetClass) el.className = targetClass;
     }
   });
+
+  const totalRestricted = probatedCoinsSet.size + cooldownCoinsSet.size;
+  const badge = document.getElementById('monitorAlertBadge');
+  if (badge) {
+    badge.textContent = totalRestricted;
+    badge.style.display = totalRestricted > 0 ? '' : 'none';
+  }
 }
 
 // SYSTEM MONITOR DIAGNOSTICS
@@ -2107,12 +2256,6 @@ function renderMonEvents() {
 
 async function runMonitorChecks() {
   const t0 = performance.now();
-  // NOTE: previously only /api/monitor was fetched here, which left ~12 rows
-  // (v-pos, v-margin, v-ghost, v-scan, v-fresh, v-sigs, v-circuit, v-gh, v-tg,
-  // v-sync, v-regime, v-atr) permanently unset — they exist in the HTML but
-  // nothing ever wrote to them. Pulling /api/status alongside /api/monitor
-  // covers most of these from fields the backend already returns elsewhere
-  // in this file (last_scan_completed_at, today_signals, open_trades, etc).
   const [d, status] = await Promise.all([
     apiFetch('/api/monitor', null),
     apiFetch('/api/status', null),
@@ -2127,8 +2270,6 @@ async function runMonitorChecks() {
   const ex = d.deribit, mk = d.market, integ = d.integrity || {};
   let ok = 0, total = 0;
   const mark = (dot, val, cond, text) => { total++; if (cond) ok++; sd(dot, cond?'ok':'err'); sv(val, text, cond?'var(--green)':'var(--red)'); };
-  // Softer variant for rows that are informational rather than pass/fail —
-  // avoids painting things like "Signals Today: 0" red just because 0 isn't truthy.
   const info = (dot, val, text, warn) => { sd(dot, warn?'warn':'idle'); sv(val, text, warn?'var(--amber)':'var(--text3)'); };
 
   mark('d-conn','v-conn', ex.ok, ex.ok ? 'Connected' : ex.msg);
@@ -2140,26 +2281,19 @@ async function runMonitorChecks() {
   mark('d-apims','v-apims', apiMs < 1500, apiMs+'ms');
   mark('d-sltp','v-sltp', integ.sltp_missing===0, integ.sltp_missing===0?'OK':integ.sltp_missing+' missing');
   mark('d-wr','v-wr', true, (integ.win_rate??'—')+'%');
-  sv('v-slots', integ.open_slots || '0 / 2');
+  sv('v-slots', integ.open_slots || '0 / 8');
 
-  // ── Two-tier stale trade counts ──
-  // Requires backend to add `stale_pre_tp1` / `stale_post_tp1` counts to the
-  // /api/monitor `integrity` object (mirror the logic check_stale_trades()
-  // already uses). Falls back to '—' gracefully until that field exists —
-  // this will NOT silently show a wrong number, just an honest placeholder.
   if (integ.stale_pre_tp1 !== undefined) {
     mark('d-stale-pre','v-stale-pre', integ.stale_pre_tp1===0, integ.stale_pre_tp1===0?'0':integ.stale_pre_tp1+' stalled');
   } else {
-    info('d-stale-pre','v-stale-pre','— (backend field pending)');
+    info('d-stale-pre','v-stale-pre','—');
   }
   if (integ.stale_post_tp1 !== undefined) {
     info('d-stale-post','v-stale-post', integ.stale_post_tp1+' running', integ.stale_post_tp1>0);
   } else {
-    info('d-stale-post','v-stale-post','— (backend field pending)');
+    info('d-stale-post','v-stale-post','—');
   }
 
-  // ── Fields sourced from /api/status (already fetched elsewhere in this
-  // file for the header/summary cards — reused here rather than re-fetched) ──
   if (status && status.ok) {
     info('d-pos','v-pos', `${status.open_trades ?? '—'} / ${status.max_trades ?? '—'}`);
     info('d-sigs','v-sigs', `${status.today_signals ?? '—'} (${status.today_buys ?? 0} BUY / ${status.today_sells ?? 0} SELL)`);
@@ -2176,22 +2310,7 @@ async function runMonitorChecks() {
     }
 
     if (status.model_accuracy) mark('d-model','v-model-health-acc', true, status.model_accuracy);
-  } else {
-    info('d-pos','v-pos','—'); info('d-sigs','v-sigs','—'); info('d-scan','v-scan','—'); info('d-fresh','v-fresh','—');
   }
-
-  // ── Fields with NO current backend source — deliberately left as
-  // explicit "not wired" rather than fake-passing, so this doesn't quietly
-  // regress into "always green" placeholder rows the way the old blank
-  // dashes did. See accompanying review for the exact backend fields needed
-  // (integrity.ghost_trades_count, integrity.circuit_breaker_active,
-  // env booleans for GH_TOKEN/TELEGRAM_TOKEN, integrity.github_sync_ok,
-  // market.regime_label, market.btc_atr_pct).
-  ['v-margin','v-ghost','v-circuit','v-gh','v-tg','v-sync','v-regime','v-atr'].forEach(id => {
-    if (document.getElementById(id) && document.getElementById(id).textContent === '—') {
-      sv(id, 'Not wired', 'var(--text3)');
-    }
-  });
 
   const pct2 = total ? Math.round(ok/total*100) : 100;
   const state = pct2>=90?'ok':pct2>=60?'warn':'err', color = state==='ok'?'var(--green)':state==='warn'?'var(--amber)':'var(--red)';
@@ -2370,6 +2489,7 @@ async function refreshAll() {
     fetchMarketData(),
     fetchLog(),
     fetchProbationData(),
+    fetchCooldownData()
   ]);
   updateCoinChips();
 }
