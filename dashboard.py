@@ -1,4 +1,4 @@
-# dashboard.py — V5.13: GitHub-First Priority & Real-Cost PnL Recovery.
+# dashboard.py — V5.14: Bracket Healer, Cooldown Management & Report Sync
 
 import os
 import json
@@ -44,6 +44,7 @@ GH_REPO            = os.getenv("GITHUB_REPO",   "MrZkull/Crypto_AI_bot")
 GH_BRANCH          = os.getenv("GITHUB_BRANCH", "main")
 EMAIL_TRACKER_FILE = "email_tracker.json"
 RELIABILITY_FILE   = "reliability.json"
+COOLDOWN_FILE      = "cooldown.json"
 PERFORMANCE_FILE   = "model_performance.json"
 MODEL_FILE         = "pro_crypto_ai_model.pkl"
 SCAN_STATUS_FILE   = "scan_status.json"
@@ -67,10 +68,6 @@ def _store_report(pdf_bytes: bytes) -> str:
     rid = uuid.uuid4().hex
     REPORT_STORE[rid] = {"data": pdf_bytes, "created": time.time()}
     return rid
-
-orig_getaddrinfo = socket.getaddrinfo
-def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
 def get_live_config():
     try:
@@ -169,7 +166,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     meta_text = f"<b>Scope:</b> {scope} | <b>Generated:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
     elements.append(Paragraph(meta_text, ParagraphStyle('Meta', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor('#475569'), spaceAfter=8)))
 
-    # EXCLUDE UNVERIFIED TRADES FROM PDF SUMMARY TOTALS
     verified_trades = [t for t in trades if not t.get("pnl_unverified", False)]
     
     pnl_val = sum(float(t.get('pnl') or 0) for t in verified_trades)
@@ -418,7 +414,6 @@ def api_status():
     perf_data = get(PERFORMANCE_FILE, {})
     scan_status = get("scan_status.json", {})
 
-    # EXCLUDE RECOVERED & UNVERIFIED ROWS FROM STATUS METRICS
     real = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
     wins = [h for h in real if (float(h.get("pnl") or 0)) > 0]
     tpnl = sum(float(h.get("pnl", 0) or 0) for h in real)
@@ -528,13 +523,14 @@ def api_open_trades():
                 tp1  = float(t.get("tp1", 0) or 0)
                 tp2  = float(t.get("tp2", 0) or 0)
 
+                # Query Deribit open orders if bracket values are unrecorded
                 if stop <= 0 or tp1 <= 0:
                     try:
                         open_orders = client.get_open_orders(symbol)
                         tp_prices = []
                         for o in open_orders:
                             otype = o.get("order_type", "") or o.get("type", "")
-                            trig  = float(o.get("trigger_price", 0) or 0)
+                            trig  = float(o.get("trigger_price", 0) or o.get("stop_price", 0) or 0)
                             price = float(o.get("price", 0) or 0)
 
                             if "stop" in otype or trig > 0:
@@ -568,6 +564,112 @@ def api_open_trades():
         except Exception as e:
             log.error(f"api_open_trades error: {e}")
     return jsonify([])
+
+
+# ── INTERACTIVE SL/TP ATTACHER & REPAIR ENDPOINT ──────────────────────
+@app.route("/api/trades/heal", methods=["POST", "OPTIONS"])
+def api_trades_heal():
+    """Attaches missing protective stop-loss and take-profit brackets directly
+    to open exchange positions that are currently running unprotected."""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    data = request.get_json(silent=True) or {}
+    symbol = str(data.get("symbol", "")).strip().upper()
+    if not symbol:
+        return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
+    client = deribit_client()
+    if not client:
+        return jsonify({"ok": False, "error": "Deribit client unavailable"}), 500
+
+    real_pos = client.get_position_size(symbol)
+    if abs(real_pos) <= 0.0001:
+        return jsonify({"ok": False, "error": f"No open exchange position found for {symbol} to attach brackets to."}), 404
+
+    cfg = get_live_config()
+    live_p = client.get_live_price(symbol)
+    if live_p <= 0:
+        return jsonify({"ok": False, "error": f"Could not determine live price for {symbol}."}), 502
+
+    # Fetch live ATR or fallback to 1.5% volatility estimation
+    fresh_atr = live_p * 0.015
+    try:
+        r = requests.get(f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit=20", timeout=4)
+        if r.ok:
+            kd = [{"h": float(d[2]), "l": float(d[3]), "c": float(d[4])} for d in r.json()]
+            trs = [kd[i]["h"] - kd[i]["l"] if i == 0 else max(kd[i]["h"] - kd[i]["l"], abs(kd[i]["h"] - kd[i-1]["c"]), abs(kd[i]["l"] - kd[i-1]["c"])) for i in range(len(kd))]
+            fresh_atr = sum(trs[-14:]) / 14
+    except Exception: pass
+
+    is_long = real_pos > 0
+    sl_side = "SELL" if is_long else "BUY"
+    tp_side = "SELL" if is_long else "BUY"
+    total_q = client.round_amount(symbol, abs(real_pos))
+
+    stop_p = client.round_price(symbol, live_p - fresh_atr * cfg["atr_stop_mult"] if is_long else live_p + fresh_atr * cfg["atr_stop_mult"])
+    tp1_p  = client.round_price(symbol, live_p + fresh_atr * cfg["atr_target1_mult"] if is_long else live_p - fresh_atr * cfg["atr_target1_mult"])
+
+    tick = client.get_tick_size(symbol)
+    sl_limit = client.round_price(symbol, stop_p - (tick * 3) if is_long else stop_p + (tick * 3))
+
+    order_ids = {}
+    try:
+        # Place Stop-Loss order
+        sl_res = client.place_limit_order(symbol, sl_side, total_q, sl_limit, stop_price=stop_p, use_reduce_only=True)
+        sl_o = sl_res.get("order", sl_res)
+        order_ids["stop_loss"] = str(sl_o.get("order_id", ""))
+
+        # Place Take-Profit order
+        tp_res = client.place_limit_order(symbol, tp_side, total_q, tp1_p, use_reduce_only=False)
+        tp_o = tp_res.get("order", tp_res)
+        order_ids["tp1"] = str(tp_o.get("order_id", ""))
+    except Exception as e:
+        log.error(f"  🚨 Failed to place repair bracket orders on Deribit: {e}")
+        return jsonify({"ok": False, "error": f"Exchange order placement failed: {e}"}), 502
+
+    trades = get("trades.json", {})
+    trades[symbol] = {
+        "symbol": symbol,
+        "signal": "BUY" if is_long else "SELL",
+        "entry": live_p,
+        "stop": stop_p,
+        "tp1": tp1_p,
+        "tp2": 0,
+        "qty": total_q,
+        "qty_tp1": total_q,
+        "qty_tp2": 0,
+        "order_ids": order_ids,
+        "opened_at": datetime.now(timezone.utc).isoformat(),
+        "tp1_hit": False,
+        "tp2_hit": False,
+        "closed": False,
+        "confidence": 50.0,
+        "score": 5,
+        "reasons": ["Healed Bracket Attachment via Dashboard"],
+        "tier": "Repaired",
+        "exchange": "deribit_testnet"
+    }
+
+    for p in [Path("trades.json"), Path("data/trades.json")]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(trades, indent=2))
+        except Exception: pass
+
+    _cache["trades.json"] = trades
+    _cache_ts["trades.json"] = time.time()
+    gh_push("trades.json", trades)
+    bust("trades.json")
+
+    log.info(f"  🛡️ [HEAL] Successfully attached SL ({stop_p}) and TP1 ({tp1_p}) to {symbol}")
+    return jsonify({
+        "ok": True, 
+        "symbol": symbol, 
+        "message": f"Attached SL @ ${stop_p} and TP1 @ ${tp1_p} on Deribit.",
+        "stop": stop_p, 
+        "tp1": tp1_p
+    })
 
 
 @app.route("/api/trades/history")
@@ -642,10 +744,97 @@ def api_probation():
                 "time_left_hrs": round(time_left_sec / 3600, 1),
                 "required_buy_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
                 "required_sell_conf": round(model_meta["rec_sell_conf"] + 10.0, 1),
-                "required_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
+                "required_conf": round(max(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"]) + 10.0, 1),
                 "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
             })
     return jsonify({"ok": True, "probated_coins": probated_coins})
+
+
+@app.route("/api/probation/release", methods=["POST", "OPTIONS"])
+def api_probation_release():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    data = request.get_json(silent=True) or {}
+    symbol = str(data.get("symbol", "")).strip().upper()
+    if not symbol:
+        return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
+    rel = get(RELIABILITY_FILE, {})
+    if not isinstance(rel, dict): rel = {}
+
+    if symbol not in rel or not rel[symbol].get("is_benched", False):
+        return jsonify({"ok": False, "error": f"{symbol} is not currently on probation."}), 404
+
+    rel[symbol]["is_benched"] = False
+    rel[symbol]["benched_at"] = 0
+    rel[symbol]["probation_wins"] = 0
+    rel[symbol]["probation_consecutive_losses"] = 0
+    rel[symbol]["normal_consecutive_losses"] = 0
+    rel[symbol]["manually_released_at"] = datetime.now(timezone.utc).isoformat()
+
+    for p in [Path(RELIABILITY_FILE), Path("data") / RELIABILITY_FILE]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(rel, indent=2))
+        except Exception: pass
+    _cache[RELIABILITY_FILE] = rel
+    _cache_ts[RELIABILITY_FILE] = time.time()
+    push_ok = gh_push(RELIABILITY_FILE, rel)
+
+    log.info(f"  🔓 [MANUAL] {symbol} released from probation via dashboard")
+    return jsonify({"ok": True, "symbol": symbol, "status": "released", "synced": push_ok})
+
+
+@app.route("/api/cooldown")
+def api_cooldown():
+    cd = get(COOLDOWN_FILE, {})
+    if not isinstance(cd, dict): cd = {}
+    now_ts = time.time()
+    active = []
+    for symbol, entry in cd.items():
+        if not isinstance(entry, dict): continue
+        blocked_until = float(entry.get("blocked_until", 0) or 0)
+        remaining_sec = blocked_until - now_ts
+        if remaining_sec > 0:
+            active.append({
+                "symbol": symbol,
+                "reason": entry.get("reason", "—"),
+                "blocked_at": entry.get("blocked_at", "—"),
+                "time_left_hrs": round(remaining_sec / 3600, 2),
+            })
+    active.sort(key=lambda x: x["time_left_hrs"])
+    return jsonify({"ok": True, "cooldowns": active})
+
+
+@app.route("/api/cooldown/release", methods=["POST", "OPTIONS"])
+def api_cooldown_release():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    data = request.get_json(silent=True) or {}
+    symbol = str(data.get("symbol", "")).strip().upper()
+    if not symbol:
+        return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
+    cd = get(COOLDOWN_FILE, {})
+    if not isinstance(cd, dict): cd = {}
+
+    if symbol not in cd:
+        return jsonify({"ok": False, "error": f"{symbol} has no active cooldown."}), 404
+
+    cd.pop(symbol, None)
+    for p in [Path(COOLDOWN_FILE), Path("data") / COOLDOWN_FILE]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(cd, indent=2))
+        except Exception: pass
+    _cache[COOLDOWN_FILE] = cd
+    _cache_ts[COOLDOWN_FILE] = time.time()
+    push_ok = gh_push(COOLDOWN_FILE, cd)
+
+    log.info(f"  🔓 [MANUAL] {symbol} cooldown cleared via dashboard")
+    return jsonify({"ok": True, "symbol": symbol, "status": "released", "synced": push_ok})
 
 
 @app.route("/api/market")
@@ -733,7 +922,6 @@ def api_monitor():
     today = now_utc.strftime("%Y-%m-%d")
     history = get("trade_history.json", [])
     
-    # EXCLUDE UNVERIFIED & RECOVERED ROWS FROM MONITOR WIN RATE
     real = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
     wins = [h for h in real if (float(h.get("pnl") or 0)) > 0]
 
@@ -955,6 +1143,142 @@ def api_kill_switch():
         bust("trades.json"); bust("trade_history.json"); bust("balance.json")
         return jsonify({"ok": True, "status": "FLATTENED" if push_ok else "FLATTENED_PARTIAL_SYNC", "cancelled_orders": cancelled_count, "flattened_positions": flattened_count})
     except Exception as e: log.error(f"Kill switch error: {e}"); return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def _extract_report_trades(payload: dict) -> list:
+    trades = payload.get("trades")
+    if not isinstance(trades, list):
+        trades = []
+    return trades
+
+
+def _send_email_with_pdf(recipient: str, subject: str, body_text: str, pdf_bytes: bytes, filename: str) -> tuple:
+    api_key = os.getenv("RESEND_API_KEY", "")
+    from_email = os.getenv("REPORT_FROM_EMAIL", "")
+
+    if not api_key or not from_email:
+        return False, ("Email sending is not configured. Set RESEND_API_KEY and REPORT_FROM_EMAIL "
+                        "environment variables to enable this feature.")
+
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "from": from_email,
+                "to": [recipient],
+                "subject": subject,
+                "text": body_text,
+                "attachments": [{
+                    "filename": filename,
+                    "content": base64.b64encode(pdf_bytes).decode("utf-8"),
+                }],
+            },
+            timeout=15,
+        )
+        if resp.status_code in (200, 201, 202):
+            return True, None
+        return False, f"Email provider returned HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        return False, f"Email send failed: {e}"
+
+
+@app.route("/api/download_report_pdf", methods=["POST", "OPTIONS"])
+def api_download_report_pdf():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    if not HAS_REPORTLAB:
+        return jsonify({"ok": False, "error": "PDF generation unavailable — reportlab is not installed on the server."}), 500
+
+    payload = request.get_json(silent=True) or {}
+    scope = payload.get("scope", "All Time")
+    summary = payload.get("summary", {}) or {}
+    trades = _extract_report_trades(payload)
+
+    try:
+        pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+    except Exception as e:
+        log.error(f"  🚨 PDF generation failed: {e}")
+        return jsonify({"ok": False, "error": f"PDF generation failed: {e}"}), 500
+
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf",
+    )
+
+
+@app.route("/api/send_report", methods=["POST", "OPTIONS"])
+def api_send_report():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    if not HAS_REPORTLAB:
+        return jsonify({"ok": False, "error": "PDF generation unavailable — reportlab is not installed on the server."}), 500
+
+    payload = request.get_json(silent=True) or {}
+    recipient = str(payload.get("email", "")).strip()
+    scope = payload.get("scope", "All Time")
+    summary = payload.get("summary", {}) or {}
+    trades = _extract_report_trades(payload)
+
+    if not recipient or not re.match(EMAIL_REGEX, recipient):
+        return jsonify({"ok": False, "error": "A valid recipient email is required."}), 400
+
+    try:
+        pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+    except Exception as e:
+        log.error(f"  🚨 PDF generation failed for send_report: {e}")
+        return jsonify({"ok": False, "error": f"PDF generation failed: {e}"}), 500
+
+    net_pnl = summary.get("net_pnl")
+    if net_pnl is None:
+        net_pnl = round(sum(float(t.get("pnl", 0) or 0) for t in trades if not t.get("pnl_unverified", False)), 2)
+    filename = f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+
+    sent_ok, send_error = _send_email_with_pdf(
+        recipient=recipient,
+        subject=f"CryptoBot AI — Performance Report ({scope})",
+        body_text=f"Attached is your requested performance report.\n\nScope: {scope}\nTotal trades: {len(trades)}\nNet PnL: {net_pnl}",
+        pdf_bytes=pdf_bytes,
+        filename=filename,
+    )
+
+    tracker = get(EMAIL_TRACKER_FILE, [])
+    if not isinstance(tracker, list): tracker = []
+    tracker.append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "recipient": recipient,
+        "scope": scope,
+        "total_trades": len(trades),
+        "net_pnl": net_pnl,
+        "status": "SENT" if sent_ok else f"FAILED: {send_error}",
+    })
+    for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(tracker, indent=2))
+        except Exception: pass
+    _cache[EMAIL_TRACKER_FILE] = tracker
+    _cache_ts[EMAIL_TRACKER_FILE] = time.time()
+    gh_push(EMAIL_TRACKER_FILE, tracker)
+
+    if not sent_ok:
+        return jsonify({"ok": False, "error": send_error}), 502
+
+    return jsonify({
+        "ok": True,
+        "recipient": recipient,
+        "total_trades": len(trades),
+        "net_pnl": net_pnl,
+    }), 200
+
+
+@app.route("/api/email_tracker", methods=["GET"])
+def api_email_tracker():
+    tracker = get(EMAIL_TRACKER_FILE, [])
+    if not isinstance(tracker, list): tracker = []
+    return jsonify(list(reversed(tracker[-100:])))
 
 
 @app.route("/api/close_trade", methods=["POST", "OPTIONS"])
