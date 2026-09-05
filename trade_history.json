@@ -11697,5 +11697,62 @@
     "pnl": -13.9151,
     "closed_at": "2026-09-05T12:33:03.198751+00:00",
     "close_reason": "SL hit"
+  },
+  {
+    "symbol": "ETHUSDT",
+    "signal": "BUY",
+    "entry": 2456.19,
+    "stop": 2451.54,
+    "tp1": 2462.7,
+    "tp2": 2470.13,
+    "qty": 1.0707,
+    "qty_tp1": 1.0707,
+    "qty_tp2": 1.0707,
+    "risk_usd": 9.96,
+    "budget_risk_usd": 5365.03,
+    "balance_at_open": 105196.72,
+    "risk_mult": 1.7,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049225349548059",
+      "stop_loss": "USDC-SLMS-43577",
+      "tp1": "USDC-210049225349553732",
+      "tp2": "USDC-210049225349554100"
+    },
+    "opened_at": "2026-09-05T12:33:14.774926+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 43.8,
+    "score": 5,
+    "reasons": [
+      "Valid conf (44%)",
+      "ADX 19",
+      "RSI not overbought (50)",
+      "4h trend aligns (RSI 50)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc51 Majors",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "ETHUSDT_1788611592350",
+    "snapshot": {
+      "entry_atr": 1.8586670665454021,
+      "rsi_15m": 50.31450948969054,
+      "adx_15m": 19.03252374697608,
+      "rsi_4h": 49.54053913487185,
+      "ema_4h_bullish": true,
+      "fng_value": 73,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.6179506975715946,
+      "btc_beta_20": 0.8326194290011603
+    },
+    "stop_mult_used": 2.5,
+    "close_price": 2462.7,
+    "pnl": 6.9703,
+    "closed_at": "2026-09-05T13:00:27.299212+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
   }
 ]
