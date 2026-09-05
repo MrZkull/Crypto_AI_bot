@@ -1,1 +1,40 @@
-{}
+{
+  "ETHUSDT": {
+    "symbol": "ETHUSDT",
+    "signal": "BUY",
+    "entry": 2463.6,
+    "stop": 2456.83,
+    "tp1": 2473.08,
+    "tp2": 2483.9,
+    "qty": 2.1212,
+    "qty_tp1": 1.0606,
+    "qty_tp2": 1.0606,
+    "risk_usd": 14.36,
+    "budget_risk_usd": 6385.69,
+    "balance_at_open": 104341.38,
+    "risk_mult": 2.04,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049225305333938",
+      "stop_loss": "USDC-SLMS-43564",
+      "tp1": "USDC-210049225305340046",
+      "tp2": "USDC-210049225305340601"
+    },
+    "opened_at": "2026-09-05T09:28:04.338502+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 45.0,
+    "score": 5,
+    "reasons": [
+      "Valid conf (45%)",
+      "Strong ADX 27",
+      "RSI not overbought (59)",
+      "4h trend aligns (RSI 50)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc51 Majors",
+    "fg_override": false,
+    "exchange": "deribit_testnet"
+  }
+}
