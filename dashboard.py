@@ -1063,6 +1063,139 @@ def api_analytics():
         "avg_win": round(avg_win, 4), "avg_loss": round(avg_loss, 4), "equity_curve": equity_points, "daily_pnl": daily_points
     })
 
+PREDICTIONS_FILE_D  = "predictions.json"
+DOSSIER_FILE_D      = "coin_dossier.json"
+PROPOSALS_FILE_D    = "adaptation_proposals.json"
+OVERRIDES_FILE_D    = "adaptation_overrides.json"
+
+
+@app.route("/api/predictions")
+def api_predictions():
+    """Summary view of the prediction ledger — recent records + rollup stats."""
+    preds = get(PREDICTIONS_FILE_D, [])
+    if not isinstance(preds, list): preds = []
+
+    audited = [p for p in preds if p.get("audited")]
+    unaudited = [p for p in preds if not p.get("audited")]
+    correct = [p for p in audited if p.get("correct") is True]
+    scored = [p for p in audited if p.get("correct") is not None]
+
+    disagreements = [p.get("ensemble_disagreement") for p in preds if p.get("ensemble_disagreement") is not None]
+    avg_disagreement = round(sum(disagreements) / len(disagreements), 4) if disagreements else None
+
+    return jsonify({
+        "ok": True,
+        "total_predictions": len(preds),
+        "unaudited_count": len(unaudited),
+        "audited_count": len(audited),
+        "overall_hit_rate": round(len(correct) / len(scored) * 100, 1) if scored else None,
+        "avg_ensemble_disagreement": avg_disagreement,
+        "recent": list(reversed(preds[-100:])),
+    })
+
+
+@app.route("/api/dossier")
+def api_dossier():
+    """Per-coin calibration + failure-tag rollup from coin_dossier.json."""
+    dossier = get(DOSSIER_FILE_D, {})
+    if not isinstance(dossier, dict): dossier = {}
+
+    rows = []
+    for symbol, d in dossier.items():
+        total = d.get("total_audited", 0)
+        correct = d.get("total_correct", 0)
+        dc_sum, dc_n = d.get("disagreement_correct_sum", 0.0), d.get("disagreement_correct_n", 0)
+        di_sum, di_n = d.get("disagreement_incorrect_sum", 0.0), d.get("disagreement_incorrect_n", 0)
+        rows.append({
+            "symbol": symbol,
+            "total_audited": total,
+            "hit_rate": round(correct / total * 100, 1) if total else None,
+            "avg_disagreement_when_correct": round(dc_sum / dc_n, 4) if dc_n else None,
+            "avg_disagreement_when_incorrect": round(di_sum / di_n, 4) if di_n else None,
+            "by_confidence_bucket": d.get("by_confidence_bucket", {}),
+            "tags": d.get("tags", {}),
+        })
+    rows.sort(key=lambda r: r["total_audited"], reverse=True)
+    return jsonify({"ok": True, "coins": rows})
+
+
+@app.route("/api/adaptation_proposals")
+def api_adaptation_proposals():
+    proposals = get(PROPOSALS_FILE_D, [])
+    if not isinstance(proposals, list): proposals = []
+    status_filter = request.args.get("status")
+    if status_filter:
+        proposals = [p for p in proposals if p.get("status") == status_filter]
+    return jsonify({"ok": True, "proposals": list(reversed(proposals))})
+
+
+def _write_and_push(filename, data):
+    for p in [Path(filename), Path("data") / filename]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass
+    _cache[filename] = data
+    _cache_ts[filename] = time.time()
+    return gh_push(filename, data)
+
+
+@app.route("/api/adaptation_proposals/<proposal_id>/approve", methods=["POST", "OPTIONS"])
+def api_approve_proposal(proposal_id):
+    """Approving writes a live override into adaptation_overrides.json, which
+    trade_executor.py consults at execution time. This is the ONLY path by
+    which a proposal ever affects live risk parameters — never automatic."""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    proposals = get(PROPOSALS_FILE_D, [])
+    if not isinstance(proposals, list): proposals = []
+    target = next((p for p in proposals if p.get("id") == proposal_id), None)
+    if not target:
+        return jsonify({"ok": False, "error": "Proposal not found"}), 404
+    if target.get("status") != "pending":
+        return jsonify({"ok": False, "error": f"Proposal already {target.get('status')}"}), 400
+
+    target["status"] = "approved"
+    target["approved_at"] = datetime.now(timezone.utc).isoformat()
+
+    overrides = get(OVERRIDES_FILE_D, {})
+    if not isinstance(overrides, dict): overrides = {}
+    symbol = target["symbol"]
+    overrides.setdefault(symbol, {})
+    overrides[symbol][target["param"]] = {
+        "reason_tag": target["tag"],
+        "applied_at": target["approved_at"],
+        "occurrences_at_approval": target.get("occurrences"),
+    }
+    # Concrete numeric application per param type
+    if target["param"] == "atr_stop_mult_override":
+        overrides[symbol]["atr_stop_mult_override"]["multiplier"] = 1.15  # widen 15%, matches proposal text
+    elif target["param"] == "probation_offset_override":
+        overrides[symbol]["probation_offset_override"]["extra_conf_pct"] = 5.0
+
+    push_p = _write_and_push(PROPOSALS_FILE_D, proposals)
+    push_o = _write_and_push(OVERRIDES_FILE_D, overrides)
+    log.info(f"  ✅ [ADAPTATION] Approved {target['tag']} override for {symbol} via dashboard")
+    return jsonify({"ok": True, "proposal": target, "synced": bool(push_p and push_o)})
+
+
+@app.route("/api/adaptation_proposals/<proposal_id>/reject", methods=["POST", "OPTIONS"])
+def api_reject_proposal(proposal_id):
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    proposals = get(PROPOSALS_FILE_D, [])
+    if not isinstance(proposals, list): proposals = []
+    target = next((p for p in proposals if p.get("id") == proposal_id), None)
+    if not target:
+        return jsonify({"ok": False, "error": "Proposal not found"}), 404
+
+    target["status"] = "rejected"
+    target["rejected_at"] = datetime.now(timezone.utc).isoformat()
+    push_ok = _write_and_push(PROPOSALS_FILE_D, proposals)
+    return jsonify({"ok": True, "proposal": target, "synced": push_ok})
 
 @app.route("/api/scan", methods=["POST", "OPTIONS"])
 def api_scan():
