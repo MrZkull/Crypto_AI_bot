@@ -1,4 +1,5 @@
-# trade_executor.py — V4.0: Master Build - Native EV Authority & Post-Fill Guard
+# trade_executor.py — V4.1: Native EV Authority, Post-Fill Guard,
+# Prediction Ledger, Ensemble Disagreement, and Adaptation Overrides
 
 import os, json, time, logging, requests, joblib, base64, math
 import pandas as pd, numpy as np
@@ -52,6 +53,16 @@ ROLLING_WINDOW_TRADES            = 6
 ROLLING_MIN_WIN_RATE             = 0.40   
 ROLLING_MAX_NET_LOSS             = 0.0    
 
+# ── NEW: Prediction Ledger + Ensemble Disagreement ─────────────────────
+PREDICTIONS_FILE       = "predictions.json"
+OVERRIDES_FILE         = "adaptation_overrides.json"
+MAX_PREDICTIONS_KEPT   = 10000
+
+# PLACEHOLDER — not yet validated. Once prediction_auditor.py has a few
+# hundred audited records, replace this with whatever threshold actually
+# separates correct/incorrect calls in the bucketed dossier analysis.
+HIGH_DISAGREEMENT_THRESHOLD = 0.15
+
 GH_TOKEN  = os.getenv("GH_PAT_TOKEN", "")
 GH_REPO   = os.getenv("GITHUB_REPO", "MrZkull/Crypto_AI_bot")
 GH_BRANCH = os.getenv("GITHUB_BRANCH", "main")
@@ -95,6 +106,101 @@ def save_signal(sig):
 
 def load_cooldown() -> dict: return load_json(COOLDOWN_FILE, {})
 def save_cooldown(d: dict): save_json(COOLDOWN_FILE, d)
+
+
+# ── NEW: Adaptation overrides (approved via dashboard, never auto-applied) ──
+def get_symbol_overrides(symbol: str) -> dict:
+    overrides = load_json(OVERRIDES_FILE, {})
+    return overrides.get(symbol, {}) if isinstance(overrides, dict) else {}
+
+
+# ── NEW: Ensemble disagreement — variance across base estimators' probas ──
+def compute_ensemble_disagreement(pipeline, x_selected_row: np.ndarray) -> dict:
+    """Measures decision-boundary ambiguity: do XGB/RF/GB actually agree,
+    independent of whether the input itself is novel. Cheap, no retrain needed."""
+    calibrated = pipeline["ensemble"]
+    try:
+        base_voting = calibrated.calibrated_classifiers_[0].estimator.estimator
+        named = base_voting.named_estimators_
+        if not named:
+            raise ValueError("named_estimators_ is empty — unexpected VotingClassifier state")
+        probas = np.array([est.predict_proba(x_selected_row.reshape(1, -1))[0]
+                            for _, est in named.items()])
+        disagreement = float(np.mean(np.std(probas, axis=0)))
+        return {"ensemble_disagreement": round(disagreement, 4),
+                "high_disagreement": disagreement > HIGH_DISAGREEMENT_THRESHOLD}
+    except Exception as e:
+        if not getattr(compute_ensemble_disagreement, "_warned", False):
+            log.warning(f"⚠️ ensemble disagreement unwrap failed — will be null for ALL predictions this run: {e}")
+            compute_ensemble_disagreement._warned = True
+        return {"ensemble_disagreement": None, "high_disagreement": False}
+
+
+# ── NEW: Prediction ledger — logs every model opinion, executed or not ──
+def _pred_record(symbol, sig, conf, pipeline, row, disagreement, reject_reason=None, pred_id=None):
+    entry = float(row.get("close", 0) or 0)
+    atr   = float(row.get("atr", 0) or 0)
+    stop  = (entry - atr*ATR_STOP_MULT) if sig == "BUY" else (entry + atr*ATR_STOP_MULT) if sig == "SELL" else None
+    tp1   = (entry + atr*ATR_TARGET1_MULT) if sig == "BUY" else (entry - atr*ATR_TARGET1_MULT) if sig == "SELL" else None
+    return {
+        "pred_id":               pred_id or f"{symbol}_{int(time.time()*1000)}",
+        "symbol":                symbol,
+        "predicted_signal":      sig,
+        "confidence":            conf,
+        "entry_ref":             entry,
+        "atr_ref":               atr,
+        "predicted_stop":        round(stop, 6) if stop else None,
+        "predicted_tp1":         round(tp1, 6) if tp1 else None,
+        "rsi_15m":               float(row.get("rsi", 50)),
+        "adx_15m":               float(row.get("adx", 0)),
+        "ensemble_disagreement": disagreement.get("ensemble_disagreement"),
+        "high_disagreement":     disagreement.get("high_disagreement"),
+        "ood_distance":          None,       # populated once Mahalanobis/LedoitWolf gate ships post-retrain
+        "ood_tier":              "PENDING",
+        "model_version":         pipeline.get("trained_at"),
+        "was_executed":          False,
+        "reject_reason":         reject_reason,
+        "lookahead_bars":        24,          # must match make_targets() exactly
+        "generated_at":          datetime.now(timezone.utc).isoformat(),
+        "audited":               False,
+    }
+
+
+def save_prediction(rec: dict):
+    preds = load_json(PREDICTIONS_FILE, [])
+    preds.append(rec)
+    if len(preds) > MAX_PREDICTIONS_KEPT:
+        unaudited = [p for p in preds if not p.get("audited")]
+        audited   = [p for p in preds if p.get("audited")]
+        room = max(0, MAX_PREDICTIONS_KEPT - len(unaudited))
+        preds = audited[-room:] + unaudited if room else unaudited
+    save_json(PREDICTIONS_FILE, preds)
+
+
+def mark_prediction_executed(pred_id: str):
+    preds = load_json(PREDICTIONS_FILE, [])
+    for p in preds:
+        if p.get("pred_id") == pred_id:
+            p["was_executed"] = True
+            break
+    save_json(PREDICTIONS_FILE, preds)
+
+
+# ── NEW: Trade snapshot — market physics at signal-generation time ──────
+def build_trade_snapshot(row, r4h, e20_4h, e50_4h, rsi_4h, fng_data, whale_flow, btc_momentum):
+    return {
+        "entry_atr":      float(row.get("atr", 0)),
+        "rsi_15m":        float(row.get("rsi", 50)),
+        "adx_15m":        float(row.get("adx", 0)),
+        "rsi_4h":         rsi_4h,
+        "ema_4h_bullish": bool(e20_4h > e50_4h),
+        "fng_value":      fng_data.get("value") if fng_data else None,
+        "whale_bias":     whale_flow.get("bias") if whale_flow else None,
+        "btc_bias":       btc_momentum.get("bias") if btc_momentum else None,
+        "btc_corr_20":    float(row.get("btc_corr_20", 0)),
+        "btc_beta_20":    float(row.get("btc_beta_20", 1.0)),
+    }
+
 
 def gh_fetch(filename: str):
     if not GH_TOKEN or not GH_REPO:
@@ -210,10 +316,15 @@ def _check_rolling_performance(symbol: str) -> bool:
         return True
     return False
 
+
+# ── MODIFIED: now applies approved adaptation override on every return path ──
 def get_required_confidence(symbol: str, current_baseline_conf: float = 35.0) -> float:
+    sym_overrides = get_symbol_overrides(symbol)
+    extra = float(sym_overrides.get("probation_offset_override", {}).get("extra_conf_pct", 0.0))
+
     rel = load_reliability()
     if symbol not in rel:
-        return current_baseline_conf
+        return current_baseline_conf + extra
 
     data = rel[symbol]
     now = time.time()
@@ -232,21 +343,23 @@ def get_required_confidence(symbol: str, current_baseline_conf: float = 35.0) ->
                 data["probation_consecutive_losses"] = 0
                 save_reliability(rel)
                 log.info(f"  ⏱️ {symbol}: 7 days elapsed with {p_wins} wins. Reinstated to baseline ({current_baseline_conf:.1f}%).")
-                return current_baseline_conf
+                return current_baseline_conf + extra
             else:
                 data["benched_at"] = now
                 save_reliability(rel)
                 log.warning(f"  🔒 {symbol}: 7 days elapsed but only {p_wins} win(s) logged. Probation timer extended.")
 
-        probation_required_conf = current_baseline_conf + PROBATION_CONFIDENCE_OFFSET
+        probation_required_conf = current_baseline_conf + PROBATION_CONFIDENCE_OFFSET + extra
         log.info(
             f"  🔒 {symbol} ON PROBATION: Requiring {probation_required_conf:.1f}% Conf "
-            f"(Base: {current_baseline_conf:.1f}% + {PROBATION_CONFIDENCE_OFFSET}% | "
+            f"(Base: {current_baseline_conf:.1f}% + {PROBATION_CONFIDENCE_OFFSET}%"
+            f"{f' + override {extra}%' if extra else ''} | "
             f"Wins: {p_wins}/{PROBATION_WIN_GOAL} | Probation Losses: {p_losses}/{PROBATION_CONSECUTIVE_LOSS_RESET})"
         )
         return probation_required_conf
 
-    return current_baseline_conf
+    return current_baseline_conf + extra
+
 
 def _is_unreliable(symbol: str, signal_conf: float = 0.0, current_baseline_conf: float = 35.0) -> bool:
     rel = load_reliability()
@@ -555,6 +668,8 @@ def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame) -> pd
     return df.sort_values("open_time").reset_index(drop=True)
 
 
+# ── MODIFIED: generate_signal now computes ensemble disagreement and logs
+#              every prediction (executed or rejected) to predictions.json ──
 def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None, btc_df15_live=None):
     try:
         raw15 = get_data(symbol, TIMEFRAME_ENTRY)
@@ -595,6 +710,10 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
 
         X    = pd.DataFrame([row[af].values], columns=af).replace([np.inf,-np.inf],0).fillna(0)
         Xs   = pipeline["selector"].transform(X)
+
+        # ── NEW: ensemble disagreement, computed once per signal ──
+        disagreement = compute_ensemble_disagreement(pipeline, Xs[0])
+
         pred = pipeline["ensemble"].predict(Xs)[0]
         prob = pipeline["ensemble"].predict_proba(Xs)[0]
         
@@ -608,8 +727,10 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         effective_base_conf = max(raw_target, EXECUTION_SANITY_FLOOR)
         min_required_conf = get_required_confidence(symbol, effective_base_conf)
 
-        log.info(f"    ML: {sig} {conf:.1f}% (need ≥{min_required_conf:.1f}%)")
+        log.info(f"    ML: {sig} {conf:.1f}% (need ≥{min_required_conf:.1f}%) | disagreement={disagreement.get('ensemble_disagreement')}")
         if sig == "NO_TRADE" or conf < min_required_conf:
+            save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement,
+                             reject_reason="NO_TRADE" if sig == "NO_TRADE" else f"conf {conf}<{min_required_conf}"))
             return None
 
         fg_override_active = False
@@ -624,13 +745,18 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                 else:
                     direction_str = "SELL at panic bottom" if sig == "SELL" else "BUY at euphoric top"
                     log.info(f"    [FILTER:FG_HARD] F&G={fng_data.get('value')} — blocking new {direction_str} (Conf: {conf:.1f}% < 70%)")
+                    save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement,
+                                     reject_reason=f"FG_HARD_BLOCK fg={fng_data.get('value')}"))
                     return None
 
         adx = float(row.get("adx", 0))
         min_adx_req = thresholds.get("min_adx", getattr(config, "MIN_ADX", 15.0))
         log.info(f"    [{symbol}] ML={sig} {conf:.1f}% ADX={adx:.1f} — evaluating filters")
         log.info(f"    ADX: {adx:.1f} (need ≥{min_adx_req})")
-        if adx < min_adx_req: return None
+        if adx < min_adx_req:
+            save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement,
+                             reject_reason=f"ADX {adx:.1f}<{min_adx_req}"))
+            return None
 
         score = 0
         reasons = []
@@ -643,11 +769,15 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         if not df4h.empty:
             if sig == "BUY" and e20_4h < e50_4h:
                 log.info(f"    [FILTER:4H_BIAS] 4h bearish (EMA20 < EMA50) — hard block BUY {symbol}")
+                save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement,
+                                 reject_reason="4H_BIAS_bearish_block_buy"))
                 return None
             
             if sig == "SELL" and e20_4h > e50_4h:
                 if rsi_4h < 75:
                     log.info(f"    [FILTER:4H_BIAS] 4h bullish (EMA20 > EMA50 | RSI {rsi_4h:.0f} < 75) — hard block SELL {symbol}")
+                    save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement,
+                                     reject_reason="4H_BIAS_bullish_block_sell"))
                     return None
                 else:
                     score -= 1
@@ -663,6 +793,8 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
 
             if trend_bars < 1:
                 log.info(f"    [FILTER:4H_FRESH] 4h trend too fresh ({trend_bars} bars) — skip {symbol}")
+                save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement,
+                                 reject_reason=f"4H_FRESH trend_bars={trend_bars}"))
                 return None
 
         if conf >= (min_required_conf + 15): score+=2; reasons.append(f"Strong conf ({conf:.0f}%)")
@@ -727,6 +859,8 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         else:
             if vol_prev < vol_ma20 * 0.5:
                 log.info(f"    [FILTER:VOL] Low volume ({vol_prev:.0f} < {vol_ma20:.0f}) — skip {symbol}")
+                save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement,
+                                 reject_reason=f"LOW_VOLUME {vol_prev:.0f}<{vol_ma20:.0f}"))
                 return None
             if vol_prev > vol_ma20 * 1.5:
                 score += 1; reasons.append(f"Volume surge {vol_prev/vol_ma20:.1f}×")
@@ -737,6 +871,8 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
             log.info(f"    [FILTER:SCORE] Too low ({score} < {effective_min}) — skip {symbol}")
             save_signal({"symbol":symbol,"signal":sig,"confidence":conf,"score":score,
                 "reasons":reasons,"rejected":True,"reject_reason":f"score {score}<{effective_min}"})
+            save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement,
+                             reject_reason=f"SCORE {score}<{effective_min}"))
             return None
 
         if not reasons: reasons.append(f"ML {conf:.0f}%")
@@ -746,17 +882,26 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
             log.error(f"    🚨 {symbol}: bad entry price/ATR — aborting signal")
             return None
 
+        # ── NEW: log the successful prediction + build the trade snapshot ──
+        snapshot = build_trade_snapshot(row, r4h, e20_4h, e50_4h, rsi_4h, fng_data, whale_flow, btc_momentum)
+        pred_id  = f"{symbol}_{int(time.time()*1000)}"
+        save_prediction(_pred_record(symbol, sig, conf, pipeline, row, disagreement, pred_id=pred_id))
+
         return {
             "symbol": symbol, "signal": sig, "confidence": conf, "score": score,
             "entry": entry, "atr": atr, "stop": 0, "tp1": 0, "tp2": 0,
             "reasons": reasons, "conf_tier": "high" if conf >= 60.0 else "normal",
             "fg_override": fg_override_active,
+            "pred_id": pred_id,
+            "snapshot": snapshot,
         }
     except Exception as e:
         log.error(f"    Signal {symbol}: {e}")
         return None
 
 
+# ── MODIFIED: execute_trade now applies approved stop-mult override and
+#              carries pred_id/snapshot through to the trade record ──
 def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float, vol_state: str = "NORMAL", base_min_conf: float = None) -> bool:
     if base_min_conf is None:
         raise ValueError("execute_trade() requires base_min_conf — no implicit default allowed.")
@@ -765,7 +910,13 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     signal = sig["signal"]
     entry  = sig["entry"]
     atr    = sig["atr"]
-    
+
+    # ── NEW: approved adaptation override for this symbol, if any ──
+    sym_overrides = get_symbol_overrides(symbol)
+    effective_stop_mult = ATR_STOP_MULT
+    if "atr_stop_mult_override" in sym_overrides:
+        effective_stop_mult = ATR_STOP_MULT * sym_overrides["atr_stop_mult_override"].get("multiplier", 1.0)
+        log.info(f"  🧪 {symbol}: applying approved stop-mult override — {ATR_STOP_MULT} → {effective_stop_mult:.2f}")
     
     trades     = load_trades()
     open_count = len([t for t in trades.values() if not t.get("closed", False)])
@@ -846,11 +997,11 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     tp_side = "SELL" if signal == "BUY" else "BUY"
 
     if signal == "BUY":
-        stop = round(entry - atr * ATR_STOP_MULT, dec)
+        stop = round(entry - atr * effective_stop_mult, dec)
         tp1  = round(entry + atr * dyn_tp1, dec)
         tp2  = round(entry + atr * dyn_tp2, dec)
     else:
-        stop = round(entry + atr * ATR_STOP_MULT, dec)
+        stop = round(entry + atr * effective_stop_mult, dec)
         tp1  = round(entry - atr * dyn_tp1, dec)
         tp2  = round(entry - atr * dyn_tp2, dec)
 
@@ -943,11 +1094,11 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
         # ── POST-FILL RECOMPUTE WITH STRICT EMERGENCY CLOSE VALIDATION ──
         if signal == "BUY":
-            recomputed_stop = deribit.round_price(symbol, actual_entry - atr * ATR_STOP_MULT)
+            recomputed_stop = deribit.round_price(symbol, actual_entry - atr * effective_stop_mult)
             recomputed_tp1  = deribit.round_price(symbol, actual_entry + atr * dyn_tp1)
             recomputed_tp2  = deribit.round_price(symbol, actual_entry + atr * dyn_tp2)
         else:
-            recomputed_stop = deribit.round_price(symbol, actual_entry + atr * ATR_STOP_MULT)
+            recomputed_stop = deribit.round_price(symbol, actual_entry + atr * effective_stop_mult)
             recomputed_tp1  = deribit.round_price(symbol, actual_entry - atr * dyn_tp1)
             recomputed_tp2  = deribit.round_price(symbol, actual_entry - atr * dyn_tp2)
 
@@ -1032,6 +1183,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         _send(f"⚠️ {symbol}: {e}")
         return False
 
+    # ── MODIFIED: record now carries pred_id + snapshot for later audit/taxonomy ──
     record = {
         "symbol": symbol, "signal": signal, "entry": actual_entry,
         "stop": stop, "tp1": tp1, "tp2": tp2,
@@ -1045,10 +1197,15 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         "reasons": sig.get("reasons", []), "tier": get_tier(symbol),
         "fg_override": sig.get("fg_override", False),
         "exchange": "deribit_testnet",
+        "pred_id": sig.get("pred_id"),
+        "snapshot": sig.get("snapshot", {}),
+        "stop_mult_used": effective_stop_mult,
     }
     trades[symbol] = record
     save_trades(trades)
     save_signal({**record, "type": "executed"})
+    if sig.get("pred_id"):
+        mark_prediction_executed(sig["pred_id"])
     _send_open_alert(symbol, signal, sig["confidence"], sig["score"],
                      actual_entry, stop, tp1, tp2, total_q, qty_tp1, qty_tp2, actual_risk_usd, balance)
     log.info(f"  ✅✅ TRADE OPENED: {symbol} {signal} ({exit_mode})")
