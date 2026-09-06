@@ -1,0 +1,89 @@
+name: CryptoBot AI — Prediction Auditor & Adaptation
+
+on:
+  schedule:
+    - cron: '12,42 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit-predictions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write .env from secrets
+        run: |
+          echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}"             >> .env
+          echo "BINANCE_SECRET=${{ secrets.BINANCE_SECRET }}"               >> .env
+          echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}"               >> .env
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}"           >> .env
+          echo "GH_PAT_TOKEN=${{ secrets.GH_PAT_TOKEN }}"                   >> .env
+          echo "GITHUB_REPO=MrZkull/Crypto_AI_bot"                          >> .env
+          echo "GITHUB_BRANCH=main"                                         >> .env
+          echo "DERIBIT_CLIENT_ID=${{ secrets.DERIBIT_CLIENT_ID }}"         >> .env
+          echo "DERIBIT_CLIENT_SECRET=${{ secrets.DERIBIT_CLIENT_SECRET }}" >> .env
+
+      - name: Init state files if missing
+        run: |
+          [ -f predictions.json ]          || echo '[]' > predictions.json
+          [ -f coin_dossier.json ]         || echo '{}' > coin_dossier.json
+          [ -f adaptation_proposals.json ] || echo '[]' > adaptation_proposals.json
+          [ -f trade_history.json ]        || echo '[]' > trade_history.json
+
+      - name: Run Prediction Auditor
+        run: python prediction_auditor.py
+
+      - name: Run Failure Taxonomy
+        run: python failure_taxonomy.py
+
+      - name: Commit and Push Audit State
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          rm -f .env
+
+          # 1. Backup state files to /tmp before git pull
+          cp predictions.json          /tmp/predictions_runtime.json          2>/dev/null || echo '[]' > /tmp/predictions_runtime.json
+          cp coin_dossier.json         /tmp/coin_dossier_runtime.json         2>/dev/null || echo '{}' > /tmp/coin_dossier_runtime.json
+          cp adaptation_proposals.json /tmp/adaptation_proposals_runtime.json 2>/dev/null || echo '[]' > /tmp/adaptation_proposals_runtime.json
+          cp trade_history.json        /tmp/trade_history_runtime.json        2>/dev/null || echo '[]' > /tmp/trade_history_runtime.json
+
+          # 2. Pull remote changes cleanly
+          git reset --hard HEAD
+          git fetch origin main
+          git pull --rebase origin main || git pull origin main || true
+
+          # 3. Restore state files
+          cp /tmp/predictions_runtime.json          predictions.json
+          cp /tmp/coin_dossier_runtime.json         coin_dossier.json
+          cp /tmp/adaptation_proposals_runtime.json adaptation_proposals.json
+          cp /tmp/trade_history_runtime.json        trade_history.json
+
+          # 4. Stage and push
+          git add predictions.json          || true
+          git add coin_dossier.json         || true
+          git add adaptation_proposals.json || true
+          git add trade_history.json        || true
+
+          git diff --cached --quiet || git commit -m "Audit Predictions & Run Taxonomy [skip ci]"
+          git push origin main
+
