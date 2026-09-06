@@ -3,7 +3,7 @@
     "symbol": "AVAXUSDT",
     "signal": "BUY",
     "entry": 7.627,
-    "stop": 7.564,
+    "stop": 7.716,
     "tp1": 7.716,
     "tp2": 7.817,
     "qty": 689.42,
@@ -16,12 +16,12 @@
     "exit_mode": "DUAL_TP",
     "order_ids": {
       "entry": "USDC-210049225641230375",
-      "stop_loss": "USDC-SLMS-43652",
+      "stop_loss": "USDC-SLMS-43682",
       "tp1": "USDC-210049225641236559",
       "tp2": "USDC-210049225641237640"
     },
     "opened_at": "2026-09-06T08:51:44.448817+00:00",
-    "tp1_hit": false,
+    "tp1_hit": true,
     "tp2_hit": false,
     "closed": false,
     "confidence": 41.8,
@@ -157,6 +157,59 @@
       "btc_bias": null,
       "btc_corr_20": 0.7660431629875978,
       "btc_beta_20": 1.0236030728312904
+    },
+    "stop_mult_used": 2.5
+  },
+  "XRPUSDT": {
+    "symbol": "XRPUSDT",
+    "signal": "BUY",
+    "entry": 1.41952349,
+    "stop": 1.4115,
+    "tp1": 1.4307,
+    "tp2": 1.4435,
+    "qty": 3700,
+    "qty_tp1": 1850,
+    "qty_tp2": 1850,
+    "risk_usd": 29.69,
+    "budget_risk_usd": 2098.83,
+    "balance_at_open": 105045.08,
+    "risk_mult": 0.6660107305226657,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049225812023451",
+      "stop_loss": "USDC-SLMS-43683",
+      "tp1": "USDC-210049225812029334",
+      "tp2": "USDC-210049225812030246"
+    },
+    "opened_at": "2026-09-06T20:46:05.998592+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 53.1,
+    "score": 6,
+    "reasons": [
+      "Valid conf (53%)",
+      "Strong ADX 32",
+      "RSI not overbought (63)",
+      "1h confirms",
+      "4h trend aligns (RSI 55)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfc6 Proven Winners",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "XRPUSDT_1788727563172",
+    "snapshot": {
+      "entry_atr": 0.003196570118816648,
+      "rsi_15m": 62.915082053949895,
+      "adx_15m": 32.44206735238305,
+      "rsi_4h": 54.72600312327879,
+      "ema_4h_bullish": true,
+      "fng_value": 73,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.6325850756655051,
+      "btc_beta_20": 1.0539013719938775
     },
     "stop_mult_used": 2.5
   }
