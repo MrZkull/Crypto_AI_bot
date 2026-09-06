@@ -1,10 +1,12 @@
-# failure_taxonomy.py — classifies WHY closed trades lost, proposes (never applies) adaptations
+# failure_taxonomy.py — classifies WHY closed trades lost, proposes adaptations
 
 import json, time, logging
 from datetime import datetime, timezone
 from pathlib import Path
 import requests
 
+import config
+from config import ATR_STOP_MULT
 from prediction_auditor import get_coin_calibration_hit_rate, load_json as _pa_load_json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -60,14 +62,16 @@ def fetch_klines_between(symbol, start_iso, end_iso):
 
 
 def compute_trade_excursion(trade: dict):
-    """MFE/MAE in ATR-multiples for a CLOSED trade, using its own snapshot's ATR."""
     entry = float(trade.get("entry", 0) or 0)
     atr   = float(trade.get("snapshot", {}).get("entry_atr", 0) or 0)
-    # fallback: derive ATR from stop distance if snapshot didn't carry it
+    
+    # Dynamic fallback to actual stop multiplier used
     if atr <= 0:
         stop = float(trade.get("stop", 0) or 0)
+        stop_mult = float(trade.get("stop_mult_used", ATR_STOP_MULT))
         if stop > 0 and entry > 0:
-            atr = abs(entry - stop) / 2.5  # ATR_STOP_MULT
+            atr = abs(entry - stop) / stop_mult
+            
     if entry <= 0 or atr <= 0:
         return None, None
 
@@ -105,7 +109,6 @@ def count_same_day_peer_losses(symbol, signal, closed_at, history):
 
 
 def classify_failure(trade, mfe_atr, mae_atr, same_day_peer_losses, calibration_hit_rate):
-    """Returns a tag string, or None if the trade wasn't a loss (no root-cause needed)."""
     if float(trade.get("pnl", 0)) >= 0:
         return None
     if mfe_atr is None or mae_atr is None:
@@ -128,7 +131,6 @@ def classify_failure(trade, mfe_atr, mae_atr, same_day_peer_losses, calibration_
     return "UNCLASSIFIED"
 
 
-# ── Adaptation proposals — PROPOSE ONLY, never auto-apply ──────────────
 ADAPTATION_RULES = {
     "PREMATURE_WHIPSAW": {
         "param": "atr_stop_mult_override",
@@ -140,8 +142,6 @@ ADAPTATION_RULES = {
         "suggested_change": "+5% confidence hurdle for this symbol",
         "min_occurrences": 3,
     },
-    # REGIME_CASCADE deliberately has no rule — a market-wide event shouldn't
-    # penalize the specific symbol that happened to be open when it hit.
 }
 
 
@@ -161,7 +161,7 @@ def propose_adaptations(dossier):
                     "param": rule["param"],
                     "suggested_change": rule["suggested_change"],
                     "occurrences": count,
-                    "status": "pending",  # pending | approved | rejected
+                    "status": "pending",
                     "proposed_at": datetime.now(timezone.utc).isoformat(),
                 })
     save_json(PROPOSALS_FILE, proposals)
@@ -193,9 +193,13 @@ def run_failure_audit():
         trade["failure_tag"] = tag
 
         if tag and tag not in ("UNCLASSIFIED", "UNCLASSIFIED_NO_DATA"):
-            if symbol not in dossier:
-                dossier[symbol] = {"total_audited": 0, "total_correct": 0,
-                                    "by_confidence_bucket": {}, "tags": {}}
+            if symbol not in dossier or not isinstance(dossier[symbol], dict):
+                dossier[symbol] = {
+                    "total_audited": 0, "total_correct": 0,
+                    "disagreement_correct_sum": 0.0, "disagreement_incorrect_sum": 0.0,
+                    "disagreement_correct_n": 0, "disagreement_incorrect_n": 0,
+                    "by_confidence_bucket": {}, "tags": {}
+                }
             dossier[symbol].setdefault("tags", {})
             dossier[symbol]["tags"][tag] = dossier[symbol]["tags"].get(tag, 0) + 1
 
@@ -213,3 +217,4 @@ def run_failure_audit():
 
 if __name__ == "__main__":
     run_failure_audit()
+    
