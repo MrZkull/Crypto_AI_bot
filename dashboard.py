@@ -1,4 +1,4 @@
-# dashboard.py — V5.14: Bracket Healer, Cooldown Management & Report Sync
+# dashboard.py — V5.16: Unified Production Control Plane
 
 import os
 import json
@@ -12,12 +12,23 @@ import socket
 import uuid
 import joblib
 import importlib
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
+
+# Force IPv4 socket resolution to prevent Render IPv6 timeouts with Gmail SMTP
+orig_getaddrinfo = socket.getaddrinfo
+def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+socket.getaddrinfo = ipv4_only_getaddrinfo
 
 try:
     from fg_override_audit import audit_fg_overrides
@@ -48,26 +59,15 @@ COOLDOWN_FILE      = "cooldown.json"
 PERFORMANCE_FILE   = "model_performance.json"
 MODEL_FILE         = "pro_crypto_ai_model.pkl"
 SCAN_STATUS_FILE   = "scan_status.json"
+PREDICTIONS_FILE   = "predictions.json"
+OVERRIDES_FILE     = "adaptation_overrides.json"
+DOSSIER_FILE       = "coin_dossier.json"
+PROPOSALS_FILE     = "adaptation_proposals.json"
 EMAIL_REGEX        = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 _cache = {}
 _cache_ts = {}
 CACHE_TTL = 30  
-
-REPORT_STORE = {}
-REPORT_TTL_SECONDS = 60 * 60 * 48
-
-def _cleanup_reports():
-    now = time.time()
-    expired = [k for k, v in REPORT_STORE.items() if now - v["created"] > REPORT_TTL_SECONDS]
-    for k in expired:
-        REPORT_STORE.pop(k, None)
-
-def _store_report(pdf_bytes: bytes) -> str:
-    _cleanup_reports()
-    rid = uuid.uuid4().hex
-    REPORT_STORE[rid] = {"data": pdf_bytes, "created": time.time()}
-    return rid
 
 def get_live_config():
     try:
@@ -403,6 +403,62 @@ def deribit_client():
     except Exception:
         return None
 
+# ── DUAL-SENDER: RESEND API + GMAIL SMTP FALLBACK ───────────────────────
+def _send_email_with_pdf(recipient: str, subject: str, body_text: str, pdf_bytes: bytes, filename: str) -> tuple:
+    # 1. Attempt Resend REST API (Port 443)
+    resend_key = os.getenv("RESEND_API_KEY", "")
+    report_from = os.getenv("REPORT_FROM_EMAIL", "CryptoBot AI <onboarding@resend.dev>")
+
+    if resend_key:
+        try:
+            resp = requests.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                json={
+                    "from": report_from,
+                    "to": [recipient],
+                    "subject": subject,
+                    "text": body_text,
+                    "attachments": [{
+                        "filename": filename,
+                        "content": base64.b64encode(pdf_bytes).decode("utf-8"),
+                    }],
+                },
+                timeout=15,
+            )
+            if resp.status_code in (200, 201, 202):
+                return True, "SENT (Resend)"
+            log.warning(f"Resend returned HTTP {resp.status_code}: {resp.text[:120]} — attempting SMTP fallback")
+        except Exception as e:
+            log.warning(f"Resend connection error: {e} — attempting SMTP fallback")
+
+    # 2. Direct Fallback to Gmail SMTP (Port 465 SSL, forced IPv4)
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+
+    if smtp_user and smtp_pass:
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = smtp_user
+            msg["To"] = recipient
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body_text, "plain"))
+
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(pdf_bytes)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f"attachment; filename={filename}")
+            msg.attach(part)
+
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=12) as server:
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [recipient], msg.as_string())
+            return True, "SENT (SMTP)"
+        except Exception as e:
+            return False, f"SMTP error: {e}"
+
+    return False, "Neither Resend API nor SMTP credentials succeeded."
+
 
 @app.route("/api/status")
 def api_status():
@@ -523,7 +579,6 @@ def api_open_trades():
                 tp1  = float(t.get("tp1", 0) or 0)
                 tp2  = float(t.get("tp2", 0) or 0)
 
-                # Query Deribit open orders if bracket values are unrecorded
                 if stop <= 0 or tp1 <= 0:
                     try:
                         open_orders = client.get_open_orders(symbol)
@@ -566,11 +621,8 @@ def api_open_trades():
     return jsonify([])
 
 
-# ── INTERACTIVE SL/TP ATTACHER & REPAIR ENDPOINT ──────────────────────
 @app.route("/api/trades/heal", methods=["POST", "OPTIONS"])
 def api_trades_heal():
-    """Attaches missing protective stop-loss and take-profit brackets directly
-    to open exchange positions that are currently running unprotected."""
     if request.method == "OPTIONS":
         return jsonify({"ok": True}), 200
 
@@ -585,14 +637,13 @@ def api_trades_heal():
 
     real_pos = client.get_position_size(symbol)
     if abs(real_pos) <= 0.0001:
-        return jsonify({"ok": False, "error": f"No open exchange position found for {symbol} to attach brackets to."}), 404
+        return jsonify({"ok": False, "error": f"No open exchange position found for {symbol}."}), 404
 
     cfg = get_live_config()
     live_p = client.get_live_price(symbol)
     if live_p <= 0:
-        return jsonify({"ok": False, "error": f"Could not determine live price for {symbol}."}), 502
+        return jsonify({"ok": False, "error": f"Could not fetch live price for {symbol}."}), 502
 
-    # Fetch live ATR or fallback to 1.5% volatility estimation
     fresh_atr = live_p * 0.015
     try:
         r = requests.get(f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit=20", timeout=4)
@@ -615,12 +666,10 @@ def api_trades_heal():
 
     order_ids = {}
     try:
-        # Place Stop-Loss order
         sl_res = client.place_limit_order(symbol, sl_side, total_q, sl_limit, stop_price=stop_p, use_reduce_only=True)
         sl_o = sl_res.get("order", sl_res)
         order_ids["stop_loss"] = str(sl_o.get("order_id", ""))
 
-        # Place Take-Profit order
         tp_res = client.place_limit_order(symbol, tp_side, total_q, tp1_p, use_reduce_only=False)
         tp_o = tp_res.get("order", tp_res)
         order_ids["tp1"] = str(tp_o.get("order_id", ""))
@@ -662,7 +711,6 @@ def api_trades_heal():
     gh_push("trades.json", trades)
     bust("trades.json")
 
-    log.info(f"  🛡️ [HEAL] Successfully attached SL ({stop_p}) and TP1 ({tp1_p}) to {symbol}")
     return jsonify({
         "ok": True, 
         "symbol": symbol, 
@@ -691,68 +739,10 @@ def api_log():
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
 
+# ── SINGLE READ-ONLY PROBATION ENDPOINT (NO RE-BENCHING MUTATION) ───────
 @app.route("/api/probation")
 def api_probation():
-    rel = get(RELIABILITY_FILE, {})
-    if not isinstance(rel, dict): rel = {}
-    history = get("trade_history.json", [])
-    now = time.time()
-    updated = False
-    symbols_in_history = set(t.get("symbol") for t in history if t.get("symbol"))
-    
-    for symbol in symbols_in_history:
-        s_trades = [t for t in history if t.get("symbol") == symbol and t.get("signal") != "RECOVERED"]
-        last_3 = s_trades[-3:] if len(s_trades) >= 3 else []
-        last_6 = s_trades[-6:] if len(s_trades) >= 6 else []
-        
-        has_3_consecutive_losses = (len(last_3) == 3 and all((float(t.get("pnl") or 0)) < 0 for t in last_3))
-        has_rolling_drawdown = False
-        if len(last_6) == 6:
-            wins_6 = sum(1 for t in last_6 if float(t.get("pnl", 0)) > 0)
-            pnl_6 = sum(float(t.get("pnl", 0)) for t in last_6)
-            if (wins_6 / 6.0 < 0.40) and (pnl_6 < 0.0):
-                has_rolling_drawdown = True
-        
-        if symbol not in rel or not isinstance(rel[symbol], dict): rel[symbol] = {}
-            
-        if has_3_consecutive_losses or has_rolling_drawdown:
-            if not rel[symbol].get("is_benched"):
-                rel[symbol]["is_benched"] = True
-                rel[symbol]["benched_at"] = now
-                rel[symbol]["probation_wins"] = 0
-                rel[symbol]["probation_consecutive_losses"] = len([t for t in last_3 if (float(t.get("pnl") or 0)) < 0])
-                updated = True
-        elif rel[symbol].get("is_benched") and rel[symbol].get("probation_wins", 0) >= 3:
-            rel[symbol]["is_benched"] = False
-            rel[symbol]["benched_at"] = 0
-            updated = True
-
-    if updated:
-        gh_push(RELIABILITY_FILE, rel)
-        _cache[RELIABILITY_FILE] = rel
-
-    model_meta = get_model_metadata()
-    probated_coins = []
-    for symbol, data in rel.items():
-        if isinstance(data, dict) and data.get("is_benched", False):
-            benched_at = data.get("benched_at", 0)
-            time_left_sec = max(0, (7 * 86400) - (now - benched_at)) if benched_at > 0 else 0
-            probated_coins.append({
-                "symbol": symbol,
-                "probation_wins": data.get("probation_wins", 0),
-                "probation_consecutive_losses": data.get("probation_consecutive_losses", 0),
-                "time_left_hrs": round(time_left_sec / 3600, 1),
-                "required_buy_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
-                "required_sell_conf": round(model_meta["rec_sell_conf"] + 10.0, 1),
-                "required_conf": round(max(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"]) + 10.0, 1),
-                "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
-            })
-    return jsonify({"ok": True, "probated_coins": probated_coins})
-
-
-@app.route("/api/probation")
-def api_probation():
-    """Read-only view of reliability.json. Does NOT re-bench released coins."""
+    """Returns the probation status without auto-rebenching released coins."""
     rel = get(RELIABILITY_FILE, {})
     if not isinstance(rel, dict): rel = {}
     now = time.time()
@@ -774,6 +764,42 @@ def api_probation():
                 "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
             })
     return jsonify({"ok": True, "probated_coins": probated_coins})
+
+
+@app.route("/api/probation/release", methods=["POST", "OPTIONS"])
+def api_probation_release():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    data = request.get_json(silent=True) or {}
+    symbol = str(data.get("symbol", "")).strip().upper()
+    if not symbol:
+        return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
+    rel = get(RELIABILITY_FILE, {})
+    if not isinstance(rel, dict): rel = {}
+
+    if symbol not in rel or not rel[symbol].get("is_benched", False):
+        return jsonify({"ok": False, "error": f"{symbol} is not currently on probation."}), 404
+
+    rel[symbol]["is_benched"] = False
+    rel[symbol]["benched_at"] = 0
+    rel[symbol]["probation_wins"] = 0
+    rel[symbol]["probation_consecutive_losses"] = 0
+    rel[symbol]["normal_consecutive_losses"] = 0
+    rel[symbol]["manually_released_at"] = datetime.now(timezone.utc).isoformat()
+
+    for p in [Path(RELIABILITY_FILE), Path("data") / RELIABILITY_FILE]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(rel, indent=2))
+        except Exception: pass
+    _cache[RELIABILITY_FILE] = rel
+    _cache_ts[RELIABILITY_FILE] = time.time()
+    push_ok = gh_push(RELIABILITY_FILE, rel)
+
+    log.info(f"  🔓 [MANUAL] {symbol} released from probation via dashboard")
+    return jsonify({"ok": True, "symbol": symbol, "status": "released", "synced": push_ok})
 
 
 @app.route("/api/cooldown")
@@ -825,6 +851,127 @@ def api_cooldown_release():
 
     log.info(f"  🔓 [MANUAL] {symbol} cooldown cleared via dashboard")
     return jsonify({"ok": True, "symbol": symbol, "status": "released", "synced": push_ok})
+
+
+# ── INTELLIGENCE & PREDICTION LEDGER API ────────────────────────────────
+@app.route("/api/predictions")
+def api_predictions():
+    preds = get(PREDICTIONS_FILE, [])
+    if not isinstance(preds, list): preds = []
+
+    audited = [p for p in preds if p.get("audited")]
+    unaudited = [p for p in preds if not p.get("audited")]
+    correct = [p for p in audited if p.get("correct") is True]
+    scored = [p for p in audited if p.get("correct") is not None]
+
+    disagreements = [p.get("ensemble_disagreement") for p in preds if p.get("ensemble_disagreement") is not None]
+    avg_disagreement = round(sum(disagreements) / len(disagreements), 4) if disagreements else None
+
+    return jsonify({
+        "ok": True,
+        "total_predictions": len(preds),
+        "unaudited_count": len(unaudited),
+        "audited_count": len(audited),
+        "overall_hit_rate": round(len(correct) / len(scored) * 100, 1) if scored else None,
+        "avg_ensemble_disagreement": avg_disagreement,
+        "recent": list(reversed(preds[-100:])),
+    })
+
+
+@app.route("/api/dossier")
+def api_dossier():
+    dossier = get(DOSSIER_FILE, {})
+    if not isinstance(dossier, dict): dossier = {}
+
+    rows = []
+    for symbol, d in dossier.items():
+        total = d.get("total_audited", 0)
+        correct = d.get("total_correct", 0)
+        dc_sum, dc_n = d.get("disagreement_correct_sum", 0.0), d.get("disagreement_correct_n", 0)
+        di_sum, di_n = d.get("disagreement_incorrect_sum", 0.0), d.get("disagreement_incorrect_n", 0)
+        rows.append({
+            "symbol": symbol,
+            "total_audited": total,
+            "hit_rate": round(correct / total * 100, 1) if total else None,
+            "avg_disagreement_when_correct": round(dc_sum / dc_n, 4) if dc_n else None,
+            "avg_disagreement_when_incorrect": round(di_sum / di_n, 4) if di_n else None,
+            "by_confidence_bucket": d.get("by_confidence_bucket", {}),
+            "tags": d.get("tags", {}),
+        })
+    rows.sort(key=lambda r: r["total_audited"], reverse=True)
+    return jsonify({"ok": True, "coins": rows})
+
+
+@app.route("/api/adaptation_proposals")
+def api_adaptation_proposals():
+    status = request.args.get("status")
+    proposals = get(PROPOSALS_FILE, [])
+    if not isinstance(proposals, list): proposals = []
+    if status:
+        proposals = [p for p in proposals if p.get("status") == status]
+    return jsonify({"ok": True, "proposals": list(reversed(proposals))})
+
+
+def _write_and_push(filename, data):
+    for p in [Path(filename), Path("data") / filename]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data, indent=2))
+        except Exception: pass
+    _cache[filename] = data
+    _cache_ts[filename] = time.time()
+    return gh_push(filename, data)
+
+
+@app.route("/api/adaptation_proposals/<proposal_id>/approve", methods=["POST", "OPTIONS"])
+def api_approve_proposal(proposal_id):
+    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
+
+    proposals = get(PROPOSALS_FILE, [])
+    if not isinstance(proposals, list): proposals = []
+    target = next((p for p in proposals if p.get("id") == proposal_id), None)
+    if not target:
+        return jsonify({"ok": False, "error": "Proposal not found"}), 404
+    if target.get("status") != "pending":
+        return jsonify({"ok": False, "error": f"Proposal already {target.get('status')}"}), 400
+
+    target["status"] = "approved"
+    target["approved_at"] = datetime.now(timezone.utc).isoformat()
+
+    overrides = get(OVERRIDES_FILE, {})
+    if not isinstance(overrides, dict): overrides = {}
+    symbol = target["symbol"]
+    overrides.setdefault(symbol, {})
+    overrides[symbol][target["param"]] = {
+        "reason_tag": target["tag"],
+        "applied_at": target["approved_at"],
+        "occurrences_at_approval": target.get("occurrences"),
+    }
+    if target["param"] == "atr_stop_mult_override":
+        overrides[symbol]["atr_stop_mult_override"]["multiplier"] = 1.15
+    elif target["param"] == "probation_offset_override":
+        overrides[symbol]["probation_offset_override"]["extra_conf_pct"] = 5.0
+
+    push_p = _write_and_push(PROPOSALS_FILE, proposals)
+    push_o = _write_and_push(OVERRIDES_FILE, overrides)
+    log.info(f"  ✅ [ADAPTATION] Approved {target['tag']} override for {symbol} via dashboard")
+    return jsonify({"ok": True, "proposal": target, "synced": bool(push_p and push_o)})
+
+
+@app.route("/api/adaptation_proposals/<proposal_id>/reject", methods=["POST", "OPTIONS"])
+def api_reject_proposal(proposal_id):
+    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
+
+    proposals = get(PROPOSALS_FILE, [])
+    if not isinstance(proposals, list): proposals = []
+    target = next((p for p in proposals if p.get("id") == proposal_id), None)
+    if not target:
+        return jsonify({"ok": False, "error": "Proposal not found"}), 404
+
+    target["status"] = "rejected"
+    target["rejected_at"] = datetime.now(timezone.utc).isoformat()
+    push_ok = _write_and_push(PROPOSALS_FILE, proposals)
+    return jsonify({"ok": True, "proposal": target, "synced": push_ok})
 
 
 @app.route("/api/market")
@@ -1053,139 +1200,6 @@ def api_analytics():
         "avg_win": round(avg_win, 4), "avg_loss": round(avg_loss, 4), "equity_curve": equity_points, "daily_pnl": daily_points
     })
 
-PREDICTIONS_FILE_D  = "predictions.json"
-DOSSIER_FILE_D      = "coin_dossier.json"
-PROPOSALS_FILE_D    = "adaptation_proposals.json"
-OVERRIDES_FILE_D    = "adaptation_overrides.json"
-
-
-@app.route("/api/predictions")
-def api_predictions():
-    """Summary view of the prediction ledger — recent records + rollup stats."""
-    preds = get(PREDICTIONS_FILE_D, [])
-    if not isinstance(preds, list): preds = []
-
-    audited = [p for p in preds if p.get("audited")]
-    unaudited = [p for p in preds if not p.get("audited")]
-    correct = [p for p in audited if p.get("correct") is True]
-    scored = [p for p in audited if p.get("correct") is not None]
-
-    disagreements = [p.get("ensemble_disagreement") for p in preds if p.get("ensemble_disagreement") is not None]
-    avg_disagreement = round(sum(disagreements) / len(disagreements), 4) if disagreements else None
-
-    return jsonify({
-        "ok": True,
-        "total_predictions": len(preds),
-        "unaudited_count": len(unaudited),
-        "audited_count": len(audited),
-        "overall_hit_rate": round(len(correct) / len(scored) * 100, 1) if scored else None,
-        "avg_ensemble_disagreement": avg_disagreement,
-        "recent": list(reversed(preds[-100:])),
-    })
-
-
-@app.route("/api/dossier")
-def api_dossier():
-    """Per-coin calibration + failure-tag rollup from coin_dossier.json."""
-    dossier = get(DOSSIER_FILE_D, {})
-    if not isinstance(dossier, dict): dossier = {}
-
-    rows = []
-    for symbol, d in dossier.items():
-        total = d.get("total_audited", 0)
-        correct = d.get("total_correct", 0)
-        dc_sum, dc_n = d.get("disagreement_correct_sum", 0.0), d.get("disagreement_correct_n", 0)
-        di_sum, di_n = d.get("disagreement_incorrect_sum", 0.0), d.get("disagreement_incorrect_n", 0)
-        rows.append({
-            "symbol": symbol,
-            "total_audited": total,
-            "hit_rate": round(correct / total * 100, 1) if total else None,
-            "avg_disagreement_when_correct": round(dc_sum / dc_n, 4) if dc_n else None,
-            "avg_disagreement_when_incorrect": round(di_sum / di_n, 4) if di_n else None,
-            "by_confidence_bucket": d.get("by_confidence_bucket", {}),
-            "tags": d.get("tags", {}),
-        })
-    rows.sort(key=lambda r: r["total_audited"], reverse=True)
-    return jsonify({"ok": True, "coins": rows})
-
-
-@app.route("/api/adaptation_proposals")
-def api_adaptation_proposals():
-    proposals = get(PROPOSALS_FILE_D, [])
-    if not isinstance(proposals, list): proposals = []
-    status_filter = request.args.get("status")
-    if status_filter:
-        proposals = [p for p in proposals if p.get("status") == status_filter]
-    return jsonify({"ok": True, "proposals": list(reversed(proposals))})
-
-
-def _write_and_push(filename, data):
-    for p in [Path(filename), Path("data") / filename]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(data, indent=2))
-        except Exception:
-            pass
-    _cache[filename] = data
-    _cache_ts[filename] = time.time()
-    return gh_push(filename, data)
-
-
-@app.route("/api/adaptation_proposals/<proposal_id>/approve", methods=["POST", "OPTIONS"])
-def api_approve_proposal(proposal_id):
-    """Approving writes a live override into adaptation_overrides.json, which
-    trade_executor.py consults at execution time. This is the ONLY path by
-    which a proposal ever affects live risk parameters — never automatic."""
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
-    proposals = get(PROPOSALS_FILE_D, [])
-    if not isinstance(proposals, list): proposals = []
-    target = next((p for p in proposals if p.get("id") == proposal_id), None)
-    if not target:
-        return jsonify({"ok": False, "error": "Proposal not found"}), 404
-    if target.get("status") != "pending":
-        return jsonify({"ok": False, "error": f"Proposal already {target.get('status')}"}), 400
-
-    target["status"] = "approved"
-    target["approved_at"] = datetime.now(timezone.utc).isoformat()
-
-    overrides = get(OVERRIDES_FILE_D, {})
-    if not isinstance(overrides, dict): overrides = {}
-    symbol = target["symbol"]
-    overrides.setdefault(symbol, {})
-    overrides[symbol][target["param"]] = {
-        "reason_tag": target["tag"],
-        "applied_at": target["approved_at"],
-        "occurrences_at_approval": target.get("occurrences"),
-    }
-    # Concrete numeric application per param type
-    if target["param"] == "atr_stop_mult_override":
-        overrides[symbol]["atr_stop_mult_override"]["multiplier"] = 1.15  # widen 15%, matches proposal text
-    elif target["param"] == "probation_offset_override":
-        overrides[symbol]["probation_offset_override"]["extra_conf_pct"] = 5.0
-
-    push_p = _write_and_push(PROPOSALS_FILE_D, proposals)
-    push_o = _write_and_push(OVERRIDES_FILE_D, overrides)
-    log.info(f"  ✅ [ADAPTATION] Approved {target['tag']} override for {symbol} via dashboard")
-    return jsonify({"ok": True, "proposal": target, "synced": bool(push_p and push_o)})
-
-
-@app.route("/api/adaptation_proposals/<proposal_id>/reject", methods=["POST", "OPTIONS"])
-def api_reject_proposal(proposal_id):
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
-    proposals = get(PROPOSALS_FILE_D, [])
-    if not isinstance(proposals, list): proposals = []
-    target = next((p for p in proposals if p.get("id") == proposal_id), None)
-    if not target:
-        return jsonify({"ok": False, "error": "Proposal not found"}), 404
-
-    target["status"] = "rejected"
-    target["rejected_at"] = datetime.now(timezone.utc).isoformat()
-    push_ok = _write_and_push(PROPOSALS_FILE_D, proposals)
-    return jsonify({"ok": True, "proposal": target, "synced": push_ok})
 
 @app.route("/api/scan", methods=["POST", "OPTIONS"])
 def api_scan():
@@ -1196,7 +1210,7 @@ def api_scan():
         try:
             r = requests.post(f"https://api.github.com/repos/{GH_REPO}/actions/workflows/{wf}/dispatches", headers=headers, json={"ref": GH_BRANCH, "inputs": {"mode": "scan"}}, timeout=15)
             if r.status_code in (200, 204):
-                for f in ["trades.json","balance.json","signals.json","bot.log"]: bust(f)
+                for f in ["trades.json","balance.json","signals.json","bot.log","predictions.json"]: bust(f)
                 return jsonify({"status": "triggered", "message": "Scan started — results appear in ~60s"})
         except Exception as e: log.warning(f"Workflow dispatch {wf} error: {e}")
     return jsonify({"error": "Could not trigger scan — check GH_PAT_TOKEN"}), 500
@@ -1270,65 +1284,7 @@ def api_kill_switch():
 
 def _extract_report_trades(payload: dict) -> list:
     trades = payload.get("trades")
-    if not isinstance(trades, list):
-        trades = []
-    return trades
-
-
-def _send_email_with_pdf(recipient: str, subject: str, body_text: str, pdf_bytes: bytes, filename: str) -> tuple:
-    # 1. Attempt Resend REST API (using default onboarding sender if REPORT_FROM_EMAIL is not set)
-    resend_key = os.getenv("RESEND_API_KEY", "")
-    report_from = os.getenv("REPORT_FROM_EMAIL", "CryptoBot AI <onboarding@resend.dev>")
-
-    if resend_key:
-        try:
-            resp = requests.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
-                json={
-                    "from": report_from,
-                    "to": [recipient],
-                    "subject": subject,
-                    "text": body_text,
-                    "attachments": [{
-                        "filename": filename,
-                        "content": base64.b64encode(pdf_bytes).decode("utf-8"),
-                    }],
-                },
-                timeout=15,
-            )
-            if resp.status_code in (200, 201, 202):
-                return True, "SENT (Resend)"
-            log.warning(f"Resend returned HTTP {resp.status_code}: {resp.text[:120]} — falling back to SMTP")
-        except Exception as e:
-            log.warning(f"Resend connection failed: {e} — falling back to SMTP")
-
-    # 2. Direct Fallback to Gmail SMTP using your existing Render SMTP_USER & SMTP_PASS
-    smtp_user = os.getenv("SMTP_USER", "")
-    smtp_pass = os.getenv("SMTP_PASS", "")
-
-    if smtp_user and smtp_pass:
-        try:
-            msg = MIMEMultipart()
-            msg["From"] = smtp_user
-            msg["To"] = recipient
-            msg["Subject"] = subject
-            msg.attach(MIMEText(body_text, "plain"))
-
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(pdf_bytes)
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f"attachment; filename={filename}")
-            msg.attach(part)
-
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=12) as server:
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, [recipient], msg.as_string())
-            return True, "SENT (SMTP)"
-        except Exception as e:
-            return False, f"SMTP error: {e}"
-
-    return False, "Neither Resend nor SMTP credentials could complete the dispatch."
+    return trades if isinstance(trades, list) else []
 
 
 @app.route("/api/download_report_pdf", methods=["POST", "OPTIONS"])
@@ -1336,7 +1292,7 @@ def api_download_report_pdf():
     if request.method == "OPTIONS":
         return jsonify({"ok": True}), 200
     if not HAS_REPORTLAB:
-        return jsonify({"ok": False, "error": "PDF generation unavailable — reportlab is not installed on the server."}), 500
+        return jsonify({"ok": False, "error": "PDF generation unavailable — reportlab not installed."}), 500
 
     payload = request.get_json(silent=True) or {}
     scope = payload.get("scope", "All Time")
@@ -1362,7 +1318,7 @@ def api_send_report():
     if request.method == "OPTIONS":
         return jsonify({"ok": True}), 200
     if not HAS_REPORTLAB:
-        return jsonify({"ok": False, "error": "PDF generation unavailable — reportlab is not installed on the server."}), 500
+        return jsonify({"ok": False, "error": "PDF generation unavailable — reportlab not installed."}), 500
 
     payload = request.get_json(silent=True) or {}
     recipient = str(payload.get("email", "")).strip()
@@ -1384,10 +1340,10 @@ def api_send_report():
         net_pnl = round(sum(float(t.get("pnl", 0) or 0) for t in trades if not t.get("pnl_unverified", False)), 2)
     filename = f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
 
-    sent_ok, send_error = _send_email_with_pdf(
+    sent_ok, status_msg = _send_email_with_pdf(
         recipient=recipient,
         subject=f"CryptoBot AI — Performance Report ({scope})",
-        body_text=f"Attached is your requested performance report.\n\nScope: {scope}\nTotal trades: {len(trades)}\nNet PnL: {net_pnl}",
+        body_text=f"Attached is your requested performance report.\n\nScope: {scope}\nTotal trades: {len(trades)}\nNet PnL: ${net_pnl}",
         pdf_bytes=pdf_bytes,
         filename=filename,
     )
@@ -1395,12 +1351,12 @@ def api_send_report():
     tracker = get(EMAIL_TRACKER_FILE, [])
     if not isinstance(tracker, list): tracker = []
     tracker.append({
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "recipient": recipient,
         "scope": scope,
         "total_trades": len(trades),
         "net_pnl": net_pnl,
-        "status": "SENT" if sent_ok else f"FAILED: {send_error}",
+        "status": status_msg,
     })
     for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
         try:
@@ -1412,13 +1368,14 @@ def api_send_report():
     gh_push(EMAIL_TRACKER_FILE, tracker)
 
     if not sent_ok:
-        return jsonify({"ok": False, "error": send_error}), 502
+        return jsonify({"ok": False, "error": status_msg}), 502
 
     return jsonify({
         "ok": True,
         "recipient": recipient,
         "total_trades": len(trades),
         "net_pnl": net_pnl,
+        "status": status_msg
     }), 200
 
 
@@ -1543,13 +1500,6 @@ def api_close_trade():
     push_trades = gh_push("trades.json", trades)
 
     bust("trades.json"); bust("trade_history.json"); bust("balance.json")
-
-    if not (push_hist and push_trades):
-        return jsonify({
-            "ok": True, "warning": "closed_on_exchange_but_sync_failed",
-            "message": f"{symbol} was flattened on Deribit, but GitHub commit failed. Next scan will reconcile.",
-            "symbol": symbol, "close_price": actual_close_price, "pnl": pnl, "pnl_unverified": is_unverified, "cancelled_orders": cancelled_orders
-        }), 200
 
     return jsonify({
         "ok": True, "status": "closed", "symbol": symbol,
