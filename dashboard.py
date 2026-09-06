@@ -750,40 +750,30 @@ def api_probation():
     return jsonify({"ok": True, "probated_coins": probated_coins})
 
 
-@app.route("/api/probation/release", methods=["POST", "OPTIONS"])
-def api_probation_release():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
-    data = request.get_json(silent=True) or {}
-    symbol = str(data.get("symbol", "")).strip().upper()
-    if not symbol:
-        return jsonify({"ok": False, "error": "Symbol is required"}), 400
-
+@app.route("/api/probation")
+def api_probation():
+    """Read-only view of reliability.json. Does NOT re-bench released coins."""
     rel = get(RELIABILITY_FILE, {})
     if not isinstance(rel, dict): rel = {}
+    now = time.time()
+    model_meta = get_model_metadata()
+    probated_coins = []
 
-    if symbol not in rel or not rel[symbol].get("is_benched", False):
-        return jsonify({"ok": False, "error": f"{symbol} is not currently on probation."}), 404
-
-    rel[symbol]["is_benched"] = False
-    rel[symbol]["benched_at"] = 0
-    rel[symbol]["probation_wins"] = 0
-    rel[symbol]["probation_consecutive_losses"] = 0
-    rel[symbol]["normal_consecutive_losses"] = 0
-    rel[symbol]["manually_released_at"] = datetime.now(timezone.utc).isoformat()
-
-    for p in [Path(RELIABILITY_FILE), Path("data") / RELIABILITY_FILE]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(rel, indent=2))
-        except Exception: pass
-    _cache[RELIABILITY_FILE] = rel
-    _cache_ts[RELIABILITY_FILE] = time.time()
-    push_ok = gh_push(RELIABILITY_FILE, rel)
-
-    log.info(f"  🔓 [MANUAL] {symbol} released from probation via dashboard")
-    return jsonify({"ok": True, "symbol": symbol, "status": "released", "synced": push_ok})
+    for symbol, data in rel.items():
+        if isinstance(data, dict) and data.get("is_benched", False):
+            benched_at = data.get("benched_at", 0)
+            time_left_sec = max(0, (7 * 86400) - (now - benched_at)) if benched_at > 0 else 0
+            probated_coins.append({
+                "symbol": symbol,
+                "probation_wins": data.get("probation_wins", 0),
+                "probation_consecutive_losses": data.get("probation_consecutive_losses", 0),
+                "time_left_hrs": round(time_left_sec / 3600, 1),
+                "required_buy_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
+                "required_sell_conf": round(model_meta["rec_sell_conf"] + 10.0, 1),
+                "required_conf": round(max(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"]) + 10.0, 1),
+                "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
+            })
+    return jsonify({"ok": True, "probated_coins": probated_coins})
 
 
 @app.route("/api/cooldown")
@@ -1286,34 +1276,59 @@ def _extract_report_trades(payload: dict) -> list:
 
 
 def _send_email_with_pdf(recipient: str, subject: str, body_text: str, pdf_bytes: bytes, filename: str) -> tuple:
-    api_key = os.getenv("RESEND_API_KEY", "")
-    from_email = os.getenv("REPORT_FROM_EMAIL", "")
+    # 1. Attempt Resend REST API (using default onboarding sender if REPORT_FROM_EMAIL is not set)
+    resend_key = os.getenv("RESEND_API_KEY", "")
+    report_from = os.getenv("REPORT_FROM_EMAIL", "CryptoBot AI <onboarding@resend.dev>")
 
-    if not api_key or not from_email:
-        return False, ("Email sending is not configured. Set RESEND_API_KEY and REPORT_FROM_EMAIL "
-                        "environment variables to enable this feature.")
+    if resend_key:
+        try:
+            resp = requests.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                json={
+                    "from": report_from,
+                    "to": [recipient],
+                    "subject": subject,
+                    "text": body_text,
+                    "attachments": [{
+                        "filename": filename,
+                        "content": base64.b64encode(pdf_bytes).decode("utf-8"),
+                    }],
+                },
+                timeout=15,
+            )
+            if resp.status_code in (200, 201, 202):
+                return True, "SENT (Resend)"
+            log.warning(f"Resend returned HTTP {resp.status_code}: {resp.text[:120]} — falling back to SMTP")
+        except Exception as e:
+            log.warning(f"Resend connection failed: {e} — falling back to SMTP")
 
-    try:
-        resp = requests.post(
-            "https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "from": from_email,
-                "to": [recipient],
-                "subject": subject,
-                "text": body_text,
-                "attachments": [{
-                    "filename": filename,
-                    "content": base64.b64encode(pdf_bytes).decode("utf-8"),
-                }],
-            },
-            timeout=15,
-        )
-        if resp.status_code in (200, 201, 202):
-            return True, None
-        return False, f"Email provider returned HTTP {resp.status_code}: {resp.text[:200]}"
-    except Exception as e:
-        return False, f"Email send failed: {e}"
+    # 2. Direct Fallback to Gmail SMTP using your existing Render SMTP_USER & SMTP_PASS
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+
+    if smtp_user and smtp_pass:
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = smtp_user
+            msg["To"] = recipient
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body_text, "plain"))
+
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(pdf_bytes)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f"attachment; filename={filename}")
+            msg.attach(part)
+
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=12) as server:
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [recipient], msg.as_string())
+            return True, "SENT (SMTP)"
+        except Exception as e:
+            return False, f"SMTP error: {e}"
+
+    return False, "Neither Resend nor SMTP credentials could complete the dispatch."
 
 
 @app.route("/api/download_report_pdf", methods=["POST", "OPTIONS"])
