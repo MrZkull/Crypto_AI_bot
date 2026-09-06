@@ -1537,7 +1537,6 @@ def check_open_trades(deribit: DeribitClient):
                     if already_flat: sl_hit = True
 
                 sl_breached = stop > 0 and ((signal == "BUY" and live <= stop * 0.999) or (signal == "SELL" and live >= stop * 1.001))
-                sl_not_waiting = sl_state not in ("untriggered", "open") or not sl_state
 
                 mark_price = deribit.get_mark_price(symbol)
                 mark_breached = stop > 0 and (
@@ -1545,7 +1544,30 @@ def check_open_trades(deribit: DeribitClient):
                     (signal == "SELL" and mark_price >= stop * 1.002)
                 )
 
-                if mark_breached and sl_not_waiting and not sl_hit:
+                # ── HEARTBEAT: alert on unresolved breach BEFORE attempting
+                # the emergency close, independent of whether that close
+                # succeeds — so a stuck exchange trigger is never silent. ──
+                heartbeat_attr = f"_breach_streak_{symbol}"
+                if (mark_breached or sl_breached) and not sl_hit:
+                    streak = getattr(check_open_trades, heartbeat_attr, 0) + 1
+                    setattr(check_open_trades, heartbeat_attr, streak)
+                    if streak >= 2:
+                        _send(f"🚨 *UNRESOLVED BREACH — {symbol}*\n"
+                              f"Price past SL for {streak} consecutive scans; exchange trigger "
+                              f"state=`{sl_state}`. Attempting emergency close now — verify manually if this repeats.")
+                else:
+                    setattr(check_open_trades, heartbeat_attr, 0)
+
+                # FIX: the old `sl_not_waiting` gate required the SL order's
+                # own reported state to be OUT of "untriggered"/"open" before
+                # allowing an emergency close — but that's precisely the
+                # normal, expected state of a healthy, unfired stop order.
+                # That inverted the safety net: it refused to intervene
+                # exactly when the exchange's trigger mechanism was stuck.
+                # deribit.is_sl_triggered(sl_o) above already correctly
+                # handles the "fired normally" case — that's the only gate
+                # this needs. Gate removed from both branches below.
+                if mark_breached and not sl_hit:
                     try:
                         _cancel_all_open_orders_for_symbol(deribit, symbol)
                         close_side, close_qty = _get_safe_close_info(deribit, symbol, trade)
@@ -1554,7 +1576,7 @@ def check_open_trades(deribit: DeribitClient):
                         sl_hit = True
                     except Exception as e: log.error(f"  Mark-breach close {symbol}: {e}")
 
-                if not sl_hit and sl_breached and sl_not_waiting:
+                if not sl_hit and sl_breached:
                     try:
                         _cancel_all_open_orders_for_symbol(deribit, symbol)
                         close_side, close_qty = _get_safe_close_info(deribit, symbol, trade)
