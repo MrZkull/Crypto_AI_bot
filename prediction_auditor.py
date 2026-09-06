@@ -92,7 +92,6 @@ def audit_one(pred):
 
     lookahead = pred.get("lookahead_bars", LOOKAHEAD_BARS)
     start_ms  = int(gen_at.timestamp() * 1000)
-    # FIX (bug 2): end_ms and requested limit now agree on the same grace window
     end_ms    = start_ms + BAR_MINUTES * 60 * 1000 * (lookahead + AUDIT_GRACE_BARS)
 
     klines = fetch_klines_range(symbol, start_ms, end_ms, limit=lookahead + AUDIT_GRACE_BARS)
@@ -117,8 +116,6 @@ def audit_one(pred):
         if h >= sell_sl: break
         if l <= sell_tp: sell_success = True; break
 
-    # FIX (bug 3): NO_TRADE now genuinely distinguishes "correctly saw nothing"
-    # from "missed a clean setup" instead of falling through silently.
     if sig == "NO_TRADE":
         if buy_success and not sell_success:
             ground_truth = "MISSED_BUY"
@@ -138,8 +135,6 @@ def audit_one(pred):
 
     pred["ground_truth_label"] = ground_truth
 
-    # FIX (bug 1): MFE/MAE now correctly measured as distance-from-entry in
-    # ATR multiples, with both BUY and SELL cases implemented.
     if sig == "BUY":
         pred["mfe_atr"] = round((max(highs, default=entry) - entry) / atr, 2)
         pred["mae_atr"] = round((entry - min(lows,  default=entry)) / atr, 2)
@@ -160,15 +155,21 @@ def update_coin_dossier(audited_preds):
         if p.get("correct") is None:
             continue
         sym = p["symbol"]
-        if sym not in dossier:
-            dossier[sym] = {
-                "total_audited": 0, "total_correct": 0,
-                "disagreement_correct_sum": 0.0, "disagreement_incorrect_sum": 0.0,
-                "disagreement_correct_n": 0, "disagreement_incorrect_n": 0,
-                "by_confidence_bucket": {},
-                "tags": {},
-            }
+        
+        # DEFENSIVE INITIALIZATION: Guarantees keys exist regardless of who touched dossier first
+        if sym not in dossier or not isinstance(dossier[sym], dict):
+            dossier[sym] = {}
+            
         d = dossier[sym]
+        d.setdefault("total_audited", 0)
+        d.setdefault("total_correct", 0)
+        d.setdefault("disagreement_correct_sum", 0.0)
+        d.setdefault("disagreement_incorrect_sum", 0.0)
+        d.setdefault("disagreement_correct_n", 0)
+        d.setdefault("disagreement_incorrect_n", 0)
+        d.setdefault("by_confidence_bucket", {})
+        d.setdefault("tags", {})
+
         d["total_audited"] += 1
         d["total_correct"] += int(p["correct"])
 
@@ -189,15 +190,14 @@ def update_coin_dossier(audited_preds):
 
 
 def get_coin_calibration_hit_rate(symbol: str, confidence: float, dossier: dict) -> float:
-    """Used by failure_taxonomy.py's MODEL_OVERCONFIDENT check."""
     d = dossier.get(symbol)
     if not d:
-        return 1.0  # no data yet — don't penalize
+        return 1.0
     bucket = "45-55" if confidence < 55 else "55-65" if confidence < 65 else "65-75" if confidence < 75 else "75+"
     b = d.get("by_confidence_bucket", {}).get(bucket)
-    if not b or b["n"] < 5:
-        return 1.0  # not enough samples to trust yet
-    return b["correct"] / b["n"]
+    if not b or b.get("n", 0) < 5:
+        return 1.0
+    return b["correct"] / b["n"] if b["n"] > 0 else 1.0
 
 
 def run_audit():
@@ -238,3 +238,4 @@ def run_audit():
 
 if __name__ == "__main__":
     run_audit()
+    
