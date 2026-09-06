@@ -56,15 +56,17 @@ jobs:
 
       - name: Init state files if missing
         run: |
-          [ -f trades.json ]            || echo '{}' > trades.json
-          [ -f trade_history.json ]     || echo '[]' > trade_history.json
-          [ -f signals.json ]           || echo '[]' > signals.json
-          [ -f scan_mode.json ]         || echo '{}' > scan_mode.json
-          [ -f balance.json ]           || echo '{}' > balance.json
-          [ -f orphan_candidates.json ] || echo '{}' > orphan_candidates.json
-          [ -f scan_status.json ]       || echo '{}' > scan_status.json
-          [ -f predictions.json ]       || echo '[]' > predictions.json
+          [ -f trades.json ]               || echo '{}' > trades.json
+          [ -f trade_history.json ]        || echo '[]' > trade_history.json
+          [ -f signals.json ]              || echo '[]' > signals.json
+          [ -f scan_mode.json ]            || echo '{}' > scan_mode.json
+          [ -f balance.json ]              || echo '{}' > balance.json
+          [ -f orphan_candidates.json ]    || echo '{}' > orphan_candidates.json
+          [ -f scan_status.json ]          || echo '{}' > scan_status.json
+          [ -f predictions.json ]          || echo '[]' > predictions.json
           [ -f adaptation_overrides.json ] || echo '{}' > adaptation_overrides.json
+          [ -f coin_dossier.json ]         || echo '{}' > coin_dossier.json
+          [ -f adaptation_proposals.json ] || echo '[]' > adaptation_proposals.json
           mkdir -p data
 
       - name: Run bot
@@ -136,3 +138,4 @@ jobs:
 
           git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
           git push origin main
+          
