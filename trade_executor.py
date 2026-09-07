@@ -911,6 +911,21 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     entry  = sig["entry"]
     atr    = sig["atr"]
 
+    # ── Capital-Simulation Override ──────────────────────────────────
+    # When SIMULATED_CAPITAL_USD is set in config.py, ALL risk-sizing math
+    # (contract qty, risk_usd, the min-lot clamp) uses this value instead of
+    # the real testnet account balance. This is deliberate: the real testnet
+    # wallet can stay funded at whatever level Deribit requires for margin/
+    # execution to work smoothly, while every SIZING decision behaves exactly
+    # as it would on the real mainnet capital you're actually planning to
+    # trade with. Set to None to size off the real balance (e.g. once you've
+    # genuinely moved to mainnet with real capital and want the bot reading
+    # its own true equity again).
+    sizing_balance = getattr(config, "SIMULATED_CAPITAL_USD", None) or balance
+    if getattr(config, "SIMULATED_CAPITAL_USD", None):
+        log.info(f"  🧪 [CAPITAL SIM] Sizing against simulated ${sizing_balance:.2f} "
+                 f"(real testnet balance: ${balance:.2f})")
+
     # ── NEW: approved adaptation override for this symbol, if any ──
     sym_overrides = get_symbol_overrides(symbol)
     effective_stop_mult = ATR_STOP_MULT
@@ -1031,12 +1046,12 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         risk_boost = 1.5 if sig.get("conf_tier") == "high" else 1.0
         final_risk_mult = risk_mult * risk_boost * vol_scalar
 
-    total_q = deribit.calc_contracts(symbol, balance, entry, stop, final_risk_mult)
+    total_q = deribit.calc_contracts(symbol, sizing_balance, entry, stop, final_risk_mult)
     min_lot = deribit.get_min_trade_amount(symbol)
 
     if total_q < min_lot and sig.get("fg_override", False):
         min_lot_risk = abs(entry - stop) * min_lot
-        max_allowed_normal_risk = balance * RISK_PER_TRADE * 1.0
+        max_allowed_normal_risk = sizing_balance * RISK_PER_TRADE * 1.0
         if min_lot_risk <= max_allowed_normal_risk:
             total_q = min_lot
             log.info(f"  ℹ️ [FG_OVERRIDE_SIZING] Clamped to min lot ({min_lot} {symbol}) | Risk: ${min_lot_risk:.2f} <= ${max_allowed_normal_risk:.2f}")
@@ -1051,7 +1066,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     qty_tp1, qty_tp2 = deribit.split_amount(symbol, total_q)
     exit_mode = "DUAL_TP" if qty_tp2 > 0 else "SINGLE_TP"
     
-    budget_risk_usd = round(balance * RISK_PER_TRADE * final_risk_mult, 2)
+    budget_risk_usd = round(sizing_balance * RISK_PER_TRADE * final_risk_mult, 2)
     actual_risk_usd = round(abs(entry - stop) * total_q, 2)
 
     log.info(f"  {signal} {symbol} Total={total_q} (TP1={qty_tp1}, TP2={qty_tp2} | Mode={exit_mode}) | Real Risk=${actual_risk_usd:.2f} (Budget: ${budget_risk_usd:.2f})")
@@ -1188,7 +1203,8 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         "symbol": symbol, "signal": signal, "entry": actual_entry,
         "stop": stop, "tp1": tp1, "tp2": tp2,
         "qty": total_q, "qty_tp1": qty_tp1, "qty_tp2": qty_tp2,
-        "risk_usd": actual_risk_usd, "budget_risk_usd": budget_risk_usd, "balance_at_open": balance,
+        "risk_usd": actual_risk_usd, "budget_risk_usd": budget_risk_usd,
+        "balance_at_open": balance, "sizing_balance_at_open": sizing_balance,
         "risk_mult": final_risk_mult, "exit_mode": exit_mode,
         "order_ids": order_ids,
         "opened_at": datetime.now(timezone.utc).isoformat(),
