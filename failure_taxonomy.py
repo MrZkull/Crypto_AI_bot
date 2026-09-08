@@ -147,13 +147,21 @@ ADAPTATION_RULES = {
 
 def propose_adaptations(dossier):
     proposals = load_json(PROPOSALS_FILE, [])
-    existing_keys = {(p["symbol"], p["tag"]) for p in proposals if p.get("status") == "pending"}
+    overrides = load_json("adaptation_overrides.json", {})
+    
+    # FIX: Block re-proposing if already pending OR approved OR already active in overrides
+    existing_keys = {
+        (p["symbol"], p["tag"]) for p in proposals 
+        if p.get("status") in ("pending", "approved")
+    }
 
     for symbol, d in dossier.items():
         tags = d.get("tags", {})
         for tag, rule in ADAPTATION_RULES.items():
             count = tags.get(tag, 0)
-            if count >= rule["min_occurrences"] and (symbol, tag) not in existing_keys:
+            already_overridden = symbol in overrides and rule["param"] in overrides[symbol]
+            
+            if count >= rule["min_occurrences"] and (symbol, tag) not in existing_keys and not already_overridden:
                 proposals.append({
                     "id": f"{symbol}_{tag}_{int(time.time())}",
                     "symbol": symbol,
@@ -166,6 +174,7 @@ def propose_adaptations(dossier):
                 })
     save_json(PROPOSALS_FILE, proposals)
     return proposals
+
 
 
 def run_failure_audit():
