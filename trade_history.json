@@ -14233,5 +14233,63 @@
     "mfe_atr": 1.3,
     "mae_atr": 6.86,
     "failure_tag": "UNCLASSIFIED"
+  },
+  {
+    "symbol": "XRPUSDT",
+    "signal": "BUY",
+    "entry": 1.40059604,
+    "stop": 1.3894,
+    "tp1": 1.4163,
+    "tp2": 1.4342,
+    "qty": 1880.0,
+    "qty_tp1": 1880,
+    "qty_tp2": 1879,
+    "risk_usd": 42.1,
+    "budget_risk_usd": 3556.31,
+    "balance_at_open": 105336.67,
+    "sizing_balance_at_open": 105336.67,
+    "risk_mult": 1.1253778920161357,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049226372415839",
+      "stop_loss": "USDC-SLMS-44040",
+      "tp1": "USDC-210049226372422754",
+      "tp2": "USDC-210049226372423480"
+    },
+    "opened_at": "2026-09-08T10:03:31.113257+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 40.0,
+    "score": 5,
+    "reasons": [
+      "Valid conf (40%)",
+      "Strong ADX 34",
+      "RSI not overbought (62)",
+      "4h trend aligns (RSI 49)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfc6 Proven Winners",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "XRPUSDT_1788861807631",
+    "snapshot": {
+      "entry_atr": 0.004479775225518395,
+      "rsi_15m": 62.459001272635135,
+      "adx_15m": 34.2769508679144,
+      "rsi_4h": 48.99384777301459,
+      "ema_4h_bullish": true,
+      "fng_value": 69,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.8730377969297217,
+      "btc_beta_20": 1.3175898538048536
+    },
+    "stop_mult_used": 2.5,
+    "close_price": 1.4163,
+    "pnl": 29.5234,
+    "closed_at": "2026-09-08T15:55:34.761471+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
   }
 ]
