@@ -44,33 +44,44 @@ def _get_time_risk_mult() -> float:
     return 1.0
 
 
-def get_drawdown_ratchet() -> float:
-    try:
-        bal, hist = {}, []
-        for p in [Path("balance.json"), Path("data/balance.json")]:
-            if p.exists():
+def _get_account_balance() -> float:
+    """Safely retrieves account equity across multiple possible file locations."""
+    for p in [Path("balance.json"), Path("data/balance.json")]:
+        if p.exists():
+            try:
                 with open(p) as f:
                     bal = json.load(f)
-                    break
-        for p in [Path("trade_history.json"), Path("data/trade_history.json")]:
-            if p.exists():
-                with open(p) as f:
-                    hist = json.load(f)
-                    break
-                
-        current_balance = float(bal.get("usdt", 0) or 0)
+                    return float(bal.get("equity") or bal.get("usdt") or 0)
+            except Exception:
+                pass
+    return 0.0
+
+
+def get_drawdown_ratchet() -> float:
+    try:
+        current_balance = _get_account_balance()
         if current_balance <= 0:
             return 1.0
+
+        hist = []
+        for p in [Path("trade_history.json"), Path("data/trade_history.json")]:
+            if p.exists():
+                try:
+                    with open(p) as f:
+                        hist = json.load(f)
+                        break
+                except Exception:
+                    pass
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         today_pl = sum(
             float(h.get("pnl", 0) or 0) for h in hist
-            if (h.get("closed_at", "") or h.get("opened_at", ""))[:10] == today
-            and "Ghost" not in h.get("close_reason", "")
+            if str(h.get("closed_at") or h.get("opened_at") or "")[:10] == today
+            and "Ghost" not in str(h.get("close_reason", ""))
         )
-        
+
         drawdown_pct = (today_pl / current_balance) * 100
-        
+
         if drawdown_pct <= -5.0:
             log.warning(f"🚨 MAX DRAWDOWN ({drawdown_pct:.1f}%) — Trading Halted")
             return 0.0
@@ -96,13 +107,13 @@ def get_scan_mode() -> dict:
 
     if is_weekend:
         return {
-            "mode": "weekend_active" if is_active else "weekend_quiet", 
+            "mode": "weekend_active" if is_active else "weekend_quiet",
             "label": "WEEKEND ACTIVE" if is_active else "WEEKEND QUIET",
             "emoji": "📅",
             "min_confidence": base_conf,
-            "min_score": base_score if is_active else (base_score + 1), 
+            "min_score": base_score if is_active else (base_score + 1),
             "min_adx": (base_adx + 3) if is_active else (base_adx + 7),
-            "interval_min": 15 if is_active else 30, 
+            "interval_min": 15 if is_active else 30,
             "risk_mult": round((0.85 if is_active else 0.50) * time_mult, 3),
         }
 
@@ -130,12 +141,10 @@ def get_scan_mode() -> dict:
 
 
 def check_fear_and_greed() -> dict:
-    """Fetches F&G for UI labeling, scoring bias, and extreme exhaustion blocks."""
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
         val = int(r.json()["data"][0]["value"])
-        
-        # Standard 5-tier classification
+
         if val >= 75:
             bias, score_mod, label = "SELL", 1, "Extreme Greed"
             msg = f"Extreme Greed ({val}) — SELL Bias"
@@ -153,12 +162,11 @@ def check_fear_and_greed() -> dict:
             msg = f"Neutral ({val})"
 
         return {
-            "bias": bias, 
-            "score_mod": score_mod, 
+            "bias": bias,
+            "score_mod": score_mod,
             "message": msg,
             "value": val,
             "label": label,
-            # Hard blocks reserved exclusively for terminal exhaustion
             "fg_blocks_sell": val <= 15,
             "fg_blocks_buy":  val >= 85,
         }
@@ -178,7 +186,7 @@ def check_btc_momentum() -> dict:
             timeout=10
         )
         data = r.json()
-        if len(data) >= 2:
+        if isinstance(data, list) and len(data) >= 2:
             prev_close, curr_close = float(data[0][4]), float(data[1][4])
             pct_change = ((curr_close - prev_close) / prev_close) * 100
             if pct_change >= 1.5:
@@ -197,13 +205,17 @@ def check_btc_volatility() -> dict:
             params={"symbol": "BTCUSDT", "interval": "15m", "limit": 30},
             timeout=10
         )
+        raw = r.json()
+        if not isinstance(raw, list) or len(raw) < 15:
+            return {"status": "NORMAL", "risk_mult": 1.0, "skip": False, "message": "BTC vol data fallback"}
+
         df = pd.DataFrame(
-            r.json(),
+            raw,
             columns=["open_time","open","high","low","close","volume","close_time","quote_vol","trades","tb_base","tb_quote","ignore"]
         )
         for c in ["high", "low", "close"]:
             df[c] = pd.to_numeric(df[c])
-            
+
         prev_c = df["close"].shift(1)
         df["tr"] = pd.concat([df["high"] - df["low"], (df["high"] - prev_c).abs(), (df["low"] - prev_c).abs()], axis=1).max(axis=1)
         atr = df["tr"].rolling(14).mean().iloc[-1]
@@ -223,27 +235,25 @@ def check_btc_volatility() -> dict:
 
 def check_daily_pnl_advisory() -> str:
     try:
-        bal = {}
-        for p in [Path("balance.json"), Path("data/balance.json")]:
-            if p.exists():
-                with open(p) as f:
-                    bal = json.load(f)
-                    break
-        current_balance = float(bal.get("usdt", 0) or 0)
+        current_balance = _get_account_balance()
         if current_balance <= 0:
             return ""
+
         hist = []
         for p in [Path("trade_history.json"), Path("data/trade_history.json")]:
             if p.exists():
-                with open(p) as f:
-                    hist = json.load(f)
-                    break
+                try:
+                    with open(p) as f:
+                        hist = json.load(f)
+                        break
+                except Exception:
+                    pass
+
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         today_pl = sum(
             float(h.get("pnl", 0) or 0) for h in hist
-            if (h.get("closed_at", "") or h.get("opened_at", ""))[:10] == today
-            and "Ghost" not in h.get("close_reason", "")
-            and "auto-removed" not in h.get("close_reason", "")
+            if str(h.get("closed_at") or h.get("opened_at") or "")[:10] == today
+            and "Ghost" not in str(h.get("close_reason", ""))
         )
         if today_pl < -(current_balance * 0.05):
             return f"⚠️ Daily loss advisory: {today_pl:.2f} USDT"
@@ -267,7 +277,7 @@ def check_correlation(trades: dict, new_signal: str, new_symbol: str) -> bool:
         "DeFi_Infrastructure": ["UNIUSDT", "AAVEUSDT", "LINKUSDT", "CRVUSDT"],
         "High_Beta_Ecosystem": ["ENAUSDT", "DOGEUSDT", "TRUMPUSDT", "PUMPUSDT", "SUIUSDT", "AVAXUSDT", "ZECUSDT", "HBARUSDT", "FILUSDT"],
     }
-    
+
     for sector, coins in SECTOR_MAP.items():
         if new_symbol in coins:
             sector_open = sum(1 for t in trades.values() if t.get("symbol") in coins and not t.get("closed", False))
@@ -287,15 +297,15 @@ def should_scan() -> tuple:
         f"| score≥{mode['min_score']} | ADX≥{mode['min_adx']} "
         f"| risk_mult={mode['risk_mult']} | {vol['message']}"
     )
-             
+
     if vol.get("skip") or mode.get("risk_mult", 1.0) == 0.0:
         skip_reason = vol["message"] if vol.get("skip") else mode["label"]
         return False, mode, vol, skip_reason
-        
+
     advisory = check_daily_pnl_advisory()
     if advisory:
         log.warning(advisory)
-    
+
     return True, mode, vol, f"{mode['label']}"
 
 
@@ -311,3 +321,4 @@ def get_mode_thresholds(mode: dict) -> dict:
 def get_effective_risk(mode: dict, vol: dict) -> float:
     ratchet = get_drawdown_ratchet()
     return max(mode.get("risk_mult", 1.0) * vol.get("risk_mult", 1.0) * ratchet, 0.25) if ratchet > 0 else 0.0
+    
