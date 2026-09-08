@@ -507,7 +507,7 @@ def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, 
         return ""
 
     try:
-        res = deribit.place_limit_order(symbol, side, qty, price, use_reduce_only=False)
+        res = deribit.place_limit_order(symbol, side, qty, price, use_reduce_only=True)
         o   = res.get("order", res)
         oid = str(o.get("order_id", ""))
         if oid:
