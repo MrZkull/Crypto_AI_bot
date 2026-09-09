@@ -14413,11 +14413,7 @@
     "close_price": 6.68737,
     "pnl": -27.9852,
     "closed_at": "2026-09-09T11:57:47.222330+00:00",
-    "close_reason": "STOPPED OUT \u274c",
-    "failure_tagged": true,
-    "mfe_atr": 4.37,
-    "mae_atr": 4.39,
-    "failure_tag": "PREMATURE_WHIPSAW"
+    "close_reason": "STOPPED OUT \u274c"
   },
   {
     "symbol": "TRXUSDT",
@@ -14476,11 +14472,7 @@
     "pnl": 8.9584,
     "closed_at": "2026-09-09T11:57:48.490237+00:00",
     "close_reason": "TP1 hit [order]",
-    "partial": true,
-    "failure_tagged": true,
-    "mfe_atr": 4.46,
-    "mae_atr": -0.79,
-    "failure_tag": null
+    "partial": true
   },
   {
     "symbol": "BNBUSDT",
@@ -14539,10 +14531,66 @@
     "close_price": 751.1244,
     "pnl": -7.7536,
     "closed_at": "2026-09-09T11:57:50.864117+00:00",
-    "close_reason": "Time exit (15h [PRE-TP1 STALL])",
-    "failure_tagged": true,
-    "mfe_atr": 3.04,
-    "mae_atr": 2.8,
-    "failure_tag": "PREMATURE_WHIPSAW"
+    "close_reason": "Time exit (15h [PRE-TP1 STALL])"
+  },
+  {
+    "symbol": "BNBUSDT",
+    "signal": "BUY",
+    "entry": 750.4833,
+    "stop": 745.95,
+    "tp1": 756.82,
+    "tp2": 0,
+    "qty": 0.001,
+    "qty_tp1": 0.001,
+    "qty_tp2": 0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMS-44484",
+      "tp1": "USDC-210049226762893783"
+    },
+    "opened_at": "2026-09-09T12:21:35.735565+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": true,
+    "confidence": 50.0,
+    "score": 5,
+    "reasons": [
+      "Healed Bracket Attachment via Dashboard"
+    ],
+    "tier": "Repaired",
+    "exchange": "deribit_testnet",
+    "close_price": 745.9471,
+    "pnl": -0.0045,
+    "closed_at": "2026-09-09T13:55:52.504910+00:00",
+    "close_reason": "STOPPED OUT \u274c"
+  },
+  {
+    "symbol": "ETHUSDT",
+    "signal": "SELL",
+    "entry": 2501.2,
+    "stop": 2519.59,
+    "tp1": 2475.45,
+    "tp2": 0,
+    "qty": 1.0573,
+    "qty_tp1": 1.0573,
+    "qty_tp2": 0,
+    "order_ids": {
+      "stop_loss": "USDC-SLMB-44485",
+      "tp1": "USDC-210049226762908716"
+    },
+    "opened_at": "2026-09-09T12:21:40.470794+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 50.0,
+    "score": 5,
+    "reasons": [
+      "Healed Bracket Attachment via Dashboard"
+    ],
+    "tier": "Repaired",
+    "exchange": "deribit_testnet",
+    "close_price": 2519.45,
+    "pnl": -19.2957,
+    "closed_at": "2026-09-09T13:55:54.288975+00:00",
+    "close_reason": "SL hit"
   }
 ]
