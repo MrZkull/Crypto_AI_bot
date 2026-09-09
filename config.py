@@ -1,4 +1,4 @@
-# config.py — V12.7: Micro-Capital Universe with 2-Tier Timeouts & EV Authority
+# config.py — V12.8: Micro-Capital Universe with 2-Tier Timeouts & Centralized Probation Offset
 
 # ── File Paths ────────────────────────────────────────────────────────
 RAW_DATA_FILE = "data/crypto_historical_15m_expanded.csv"
@@ -72,14 +72,14 @@ TIER_NEW_VERIFIED = [
     # "PAXGUSDT",   # 🔒 Gold Peg
 ]
 
-# Active Universe (24 Pairs with High Liquidity + Sizing Fit)
+# Active Universe (25 Pairs with High Liquidity + Sizing Fit)
 SYMBOLS = TIER_BIG3 + TIER_PROVEN + TIER_MICRO_GEMS + TIER_MAJORS_ALTS + TIER_NEW_VERIFIED
 
 COIN_TIERS = {
-    "big3":         {"label": "👑 Majors",                 "coins": TIER_BIG3},
-    "proven":       {"label": "🏆 Proven Winners",         "coins": TIER_PROVEN},
-    "micro_gems":   {"label": "💎 Micro-Granular Gems",     "coins": TIER_MICRO_GEMS},
-    "majors_alt":   {"label": "🏛 Deep Liquidity Alts",     "coins": TIER_MAJORS_ALTS},
+    "big3":         {"label": "👑 Majors",                  "coins": TIER_BIG3},
+    "proven":       {"label": "🏆 Proven Winners",          "coins": TIER_PROVEN},
+    "micro_gems":   {"label": "💎 Micro-Granular Gems",      "coins": TIER_MICRO_GEMS},
+    "majors_alt":   {"label": "🏛 Deep Liquidity Alts",      "coins": TIER_MAJORS_ALTS},
     "new_verified": {"label": "🧪 Verified Regime Additions","coins": TIER_NEW_VERIFIED},
 }
 
@@ -97,20 +97,18 @@ LIVE_LIMIT        = 300
 SCAN_INTERVAL_MIN = 15
 
 # ── Strategy & Filter Baselines ───────────────────────────────────────
-# NOTE: MIN_CONFIDENCE is used to scale Quiet Hours & Probation modes dynamically.
-# Live trade execution is governed natively by EV-calibrated model metadata 
-# (recommended_threshold_buy / recommended_threshold_sell) in pro_crypto_ai_model.pkl.
 MIN_CONFIDENCE    = 50.0
 MIN_ADX           = 15.0
 MIN_SCORE         = 3
 
 # ── Risk Management Parameters ────────────────────────────────────────
-RISK_PER_TRADE     = 0.03   # 3.0% of equity
-MAX_OPEN_TRADES    = 8      # Max concurrent positions
-MAX_SAME_DIRECTION = 4      # Max BUY or SELL
-ATR_STOP_MULT      = 2.5    # SL = entry ± 2.5 × ATR
-ATR_TARGET1_MULT   = 3.5    # TP1 = entry ± 3.5 × ATR (50% position exit)
-ATR_TARGET2_MULT   = 7.5    # TP2 = entry ± 7.5 × ATR (50% runner exit)
+RISK_PER_TRADE              = 0.03   # 3.0% of equity
+MAX_OPEN_TRADES             = 8      # Max concurrent positions
+MAX_SAME_DIRECTION          = 4      # Max BUY or SELL
+ATR_STOP_MULT               = 2.5    # SL = entry ± 2.5 × ATR
+ATR_TARGET1_MULT            = 3.5    # TP1 = entry ± 3.5 × ATR (50% position exit)
+ATR_TARGET2_MULT            = 7.5    # TP2 = entry ± 7.5 × ATR (50% runner exit)
+PROBATION_CONFIDENCE_OFFSET = 10.0   # +10.0% confidence hurdle for benched coins
 
 # ── Stale Position Circuit Breakers (Two-Tier Horizon) ────────────────
 MAX_TRADE_AGE_HOURS_PRE_TP1  = 12   # Stale exit for unproven trades (edge decay cutoff)
