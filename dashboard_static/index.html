@@ -1341,21 +1341,64 @@ async function fetchIntel() {
       </div>      
       <div style="font-size:10px;color:var(--text2);margin:6px 0">${p.suggested_change}</div>      
       <div style="display:flex;gap:8px;justify-content:flex-end">        
-        <button class="fbtn" style="border-color:var(--red);color:var(--red)" onclick="rejectProposal('${p.id}')">✕ Reject</button>        
-        <button class="fbtn" style="border-color:var(--green);color:var(--green)" onclick="approveProposal('${p.id}')">✓ Approve</button>      
+        <button class="fbtn" style="border-color:var(--red);color:var(--red)" onclick="rejectProposal('${p.id}', this)">✕ Reject</button>
+        <button class="fbtn" style="border-color:var(--green);color:var(--green)" onclick="approveProposal('${p.id}', this)">✓ Approve</button>      
       </div>    
     </div>`).join('') : '<div class="empty"><div class="emsg">No pending proposals</div></div>';
 }
 
-async function approveProposal(id) {  
-  if (!confirm('Approve this adaptation? It will take effect on the next scan.')) return;  
-  await fetch(`/api/adaptation_proposals/${id}/approve`, {method:'POST'});  
-  fetchIntel();
+async function approveProposal(id, btn) {
+  if (!confirm('Approve this adaptation? It will take effect on the next scan.')) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Applying...';
+  }
+  try {
+    const res = await fetch(`/api/adaptation_proposals/${id}/approve`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      await fetchIntel();
+    } else {
+      alert(`🚨 Approval Failed: ${data.error || data.message || `HTTP ${res.status}`}`);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '✓ Approve';
+      }
+    }
+  } catch (err) {
+    alert(`🚨 Connection Error: ${err.message}`);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '✓ Approve';
+    }
+  }
 }
 
-async function rejectProposal(id) {  
-  await fetch(`/api/adaptation_proposals/${id}/reject`, {method:'POST'});  
-  fetchIntel();
+async function rejectProposal(id, btn) {
+  if (!confirm('Reject and dismiss this adaptation proposal?')) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Rejecting...';
+  }
+  try {
+    const res = await fetch(`/api/adaptation_proposals/${id}/reject`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      await fetchIntel();
+    } else {
+      alert(`🚨 Rejection Failed: ${data.error || data.message || `HTTP ${res.status}`}`);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '✕ Reject';
+      }
+    }
+  } catch (err) {
+    alert(`🚨 Connection Error: ${err.message}`);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '✕ Reject';
+    }
+  }
 }
 
 function renderTradeCard(t) {
