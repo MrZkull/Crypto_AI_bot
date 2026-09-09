@@ -1,4 +1,4 @@
-# dashboard.py — V5.16: Unified Production Control Plane
+# dashboard.py — V5.17: Dynamic Hurdles, Conflict-Resilient Git Push & Margin-Free Healing
 
 import os
 import json
@@ -24,7 +24,6 @@ from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 
-# Force IPv4 socket resolution to prevent Render IPv6 timeouts with Gmail SMTP
 orig_getaddrinfo = socket.getaddrinfo
 def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -88,6 +87,7 @@ def get_live_config():
             "atr_target2_mult": float(getattr(config, "ATR_TARGET2_MULT", 7.5)),
             "max_trade_age_hours_pre_tp1": int(getattr(config, "MAX_TRADE_AGE_HOURS_PRE_TP1", 12)),
             "max_trade_age_hours_post_tp1": int(getattr(config, "MAX_TRADE_AGE_HOURS_POST_TP1", 48)),
+            "probation_offset": float(getattr(config, "PROBATION_CONFIDENCE_OFFSET", 10.0)),
         }
     except Exception as e:
         log.warning(f"Failed to dynamically load config.py: {e}")
@@ -96,7 +96,8 @@ def get_live_config():
             "min_confidence": 45.0, "min_adx": 15.0, "min_score": 3,
             "risk_per_trade": 0.03, "max_open_trades": 8, "max_same_direction": 4,
             "atr_stop_mult": 2.5, "atr_target1_mult": 3.5, "atr_target2_mult": 7.5,
-            "max_trade_age_hours_pre_tp1": 12, "max_trade_age_hours_post_tp1": 48
+            "max_trade_age_hours_pre_tp1": 12, "max_trade_age_hours_post_tp1": 48,
+            "probation_offset": 10.0
         }
 
 def get_model_metadata():
@@ -126,12 +127,21 @@ def get_model_metadata():
             except Exception as e:
                 log.warning(f"Error reading model metadata from {p}: {e}")
     
+    # DYNAMIC RUNTIME HARVESTING: Read thresholds published by trade_executor
+    scan_status = get(SCAN_STATUS_FILE, {})
     cfg = get_live_config()
+    
+    live_buy = scan_status.get("active_buy_conf")
+    live_sell = scan_status.get("active_sell_conf")
+    
+    base_buy = float(live_buy) if live_buy is not None else cfg["min_confidence"]
+    base_sell = float(live_sell) if live_sell is not None else cfg["min_confidence"]
+
     return {
         "ok": False,
         "model_name": "Active Tree Ensemble",
-        "rec_buy_conf": cfg["min_confidence"],
-        "rec_sell_conf": cfg["min_confidence"],
+        "rec_buy_conf": round(base_buy, 1),
+        "rec_sell_conf": round(base_sell, 1),
         "all_features": cfg["features"],
         "label_map": {0: "SELL", 1: "NO_TRADE", 2: "BUY"}
     }
@@ -335,34 +345,43 @@ def gh_fetch(filename: str):
             _mark_gh_sync(False, str(e))
     return None
 
-def gh_push(filename: str, content_dict) -> bool:
+def gh_push(filename: str, content_dict, max_retries: int = 3) -> bool:
     if not GH_TOKEN or not GH_REPO:
         _mark_gh_sync(False, "Missing GH_TOKEN or GH_REPO")
         return False
     headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     url = f"https://api.github.com/repos/{GH_REPO}/contents/{filename}?ref={GH_BRANCH}"
-    try:
-        r = requests.get(url, headers=headers, timeout=5)
-        sha = r.json().get("sha") if r.ok else None
-        payload = {
-            "message": f"Update {filename} state via Dashboard",
-            "content": base64.b64encode(json.dumps(content_dict, indent=2).encode('utf-8')).decode('utf-8'),
-            "branch": GH_BRANCH
-        }
-        if sha: payload["sha"] = sha
-        put_r = requests.put(url, headers=headers, json=payload, timeout=8)
-        if put_r.status_code in (200, 201):
-            _mark_gh_sync(True)
-            return True
-        else:
-            err_msg = f"HTTP {put_r.status_code}: {put_r.text[:120]}"
-            _mark_gh_sync(False, err_msg)
-            log.error(f"  🚨 gh_push failed for {filename}: {err_msg}")
-            return False
-    except Exception as e:
-        _mark_gh_sync(False, str(e))
-        log.error(f"  🚨 gh_push exception for {filename}: {e}")
-        return False
+
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, headers=headers, timeout=5)
+            sha = r.json().get("sha") if r.ok else None
+            payload = {
+                "message": f"Update {filename} state via Dashboard [skip ci]",
+                "content": base64.b64encode(json.dumps(content_dict, indent=2).encode('utf-8')).decode('utf-8'),
+                "branch": GH_BRANCH
+            }
+            if sha: payload["sha"] = sha
+            put_r = requests.put(url, headers=headers, json=payload, timeout=8)
+            if put_r.status_code in (200, 201):
+                _mark_gh_sync(True)
+                return True
+            elif put_r.status_code == 409 and attempt < max_retries - 1:
+                log.warning(f"  ⚠️ gh_push conflict on {filename} (attempt {attempt+1}) — retrying with fresh SHA...")
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            else:
+                err_msg = f"HTTP {put_r.status_code}: {put_r.text[:120]}"
+                _mark_gh_sync(False, err_msg)
+                log.error(f"  🚨 gh_push failed for {filename}: {err_msg}")
+                return False
+        except Exception as e:
+            if attempt == max_retries - 1:
+                _mark_gh_sync(False, str(e))
+                log.error(f"  🚨 gh_push exception for {filename}: {e}")
+                return False
+            time.sleep(0.5)
+    return False
 
 def get(filename: str, default):
     now = time.time()
@@ -403,9 +422,7 @@ def deribit_client():
     except Exception:
         return None
 
-# ── DUAL-SENDER: RESEND API + GMAIL SMTP FALLBACK ───────────────────────
 def _send_email_with_pdf(recipient: str, subject: str, body_text: str, pdf_bytes: bytes, filename: str) -> tuple:
-    # 1. Attempt Resend REST API (Port 443)
     resend_key = os.getenv("RESEND_API_KEY", "")
     report_from = os.getenv("REPORT_FROM_EMAIL", "CryptoBot AI <onboarding@resend.dev>")
 
@@ -432,7 +449,6 @@ def _send_email_with_pdf(recipient: str, subject: str, body_text: str, pdf_bytes
         except Exception as e:
             log.warning(f"Resend connection error: {e} — attempting SMTP fallback")
 
-    # 2. Direct Fallback to Gmail SMTP (Port 465 SSL, forced IPv4)
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_pass = os.getenv("SMTP_PASS", "")
 
@@ -458,7 +474,6 @@ def _send_email_with_pdf(recipient: str, subject: str, body_text: str, pdf_bytes
             return False, f"SMTP error: {e}"
 
     return False, "Neither Resend API nor SMTP credentials succeeded."
-
 
 @app.route("/api/status")
 def api_status():
@@ -507,7 +522,6 @@ def api_status():
         "deribit_status": check_deribit_health(),
     })
 
-
 @app.route("/api/config")
 def api_config():
     cfg = get_live_config()
@@ -536,12 +550,10 @@ def api_config():
         "exchange": "Deribit Testnet (USDC Linear Perpetuals)"
     })
 
-
 @app.route("/api/override_audit")
 def api_override_audit():
     history = get("trade_history.json", [])
     return jsonify(audit_fg_overrides(history))
-
 
 @app.route("/api/balance")
 def api_balance():
@@ -555,7 +567,6 @@ def api_balance():
         except Exception: pass
     bal = get("balance.json", {})
     return jsonify({**bal, "ok": True})
-
 
 @app.route("/api/trades/open")
 def api_open_trades():
@@ -620,7 +631,6 @@ def api_open_trades():
             log.error(f"api_open_trades error: {e}")
     return jsonify([])
 
-
 @app.route("/api/trades/heal", methods=["POST", "OPTIONS"])
 def api_trades_heal():
     if request.method == "OPTIONS":
@@ -666,11 +676,12 @@ def api_trades_heal():
 
     order_ids = {}
     try:
+        # REDUCE_ONLY FIX: Both orders reduce_only=True prevents 10009 margin rejection during healing
         sl_res = client.place_limit_order(symbol, sl_side, total_q, sl_limit, stop_price=stop_p, use_reduce_only=True)
         sl_o = sl_res.get("order", sl_res)
         order_ids["stop_loss"] = str(sl_o.get("order_id", ""))
 
-        tp_res = client.place_limit_order(symbol, tp_side, total_q, tp1_p, use_reduce_only=False)
+        tp_res = client.place_limit_order(symbol, tp_side, total_q, tp1_p, use_reduce_only=True)
         tp_o = tp_res.get("order", tp_res)
         order_ids["tp1"] = str(tp_o.get("order_id", ""))
     except Exception as e:
@@ -719,12 +730,10 @@ def api_trades_heal():
         "tp1": tp1_p
     })
 
-
 @app.route("/api/trades/history")
 def api_trade_history():
     h = get("trade_history.json", [])
     return jsonify(list(reversed([x for x in h if x.get("signal") != "RECOVERED"][-100:])))
-
 
 @app.route("/api/signals")
 def api_signals():
@@ -738,33 +747,43 @@ def api_log():
     lines = content.splitlines(keepends=True)[-200:] if content else ["✓ Bot standby."]
     return jsonify({"log": "".join(lines), "lines": len(lines)})
 
-
-# ── SINGLE READ-ONLY PROBATION ENDPOINT (NO RE-BENCHING MUTATION) ───────
 @app.route("/api/probation")
 def api_probation():
-    """Returns the probation status without auto-rebenching released coins."""
     rel = get(RELIABILITY_FILE, {})
     if not isinstance(rel, dict): rel = {}
     now = time.time()
     model_meta = get_model_metadata()
+    
+    # DYNAMIC PROBATION CALCULATION: Reads live offset and approved overrides
+    scan_status = get(SCAN_STATUS_FILE, {})
+    cfg = get_live_config()
+    base_offset = float(scan_status.get("probation_offset", cfg["probation_offset"]))
+    overrides = get(OVERRIDES_FILE, {})
+    
     probated_coins = []
-
     for symbol, data in rel.items():
         if isinstance(data, dict) and data.get("is_benched", False):
             benched_at = data.get("benched_at", 0)
             time_left_sec = max(0, (7 * 86400) - (now - benched_at)) if benched_at > 0 else 0
+            
+            sym_override = overrides.get(symbol, {}) if isinstance(overrides, dict) else {}
+            extra = float(sym_override.get("probation_offset_override", {}).get("extra_conf_pct", 0.0))
+            total_offset = base_offset + extra
+            
+            req_buy = round(model_meta["rec_buy_conf"] + total_offset, 1)
+            req_sell = round(model_meta["rec_sell_conf"] + total_offset, 1)
+            
             probated_coins.append({
                 "symbol": symbol,
                 "probation_wins": data.get("probation_wins", 0),
                 "probation_consecutive_losses": data.get("probation_consecutive_losses", 0),
                 "time_left_hrs": round(time_left_sec / 3600, 1),
-                "required_buy_conf": round(model_meta["rec_buy_conf"] + 10.0, 1),
-                "required_sell_conf": round(model_meta["rec_sell_conf"] + 10.0, 1),
-                "required_conf": round(max(model_meta["rec_buy_conf"], model_meta["rec_sell_conf"]) + 10.0, 1),
+                "required_buy_conf": req_buy,
+                "required_sell_conf": req_sell,
+                "required_conf": req_buy,
                 "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
             })
     return jsonify({"ok": True, "probated_coins": probated_coins})
-
 
 @app.route("/api/probation/release", methods=["POST", "OPTIONS"])
 def api_probation_release():
@@ -801,7 +820,6 @@ def api_probation_release():
     log.info(f"  🔓 [MANUAL] {symbol} released from probation via dashboard")
     return jsonify({"ok": True, "symbol": symbol, "status": "released", "synced": push_ok})
 
-
 @app.route("/api/cooldown")
 def api_cooldown():
     cd = get(COOLDOWN_FILE, {})
@@ -821,7 +839,6 @@ def api_cooldown():
             })
     active.sort(key=lambda x: x["time_left_hrs"])
     return jsonify({"ok": True, "cooldowns": active})
-
 
 @app.route("/api/cooldown/release", methods=["POST", "OPTIONS"])
 def api_cooldown_release():
@@ -852,8 +869,6 @@ def api_cooldown_release():
     log.info(f"  🔓 [MANUAL] {symbol} cooldown cleared via dashboard")
     return jsonify({"ok": True, "symbol": symbol, "status": "released", "synced": push_ok})
 
-
-# ── INTELLIGENCE & PREDICTION LEDGER API ────────────────────────────────
 @app.route("/api/predictions")
 def api_predictions():
     preds = get(PREDICTIONS_FILE, [])
@@ -876,7 +891,6 @@ def api_predictions():
         "avg_ensemble_disagreement": avg_disagreement,
         "recent": list(reversed(preds[-100:])),
     })
-
 
 @app.route("/api/dossier")
 def api_dossier():
@@ -901,7 +915,6 @@ def api_dossier():
     rows.sort(key=lambda r: r["total_audited"], reverse=True)
     return jsonify({"ok": True, "coins": rows})
 
-
 @app.route("/api/adaptation_proposals")
 def api_adaptation_proposals():
     status = request.args.get("status")
@@ -910,7 +923,6 @@ def api_adaptation_proposals():
     if status:
         proposals = [p for p in proposals if p.get("status") == status]
     return jsonify({"ok": True, "proposals": list(reversed(proposals))})
-
 
 def _write_and_push(filename, data):
     for p in [Path(filename), Path("data") / filename]:
@@ -921,7 +933,6 @@ def _write_and_push(filename, data):
     _cache[filename] = data
     _cache_ts[filename] = time.time()
     return gh_push(filename, data)
-
 
 @app.route("/api/adaptation_proposals/<proposal_id>/approve", methods=["POST", "OPTIONS"])
 def api_approve_proposal(proposal_id):
@@ -954,9 +965,12 @@ def api_approve_proposal(proposal_id):
 
     push_p = _write_and_push(PROPOSALS_FILE, proposals)
     push_o = _write_and_push(OVERRIDES_FILE, overrides)
-    log.info(f"  ✅ [ADAPTATION] Approved {target['tag']} override for {symbol} via dashboard")
-    return jsonify({"ok": True, "proposal": target, "synced": bool(push_p and push_o)})
 
+    if not (push_p and push_o):
+        return jsonify({"ok": False, "error": "Failed to commit changes to GitHub repository. Check PAT token or retry."}), 502
+
+    log.info(f"  ✅ [ADAPTATION] Approved {target['tag']} override for {symbol} via dashboard")
+    return jsonify({"ok": True, "proposal": target, "synced": True})
 
 @app.route("/api/adaptation_proposals/<proposal_id>/reject", methods=["POST", "OPTIONS"])
 def api_reject_proposal(proposal_id):
@@ -972,7 +986,6 @@ def api_reject_proposal(proposal_id):
     target["rejected_at"] = datetime.now(timezone.utc).isoformat()
     push_ok = _write_and_push(PROPOSALS_FILE, proposals)
     return jsonify({"ok": True, "proposal": target, "synced": push_ok})
-
 
 @app.route("/api/market")
 def api_market():
@@ -992,7 +1005,6 @@ def api_market():
     except Exception as e: log.warning(f"Market proxy error: {e}")
     return jsonify(prices)
 
-
 @app.route("/api/btc_atr")
 def api_btc_atr():
     try:
@@ -1009,7 +1021,6 @@ def api_btc_atr():
     except Exception as e: log.warning(f"BTC ATR proxy error: {e}")
     return jsonify({"ok": True, "atr": 0.0, "pct": 0.0, "price": 0.0, "chg_24h": 0.0})
 
-
 @app.route("/api/fng")
 def api_fng():
     try:
@@ -1017,7 +1028,6 @@ def api_fng():
         if r.ok: return jsonify(r.json())
     except Exception: pass
     return jsonify({"data": [{"value": "50", "value_classification": "Neutral"}]})
-
 
 @app.route("/api/monitor")
 def api_monitor():
@@ -1090,7 +1100,6 @@ def api_monitor():
         }
     })
 
-
 @app.route("/api/execution")
 def api_execution():
     history = get("trade_history.json", [])
@@ -1118,7 +1127,6 @@ def api_execution():
         "net_pnl": net_pnl, "avg_duration_h": avg_duration_h, "total_volume_traded_usd": round(total_volume_usd, 2),
         "avg_slippage_pct": 0.02
     })
-
 
 @app.route("/api/model_health")
 def api_model_health():
@@ -1149,7 +1157,6 @@ def api_model_health():
         "rec_buy_threshold": model_meta["rec_buy_conf"], "rec_sell_threshold": model_meta["rec_sell_conf"],
         "calibration": {"labels": calibration_labels, "target": target_win_rates, "live": live_win_rates}
     })
-
 
 @app.route("/api/analytics")
 def api_analytics():
@@ -1200,7 +1207,6 @@ def api_analytics():
         "avg_win": round(avg_win, 4), "avg_loss": round(avg_loss, 4), "equity_curve": equity_points, "daily_pnl": daily_points
     })
 
-
 @app.route("/api/scan", methods=["POST", "OPTIONS"])
 def api_scan():
     if request.method == "OPTIONS": return jsonify({"ok": True}), 200
@@ -1214,7 +1220,6 @@ def api_scan():
                 return jsonify({"status": "triggered", "message": "Scan started — results appear in ~60s"})
         except Exception as e: log.warning(f"Workflow dispatch {wf} error: {e}")
     return jsonify({"error": "Could not trigger scan — check GH_PAT_TOKEN"}), 500
-
 
 @app.route("/api/kill_switch", methods=["POST", "OPTIONS"])
 def api_kill_switch():
@@ -1281,11 +1286,9 @@ def api_kill_switch():
         return jsonify({"ok": True, "status": "FLATTENED" if push_ok else "FLATTENED_PARTIAL_SYNC", "cancelled_orders": cancelled_count, "flattened_positions": flattened_count})
     except Exception as e: log.error(f"Kill switch error: {e}"); return jsonify({"ok": False, "error": str(e)}), 500
 
-
 def _extract_report_trades(payload: dict) -> list:
     trades = payload.get("trades")
     return trades if isinstance(trades, list) else []
-
 
 @app.route("/api/download_report_pdf", methods=["POST", "OPTIONS"])
 def api_download_report_pdf():
@@ -1311,7 +1314,6 @@ def api_download_report_pdf():
         as_attachment=True,
         download_name=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf",
     )
-
 
 @app.route("/api/send_report", methods=["POST", "OPTIONS"])
 def api_send_report():
@@ -1364,161 +1366,4 @@ def api_send_report():
             p.write_text(json.dumps(tracker, indent=2))
         except Exception: pass
     _cache[EMAIL_TRACKER_FILE] = tracker
-    _cache_ts[EMAIL_TRACKER_FILE] = time.time()
-    gh_push(EMAIL_TRACKER_FILE, tracker)
-
-    if not sent_ok:
-        return jsonify({"ok": False, "error": status_msg}), 502
-
-    return jsonify({
-        "ok": True,
-        "recipient": recipient,
-        "total_trades": len(trades),
-        "net_pnl": net_pnl,
-        "status": status_msg
-    }), 200
-
-
-@app.route("/api/email_tracker", methods=["GET"])
-def api_email_tracker():
-    tracker = get(EMAIL_TRACKER_FILE, [])
-    if not isinstance(tracker, list): tracker = []
-    return jsonify(list(reversed(tracker[-100:])))
-
-
-@app.route("/api/close_trade", methods=["POST", "OPTIONS"])
-def api_close_trade():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    data = request.get_json() or {}
-    symbol = str(data.get("symbol", "")).strip().upper()
-    if not symbol: return jsonify({"ok": False, "error": "Symbol is required"}), 400
-
-    bust("trades.json"); bust("trade_history.json"); bust("balance.json")
-    trades = get("trades.json", {})
-    trade = trades.get(symbol)
-
-    client = deribit_client()
-    if not client:
-        return jsonify({"ok": False, "error": "Deribit client unavailable"}), 500
-
-    real_pos = 0.0
-    deribit_entry = 0.0
-    try:
-        real_pos = client.get_position_size(symbol)
-        for p in client.get_positions():
-            inst = p.get("instrument_name", "")
-            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-            if f"{base}USDT" == symbol:
-                deribit_entry = float(p.get("average_price", 0) or 0)
-                break
-    except Exception as e:
-        log.error(f"Error querying Deribit position for {symbol}: {e}")
-
-    has_ledger_trade = bool(trade and not trade.get("closed", False))
-    has_exchange_pos = abs(real_pos) > 0.0001
-
-    if not has_ledger_trade and not has_exchange_pos:
-        return jsonify({"ok": False, "error": f"No active position on Deribit or open record in trades.json for {symbol}."}), 404
-
-    cancelled_orders = 0
-    try:
-        for o in client.get_open_orders(symbol):
-            oid = str(o.get("order_id", ""))
-            if oid:
-                try: client.cancel_order(oid); cancelled_orders += 1
-                except Exception: pass
-    except Exception as e: log.warning(f"Error cancelling orders for {symbol}: {e}")
-
-    flattened_size = 0.0
-    if has_exchange_pos:
-        close_side = "SELL" if real_pos > 0 else "BUY"
-        close_amount = client.round_amount(symbol, abs(real_pos))
-        if close_amount > 0:
-            try:
-                client.place_market_order(symbol, close_side, close_amount, reduce_only=True)
-                flattened_size = close_amount
-            except Exception as ex_err:
-                return jsonify({"ok": False, "error": f"Failed to execute market close on Deribit: {ex_err}"}), 502
-
-    live_p = client.get_live_price(symbol)
-    actual_close_price = live_p if live_p > 0 else (deribit_entry or float(trade.get("entry", 0) if trade else 0))
-
-    entry_price = float(trade.get("entry", 0) if trade else 0)
-    sig = trade.get("signal") if trade else None
-
-    if entry_price <= 0 and deribit_entry > 0:
-        entry_price = deribit_entry
-
-    if not sig:
-        sig = "BUY" if real_pos > 0 else "SELL"
-
-    recorded_qty = float(trade.get("qty_tp2", 0)) if (trade and trade.get("tp1_hit")) else float(trade.get("qty", 0) if trade else 0)
-    calc_qty = flattened_size if flattened_size > 0 else (recorded_qty if recorded_qty > 0 else 1.0)
-
-    is_unverified = entry_price <= 0
-    if entry_price > 0:
-        if sig == "BUY": pnl = round((actual_close_price - entry_price) * calc_qty, 4)
-        else: pnl = round((entry_price - actual_close_price) * calc_qty, 4)
-        close_reason = "Manual Close (Dashboard)"
-    else:
-        pnl = 0.0
-        close_reason = "Manual Close (Entry Unrecorded — Excluded from PnL)"
-
-    history = get("trade_history.json", [])
-    base_record = trade if trade else {}
-    history_record = {
-        **base_record,
-        "symbol": symbol, "signal": sig, "entry": entry_price,
-        "close_price": actual_close_price, "qty": calc_qty, "pnl": pnl,
-        "pnl_unverified": is_unverified,
-        "opened_at": base_record.get("opened_at", datetime.now(timezone.utc).isoformat()),
-        "closed_at": datetime.now(timezone.utc).isoformat(),
-        "close_reason": close_reason, "closed": True
-    }
-    history.append(history_record)
-
-    for p in [Path("trade_history.json"), Path("data") / "trade_history.json"]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(history, indent=2))
-        except Exception: pass
-
-    if symbol in trades:
-        trades.pop(symbol, None)
-        for p in [Path("trades.json"), Path("data") / "trades.json"]:
-            try:
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(json.dumps(trades, indent=2))
-            except Exception: pass
-
-    _cache["trade_history.json"] = history
-    _cache_ts["trade_history.json"] = time.time()
-    _cache["trades.json"] = trades
-    _cache_ts["trades.json"] = time.time()
-
-    push_hist = gh_push("trade_history.json", history)
-    push_trades = gh_push("trades.json", trades)
-
-    bust("trades.json"); bust("trade_history.json"); bust("balance.json")
-
-    return jsonify({
-        "ok": True, "status": "closed", "symbol": symbol,
-        "close_price": actual_close_price, "entry_price": entry_price,
-        "pnl": pnl, "pnl_unverified": is_unverified, "cancelled_orders": cancelled_orders
-    }), 200
-
-
-@app.route("/health")
-def health(): return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
-
-@app.route("/")
-def index(): return send_from_directory("dashboard_static", "index.html")
-
-@app.route("/<path:path>")
-def static_files(path):
-    try: return send_from_directory("dashboard_static", path)
-    except Exception: return send_from_directory("dashboard_static", "index.html")
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    _cache_ts[EMAIL_TRACKER_FILESorry, something went wrong. Please try your request again.
