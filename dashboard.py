@@ -127,7 +127,6 @@ def get_model_metadata():
             except Exception as e:
                 log.warning(f"Error reading model metadata from {p}: {e}")
     
-    # DYNAMIC RUNTIME HARVESTING: Read thresholds published by trade_executor
     scan_status = get(SCAN_STATUS_FILE, {})
     cfg = get_live_config()
     
@@ -676,7 +675,6 @@ def api_trades_heal():
 
     order_ids = {}
     try:
-        # REDUCE_ONLY FIX: Both orders reduce_only=True prevents 10009 margin rejection during healing
         sl_res = client.place_limit_order(symbol, sl_side, total_q, sl_limit, stop_price=stop_p, use_reduce_only=True)
         sl_o = sl_res.get("order", sl_res)
         order_ids["stop_loss"] = str(sl_o.get("order_id", ""))
@@ -754,7 +752,6 @@ def api_probation():
     now = time.time()
     model_meta = get_model_metadata()
     
-    # DYNAMIC PROBATION CALCULATION: Reads live offset and approved overrides
     scan_status = get(SCAN_STATUS_FILE, {})
     cfg = get_live_config()
     base_offset = float(scan_status.get("probation_offset", cfg["probation_offset"]))
@@ -1366,4 +1363,158 @@ def api_send_report():
             p.write_text(json.dumps(tracker, indent=2))
         except Exception: pass
     _cache[EMAIL_TRACKER_FILE] = tracker
-    _cache_ts[EMAIL_TRACKER_FILESorry, something went wrong. Please try your request again.
+    _cache_ts[EMAIL_TRACKER_FILE] = time.time()
+    gh_push(EMAIL_TRACKER_FILE, tracker)
+
+    if not sent_ok:
+        return jsonify({"ok": False, "error": status_msg}), 502
+
+    return jsonify({
+        "ok": True,
+        "recipient": recipient,
+        "total_trades": len(trades),
+        "net_pnl": net_pnl,
+        "status": status_msg
+    }), 200
+
+@app.route("/api/email_tracker", methods=["GET"])
+def api_email_tracker():
+    tracker = get(EMAIL_TRACKER_FILE, [])
+    if not isinstance(tracker, list): tracker = []
+    return jsonify(list(reversed(tracker[-100:])))
+
+@app.route("/api/close_trade", methods=["POST", "OPTIONS"])
+def api_close_trade():
+    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
+    data = request.get_json() or {}
+    symbol = str(data.get("symbol", "")).strip().upper()
+    if not symbol: return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
+    bust("trades.json"); bust("trade_history.json"); bust("balance.json")
+    trades = get("trades.json", {})
+    trade = trades.get(symbol)
+
+    client = deribit_client()
+    if not client:
+        return jsonify({"ok": False, "error": "Deribit client unavailable"}), 500
+
+    real_pos = 0.0
+    deribit_entry = 0.0
+    try:
+        real_pos = client.get_position_size(symbol)
+        for p in client.get_positions():
+            inst = p.get("instrument_name", "")
+            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+            if f"{base}USDT" == symbol:
+                deribit_entry = float(p.get("average_price", 0) or 0)
+                break
+    except Exception as e:
+        log.error(f"Error querying Deribit position for {symbol}: {e}")
+
+    has_ledger_trade = bool(trade and not trade.get("closed", False))
+    has_exchange_pos = abs(real_pos) > 0.0001
+
+    if not has_ledger_trade and not has_exchange_pos:
+        return jsonify({"ok": False, "error": f"No active position on Deribit or open record in trades.json for {symbol}."}), 404
+
+    cancelled_orders = 0
+    try:
+        for o in client.get_open_orders(symbol):
+            oid = str(o.get("order_id", ""))
+            if oid:
+                try: client.cancel_order(oid); cancelled_orders += 1
+                except Exception: pass
+    except Exception as e: log.warning(f"Error cancelling orders for {symbol}: {e}")
+
+    flattened_size = 0.0
+    if has_exchange_pos:
+        close_side = "SELL" if real_pos > 0 else "BUY"
+        close_amount = client.round_amount(symbol, abs(real_pos))
+        if close_amount > 0:
+            try:
+                client.place_market_order(symbol, close_side, close_amount, reduce_only=True)
+                flattened_size = close_amount
+            except Exception as ex_err:
+                return jsonify({"ok": False, "error": f"Failed to execute market close on Deribit: {ex_err}"}), 502
+
+    live_p = client.get_live_price(symbol)
+    actual_close_price = live_p if live_p > 0 else (deribit_entry or float(trade.get("entry", 0) if trade else 0))
+
+    entry_price = float(trade.get("entry", 0) if trade else 0)
+    sig = trade.get("signal") if trade else None
+
+    if entry_price <= 0 and deribit_entry > 0:
+        entry_price = deribit_entry
+
+    if not sig:
+        sig = "BUY" if real_pos > 0 else "SELL"
+
+    recorded_qty = float(trade.get("qty_tp2", 0)) if (trade and trade.get("tp1_hit")) else float(trade.get("qty", 0) if trade else 0)
+    calc_qty = flattened_size if flattened_size > 0 else (recorded_qty if recorded_qty > 0 else 1.0)
+
+    is_unverified = entry_price <= 0
+    if entry_price > 0:
+        if sig == "BUY": pnl = round((actual_close_price - entry_price) * calc_qty, 4)
+        else: pnl = round((entry_price - actual_close_price) * calc_qty, 4)
+        close_reason = "Manual Close (Dashboard)"
+    else:
+        pnl = 0.0
+        close_reason = "Manual Close (Entry Unrecorded — Excluded from PnL)"
+
+    history = get("trade_history.json", [])
+    base_record = trade if trade else {}
+    history_record = {
+        **base_record,
+        "symbol": symbol, "signal": sig, "entry": entry_price,
+        "close_price": actual_close_price, "qty": calc_qty, "pnl": pnl,
+        "pnl_unverified": is_unverified,
+        "opened_at": base_record.get("opened_at", datetime.now(timezone.utc).isoformat()),
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "close_reason": close_reason, "closed": True
+    }
+    history.append(history_record)
+
+    for p in [Path("trade_history.json"), Path("data") / "trade_history.json"]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(history, indent=2))
+        except Exception: pass
+
+    if symbol in trades:
+        trades.pop(symbol, None)
+        for p in [Path("trades.json"), Path("data") / "trades.json"]:
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps(trades, indent=2))
+            except Exception: pass
+
+    _cache["trade_history.json"] = history
+    _cache_ts["trade_history.json"] = time.time()
+    _cache["trades.json"] = trades
+    _cache_ts["trades.json"] = time.time()
+
+    push_hist = gh_push("trade_history.json", history)
+    push_trades = gh_push("trades.json", trades)
+
+    bust("trades.json"); bust("trade_history.json"); bust("balance.json")
+
+    return jsonify({
+        "ok": True, "status": "closed", "symbol": symbol,
+        "close_price": actual_close_price, "entry_price": entry_price,
+        "pnl": pnl, "pnl_unverified": is_unverified, "cancelled_orders": cancelled_orders
+    }), 200
+
+@app.route("/health")
+def health(): return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
+
+@app.route("/")
+def index(): return send_from_directory("dashboard_static", "index.html")
+
+@app.route("/<path:path>")
+def static_files(path):
+    try: return send_from_directory("dashboard_static", path)
+    except Exception: return send_from_directory("dashboard_static", "index.html")
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
