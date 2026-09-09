@@ -1,4 +1,4 @@
-# dashboard.py — V5.17: Dynamic Hurdles, Conflict-Resilient Git Push & Margin-Free Healing
+# dashboard.py — V5.18: Unified Intelligence Control Plane + Multi-Provider HTTP Email Engine
 
 import os
 import json
@@ -12,11 +12,6 @@ import socket
 import uuid
 import joblib
 import importlib
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +62,21 @@ EMAIL_REGEX        = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 _cache = {}
 _cache_ts = {}
 CACHE_TTL = 30  
+
+REPORT_STORE = {}
+REPORT_TTL_SECONDS = 60 * 60 * 48
+
+def _cleanup_reports():
+    now = time.time()
+    expired = [k for k, v in REPORT_STORE.items() if now - v["created"] > REPORT_TTL_SECONDS]
+    for k in expired:
+        REPORT_STORE.pop(k, None)
+
+def _store_report(pdf_bytes: bytes) -> str:
+    _cleanup_reports()
+    rid = uuid.uuid4().hex
+    REPORT_STORE[rid] = {"data": pdf_bytes, "created": time.time()}
+    return rid
 
 def get_live_config():
     try:
@@ -421,58 +431,181 @@ def deribit_client():
     except Exception:
         return None
 
-def _send_email_with_pdf(recipient: str, subject: str, body_text: str, pdf_bytes: bytes, filename: str) -> tuple:
-    resend_key = os.getenv("RESEND_API_KEY", "")
-    report_from = os.getenv("REPORT_FROM_EMAIL", "CryptoBot AI <onboarding@resend.dev>")
-
-    if resend_key:
+def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
+    bust(EMAIL_TRACKER_FILE)
+    logs = get(EMAIL_TRACKER_FILE, [])
+    if not isinstance(logs, list): logs = []
+    log_entry = {
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "recipient": recipient, "scope": scope,
+        "total_trades": summary.get('total_trades', 0),
+        "net_pnl": summary.get('net_pnl', 0), "status": status
+    }
+    logs.append(log_entry)
+    
+    for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
         try:
-            resp = requests.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
-                json={
-                    "from": report_from,
-                    "to": [recipient],
-                    "subject": subject,
-                    "text": body_text,
-                    "attachments": [{
-                        "filename": filename,
-                        "content": base64.b64encode(pdf_bytes).decode("utf-8"),
-                    }],
-                },
-                timeout=15,
-            )
-            if resp.status_code in (200, 201, 202):
-                return True, "SENT (Resend)"
-            log.warning(f"Resend returned HTTP {resp.status_code}: {resp.text[:120]} — attempting SMTP fallback")
-        except Exception as e:
-            log.warning(f"Resend connection error: {e} — attempting SMTP fallback")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(logs, indent=2))
+        except Exception: pass
+    _cache[EMAIL_TRACKER_FILE] = logs
+    _cache_ts[EMAIL_TRACKER_FILE] = time.time()
+    gh_push(EMAIL_TRACKER_FILE, logs)
 
-    smtp_user = os.getenv("SMTP_USER", "")
-    smtp_pass = os.getenv("SMTP_PASS", "")
+# ── MULTI-PROVIDER HTTP EMAIL SENDER (FROM V5.11) ──────────────────────
+@app.route("/api/send_report", methods=["POST", "OPTIONS"])
+def api_send_report():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
 
-    if smtp_user and smtp_pass:
+    data = request.get_json(silent=True) or {}
+    recipient = str(data.get("email") or "").strip()
+    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
+    summary = data.get("summary") or {}
+    trades = data.get("trades") or []
+
+    if not recipient or not re.match(EMAIL_REGEX, recipient):
+        return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email address format."}), 400
+
+    report_url = None
+    pdf_bytes = None
+    if HAS_REPORTLAB:
         try:
-            msg = MIMEMultipart()
-            msg["From"] = smtp_user
-            msg["To"] = recipient
-            msg["Subject"] = subject
-            msg.attach(MIMEText(body_text, "plain"))
-
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(pdf_bytes)
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f"attachment; filename={filename}")
-            msg.attach(part)
-
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=12) as server:
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, [recipient], msg.as_string())
-            return True, "SENT (SMTP)"
+            pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+            rid = _store_report(pdf_bytes)
+            report_url = request.host_url.rstrip("/") + f"/api/report/{rid}.pdf"
         except Exception as e:
-            return False, f"SMTP error: {e}"
+            log.warning(f"PDF pre-generation for email failed: {e}")
 
-    return False, "Neither Resend API nor SMTP credentials succeeded."
+    emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID", "").strip()
+    emailjs_template_id = os.getenv("EMAILJS_TEMPLATE_ID", "").strip()
+    emailjs_public_key = os.getenv("EMAILJS_PUBLIC_KEY", "").strip()
+    emailjs_private_key = os.getenv("EMAILJS_PRIVATE_KEY", "").strip()
+
+    brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
+    brevo_sender = os.getenv("BREVO_SENDER_EMAIL", "").strip()
+    resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
+    resend_from = os.getenv("REPORT_FROM_EMAIL", os.getenv("RESEND_FROM", "CryptoBot AI <onboarding@resend.dev>"))
+
+    # 1. EMAILJS REST API
+    if emailjs_service_id and emailjs_template_id and emailjs_public_key:
+        try:
+            payload = {
+                "service_id": emailjs_service_id,
+                "template_id": emailjs_template_id,
+                "user_id": emailjs_public_key,
+                "accessToken": emailjs_private_key,
+                "template_params": {
+                    "to_email": recipient,
+                    "scope": scope,
+                    "net_pnl": summary.get('net_pnl', 0),
+                    "total_trades": summary.get('total_trades', 0),
+                    "wins": summary.get('wins', 0),
+                    "losses": summary.get('losses', 0),
+                    "win_rate": summary.get('win_rate', '0%'),
+                    "report_url": report_url or "PDF generated on server."
+                }
+            }
+            r = requests.post("https://api.emailjs.com/api/v1.0/email/send", headers={"Content-Type": "application/json"}, json=payload, timeout=12)
+            if r.ok or r.text.strip() == "OK":
+                _log_email_attempt(recipient, scope, summary, "SENT (EmailJS API)")
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
+        except Exception as api_err:
+            log.warning(f"EmailJS exception: {api_err} — trying next provider")
+
+    # 2. BREVO HTTP API
+    if brevo_api_key and brevo_sender:
+        try:
+            pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8") if pdf_bytes else None
+            link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
+            brevo_payload = {
+                "sender": {"name": "CryptoBot AI", "email": brevo_sender},
+                "to": [{"email": recipient}],
+                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                "htmlContent": f"<h3>CryptoBot AI Performance Report</h3><p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
+            }
+            if pdf_b64:
+                brevo_payload["attachment"] = [{"name": f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf", "content": pdf_b64}]
+
+            r = requests.post("https://api.brevo.com/v3/smtp/email", headers={"api-key": brevo_api_key, "Content-Type": "application/json"}, json=brevo_payload, timeout=12)
+            if r.ok:
+                _log_email_attempt(recipient, scope, summary, "SENT (Brevo API)")
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
+        except Exception as e:
+            log.warning(f"Brevo API error: {e} — trying next provider")
+
+    # 3. RESEND HTTP API (Attachment + Link)
+    if resend_api_key:
+        try:
+            link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
+            payload = {
+                "from": resend_from,
+                "to": [recipient],
+                "subject": f"📊 CryptoBot AI Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                "html": f"<p>Filter Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
+            }
+            if pdf_bytes:
+                payload["attachments"] = [{
+                    "filename": f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf",
+                    "content": base64.b64encode(pdf_bytes).decode("utf-8")
+                }]
+            r = requests.post("https://api.resend.com/emails", headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"}, json=payload, timeout=12)
+            if r.ok:
+                _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
+                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
+            else:
+                log.warning(f"Resend HTTP error: {r.text}")
+        except Exception as e:
+            log.warning(f"Resend API error: {e}")
+
+    _log_email_attempt(recipient, scope, summary, "FAILED: All HTTP Providers Exhausted")
+    return jsonify({
+        "ok": False, "error": "DISPATCH_FAILED",
+        "message": "Could not deliver report. Verify API keys in Render environment variables (EMAILJS_SERVICE_ID, BREVO_API_KEY, or RESEND_API_KEY)."
+    }), 502
+
+@app.route("/api/report/<report_id>.pdf")
+def api_get_stored_report(report_id):
+    _cleanup_reports()
+    entry = REPORT_STORE.get(report_id)
+    if not entry:
+        return jsonify({
+            "ok": False, "error": "NOT_FOUND",
+            "message": "This report link has expired (links last 48h) or does not exist."
+        }), 404
+    buffer = BytesIO(entry["data"])
+    buffer.seek(0)
+    filename = f"CryptoBot_Report_{report_id[:8]}.pdf"
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+@app.route("/api/email_tracker", methods=["GET"])
+def api_email_tracker():
+    logs = get(EMAIL_TRACKER_FILE, [])
+    if not isinstance(logs, list): logs = []
+    return jsonify(list(reversed(logs[-50:])))
+
+@app.route("/api/download_report_pdf", methods=["POST", "OPTIONS"])
+def api_download_report_pdf():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    if not HAS_REPORTLAB:
+        return jsonify({"ok": False, "error": "REPORTLAB_MISSING", "message": "ReportLab not installed on server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
+    summary = data.get("summary") or {}
+    trades = data.get("trades") or []
+
+    try:
+        pdf_bytes = generate_pdf_bytes(scope, summary, trades)
+    except Exception as e:
+        log.error(f"PDF generation failed: {e}")
+        return jsonify({"ok": False, "error": "PDF_GENERATION_FAILED", "message": str(e)}), 500
+
+    buffer = BytesIO(pdf_bytes)
+    buffer.seek(0)
+    filename = f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 @app.route("/api/status")
 def api_status():
@@ -721,11 +854,9 @@ def api_trades_heal():
     bust("trades.json")
 
     return jsonify({
-        "ok": True, 
-        "symbol": symbol, 
+        "ok": True, "symbol": symbol, 
         "message": f"Attached SL @ ${stop_p} and TP1 @ ${tp1_p} on Deribit.",
-        "stop": stop_p, 
-        "tp1": tp1_p
+        "stop": stop_p, "tp1": tp1_p
     })
 
 @app.route("/api/trades/history")
@@ -1282,106 +1413,6 @@ def api_kill_switch():
         bust("trades.json"); bust("trade_history.json"); bust("balance.json")
         return jsonify({"ok": True, "status": "FLATTENED" if push_ok else "FLATTENED_PARTIAL_SYNC", "cancelled_orders": cancelled_count, "flattened_positions": flattened_count})
     except Exception as e: log.error(f"Kill switch error: {e}"); return jsonify({"ok": False, "error": str(e)}), 500
-
-def _extract_report_trades(payload: dict) -> list:
-    trades = payload.get("trades")
-    return trades if isinstance(trades, list) else []
-
-@app.route("/api/download_report_pdf", methods=["POST", "OPTIONS"])
-def api_download_report_pdf():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-    if not HAS_REPORTLAB:
-        return jsonify({"ok": False, "error": "PDF generation unavailable — reportlab not installed."}), 500
-
-    payload = request.get_json(silent=True) or {}
-    scope = payload.get("scope", "All Time")
-    summary = payload.get("summary", {}) or {}
-    trades = _extract_report_trades(payload)
-
-    try:
-        pdf_bytes = generate_pdf_bytes(scope, summary, trades)
-    except Exception as e:
-        log.error(f"  🚨 PDF generation failed: {e}")
-        return jsonify({"ok": False, "error": f"PDF generation failed: {e}"}), 500
-
-    return send_file(
-        BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf",
-    )
-
-@app.route("/api/send_report", methods=["POST", "OPTIONS"])
-def api_send_report():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-    if not HAS_REPORTLAB:
-        return jsonify({"ok": False, "error": "PDF generation unavailable — reportlab not installed."}), 500
-
-    payload = request.get_json(silent=True) or {}
-    recipient = str(payload.get("email", "")).strip()
-    scope = payload.get("scope", "All Time")
-    summary = payload.get("summary", {}) or {}
-    trades = _extract_report_trades(payload)
-
-    if not recipient or not re.match(EMAIL_REGEX, recipient):
-        return jsonify({"ok": False, "error": "A valid recipient email is required."}), 400
-
-    try:
-        pdf_bytes = generate_pdf_bytes(scope, summary, trades)
-    except Exception as e:
-        log.error(f"  🚨 PDF generation failed for send_report: {e}")
-        return jsonify({"ok": False, "error": f"PDF generation failed: {e}"}), 500
-
-    net_pnl = summary.get("net_pnl")
-    if net_pnl is None:
-        net_pnl = round(sum(float(t.get("pnl", 0) or 0) for t in trades if not t.get("pnl_unverified", False)), 2)
-    filename = f"CryptoBot_Report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
-
-    sent_ok, status_msg = _send_email_with_pdf(
-        recipient=recipient,
-        subject=f"CryptoBot AI — Performance Report ({scope})",
-        body_text=f"Attached is your requested performance report.\n\nScope: {scope}\nTotal trades: {len(trades)}\nNet PnL: ${net_pnl}",
-        pdf_bytes=pdf_bytes,
-        filename=filename,
-    )
-
-    tracker = get(EMAIL_TRACKER_FILE, [])
-    if not isinstance(tracker, list): tracker = []
-    tracker.append({
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "recipient": recipient,
-        "scope": scope,
-        "total_trades": len(trades),
-        "net_pnl": net_pnl,
-        "status": status_msg,
-    })
-    for p in [Path(EMAIL_TRACKER_FILE), Path("data") / EMAIL_TRACKER_FILE]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(tracker, indent=2))
-        except Exception: pass
-    _cache[EMAIL_TRACKER_FILE] = tracker
-    _cache_ts[EMAIL_TRACKER_FILE] = time.time()
-    gh_push(EMAIL_TRACKER_FILE, tracker)
-
-    if not sent_ok:
-        return jsonify({"ok": False, "error": status_msg}), 502
-
-    return jsonify({
-        "ok": True,
-        "recipient": recipient,
-        "total_trades": len(trades),
-        "net_pnl": net_pnl,
-        "status": status_msg
-    }), 200
-
-@app.route("/api/email_tracker", methods=["GET"])
-def api_email_tracker():
-    tracker = get(EMAIL_TRACKER_FILE, [])
-    if not isinstance(tracker, list): tracker = []
-    return jsonify(list(reversed(tracker[-100:])))
 
 @app.route("/api/close_trade", methods=["POST", "OPTIONS"])
 def api_close_trade():
