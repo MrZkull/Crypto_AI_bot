@@ -14737,5 +14737,63 @@
     "mfe_atr": 7.21,
     "mae_atr": 0.44,
     "failure_tag": "PREMATURE_WHIPSAW"
+  },
+  {
+    "symbol": "TRXUSDT",
+    "signal": "BUY",
+    "entry": 0.33994965,
+    "stop": 0.33867,
+    "tp1": 0.34174,
+    "tp2": 0.34378,
+    "qty": 15578,
+    "qty_tp1": 7789,
+    "qty_tp2": 7789,
+    "risk_usd": 19.93,
+    "budget_risk_usd": 7622.53,
+    "balance_at_open": 105919.31,
+    "risk_mult": 2.398848456321383,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049226822506925",
+      "stop_loss": "USDC-SLMS-44543",
+      "tp1": "USDC-210049226822512784",
+      "tp2": "USDC-210049226822513285"
+    },
+    "opened_at": "2026-09-09T16:32:30.853870+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 52.3,
+    "score": 7,
+    "reasons": [
+      "Valid conf (52%)",
+      "Strong ADX 43",
+      "EMA bullish",
+      "1h confirms",
+      "4h trend aligns (RSI 68)",
+      "4h trend established (20h)",
+      "Volume surge 1.7\u00d7"
+    ],
+    "tier": "\ud83c\udfdb Deep Liquidity Alts",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "TRXUSDT_1788971547811",
+    "snapshot": {
+      "entry_atr": 0.0005101622808956809,
+      "rsi_15m": 68.56767483186688,
+      "adx_15m": 43.28995211798529,
+      "rsi_4h": 67.54099675298076,
+      "ema_4h_bullish": true,
+      "fng_value": 66,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.4189482843591488,
+      "btc_beta_20": 0.16332324361367995
+    },
+    "stop_mult_used": 2.5,
+    "close_price": 0.33864,
+    "pnl": -20.4017,
+    "closed_at": "2026-09-10T00:05:51.057364+00:00",
+    "close_reason": "SL hit"
   }
 ]
