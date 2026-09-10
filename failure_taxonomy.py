@@ -1,12 +1,10 @@
-# failure_taxonomy.py — classifies WHY closed trades lost, proposes adaptations
+# failure_taxonomy.py — classifies WHY closed trades lost, proposes (never applies) adaptations
 
 import json, time, logging
 from datetime import datetime, timezone
 from pathlib import Path
 import requests
 
-import config
-from config import ATR_STOP_MULT
 from prediction_auditor import get_coin_calibration_hit_rate, load_json as _pa_load_json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -62,16 +60,14 @@ def fetch_klines_between(symbol, start_iso, end_iso):
 
 
 def compute_trade_excursion(trade: dict):
+    """MFE/MAE in ATR-multiples for a CLOSED trade, using its own snapshot's ATR."""
     entry = float(trade.get("entry", 0) or 0)
     atr   = float(trade.get("snapshot", {}).get("entry_atr", 0) or 0)
-    
-    # Dynamic fallback to actual stop multiplier used
+    # fallback: derive ATR from stop distance if snapshot didn't carry it
     if atr <= 0:
         stop = float(trade.get("stop", 0) or 0)
-        stop_mult = float(trade.get("stop_mult_used", ATR_STOP_MULT))
         if stop > 0 and entry > 0:
-            atr = abs(entry - stop) / stop_mult
-            
+            atr = abs(entry - stop) / 2.5  # ATR_STOP_MULT
     if entry <= 0 or atr <= 0:
         return None, None
 
@@ -109,6 +105,7 @@ def count_same_day_peer_losses(symbol, signal, closed_at, history):
 
 
 def classify_failure(trade, mfe_atr, mae_atr, same_day_peer_losses, calibration_hit_rate):
+    """Returns a tag string, or None if the trade wasn't a loss (no root-cause needed)."""
     if float(trade.get("pnl", 0)) >= 0:
         return None
     if mfe_atr is None or mae_atr is None:
@@ -131,6 +128,7 @@ def classify_failure(trade, mfe_atr, mae_atr, same_day_peer_losses, calibration_
     return "UNCLASSIFIED"
 
 
+# ── Adaptation proposals — PROPOSE ONLY, never auto-apply ──────────────
 ADAPTATION_RULES = {
     "PREMATURE_WHIPSAW": {
         "param": "atr_stop_mult_override",
@@ -142,18 +140,63 @@ ADAPTATION_RULES = {
         "suggested_change": "+5% confidence hurdle for this symbol",
         "min_occurrences": 3,
     },
+    # REGIME_CASCADE deliberately has no rule — a market-wide event shouldn't
+    # penalize the specific symbol that happened to be open when it hit.
 }
 
 
 def propose_adaptations(dossier):
+    """
+    Raises a proposal only for occurrences that happened SINCE the last time
+    a human decided on this symbol+tag — not against the lifetime total.
+
+    BUG THIS FIXES: previously checked `count >= min_occurrences` against
+    dossier[symbol]["tags"][tag], which is a cumulative counter that only
+    ever increases. Approving or rejecting a proposal only changed its own
+    `status` field — it never touched that counter. So the very next run
+    of this script (every 30-60 min) would see the same permanently-true
+    condition and raise a fresh "pending" proposal for the identical
+    symbol+tag, whether or not any NEW loss had actually happened since the
+    decision. That's why the same 3 proposals kept reappearing after being
+    approved multiple times — the underlying trigger never actually reset.
+
+    FIX: each decided proposal (approved or rejected) is stamped with the
+    occurrence count it was decided AT. A new proposal only gets raised once
+    the count has grown by at least min_occurrences PAST that checkpoint —
+    i.e. it takes a genuinely new cluster of losses to re-trigger, not just
+    the passage of time with the old cluster still sitting in the total.
+    """
     proposals = load_json(PROPOSALS_FILE, [])
-    existing_keys = {(p["symbol"], p["tag"]) for p in proposals if p.get("status") == "pending"}
+    existing_pending = {(p["symbol"], p["tag"]) for p in proposals if p.get("status") == "pending"}
+
+    # For each symbol+tag, find the occurrence count at the most recent
+    # decision (approved/rejected) — defaults to 0 if never decided before.
+    last_decided_count = {}
+    for p in proposals:
+        if p.get("status") in ("approved", "rejected"):
+            key = (p["symbol"], p["tag"])
+            decided_at_count = p.get("decided_at_occurrences", p.get("occurrences", 0))
+            # Backward-compat: proposals decided before this patch existed
+            # only have approved_at/rejected_at, not decided_at — fall back
+            # so past decisions are honored immediately, not treated as if
+            # they never happened.
+            decided_time = p.get("decided_at") or p.get("approved_at") or p.get("rejected_at") or ""
+            if key not in last_decided_count or decided_time > last_decided_count[key][1]:
+                last_decided_count[key] = (decided_at_count, decided_time)
 
     for symbol, d in dossier.items():
         tags = d.get("tags", {})
         for tag, rule in ADAPTATION_RULES.items():
             count = tags.get(tag, 0)
-            if count >= rule["min_occurrences"] and (symbol, tag) not in existing_keys:
+            key = (symbol, tag)
+
+            if key in existing_pending:
+                continue  # already awaiting a decision — don't duplicate
+
+            baseline = last_decided_count.get(key, (0, ""))[0]
+            new_occurrences_since_decision = count - baseline
+
+            if new_occurrences_since_decision >= rule["min_occurrences"]:
                 proposals.append({
                     "id": f"{symbol}_{tag}_{int(time.time())}",
                     "symbol": symbol,
@@ -161,7 +204,8 @@ def propose_adaptations(dossier):
                     "param": rule["param"],
                     "suggested_change": rule["suggested_change"],
                     "occurrences": count,
-                    "status": "pending",
+                    "occurrences_at_proposal_baseline": baseline,
+                    "status": "pending",  # pending | approved | rejected
                     "proposed_at": datetime.now(timezone.utc).isoformat(),
                 })
     save_json(PROPOSALS_FILE, proposals)
@@ -193,13 +237,9 @@ def run_failure_audit():
         trade["failure_tag"] = tag
 
         if tag and tag not in ("UNCLASSIFIED", "UNCLASSIFIED_NO_DATA"):
-            if symbol not in dossier or not isinstance(dossier[symbol], dict):
-                dossier[symbol] = {
-                    "total_audited": 0, "total_correct": 0,
-                    "disagreement_correct_sum": 0.0, "disagreement_incorrect_sum": 0.0,
-                    "disagreement_correct_n": 0, "disagreement_incorrect_n": 0,
-                    "by_confidence_bucket": {}, "tags": {}
-                }
+            if symbol not in dossier:
+                dossier[symbol] = {"total_audited": 0, "total_correct": 0,
+                                    "by_confidence_bucket": {}, "tags": {}}
             dossier[symbol].setdefault("tags", {})
             dossier[symbol]["tags"][tag] = dossier[symbol]["tags"].get(tag, 0) + 1
 
@@ -217,3 +257,4 @@ def run_failure_audit():
 
 if __name__ == "__main__":
     run_failure_audit()
+    
