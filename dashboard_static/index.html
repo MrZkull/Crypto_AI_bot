@@ -20,25 +20,71 @@
 }
 
 body.light-theme {
-  --bg: #f8fafc; --bg2: #ffffff; --bg3: #f1f5f9; --bg4: #e2e8f0;
-  --border: #e2e8f0; --border2: #cbd5e1; --text: #0f172a; --text2: #334155; --text3: #64748b;
-  --green2: #10b98120; --red2: #f43f5e20; --amber2: #f59e0b20; --blue2: #3b82f620;
-  --purple2: #8b5cf620; --cyan2: #06b6d420;
+  /* Soft cooling canvas background */
+  --bg: #edf2f7; 
+  /* Crisp elevated card background */
+  --bg2: #ffffff; 
+  /* Distinct recessed panel & header background */
+  --bg3: #e2e8f0; 
+  /* Nested input & pill background */
+  --bg4: #cbd5e1; 
+  
+  /* High-contrast structural borders */
+  --border: #cbd5e1; 
+  --border2: #94a3b8; 
+  
+  /* Rich, dark typography */
+  --text: #0f172a; 
+  --text2: #334155; 
+  --text3: #64748b;
+
+  /* Richer accent tints */
+  --green: #059669;
+  --green2: rgba(5, 150, 105, 0.12);
+  --red: #e11d48;
+  --red2: rgba(225, 29, 72, 0.12);
+  --amber: #d97706;
+  --amber2: rgba(217, 119, 6, 0.14);
+  --blue: #2563eb;
+  --blue2: rgba(37, 99, 235, 0.12);
+  --cyan: #0891b2;
+  --cyan2: rgba(8, 145, 178, 0.12);
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; min-height: 100vh; display: flex; overflow-x: auto; transition: background 0.2s ease, color 0.2s ease; }
-
-body.light-theme .logo-text,
-body.light-theme .page-title,
-body.light-theme .stat-value,
-body.light-theme .tc-sym,
-body.light-theme .sc-sym,
-body.light-theme .mc-price {
-  color: #0f172a !important;
+/* Elevate panels and cards so they visually sit above the background */
+body.light-theme .panel,
+body.light-theme .stat-card,
+body.light-theme .trade-card,
+body.light-theme .market-card,
+body.light-theme .mon-card {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
+  border-color: #cbd5e1;
 }
-body.light-theme .fbtn {
-  background: var(--bg2);
+
+/* Recess price boxes so they look engraved rather than flat */
+body.light-theme .price-box,
+body.light-theme .sc-box {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Darken subtle labels so they don't wash out */
+body.light-theme .price-lbl,
+body.light-theme .stat-sub,
+body.light-theme .top-stat,
+body.light-theme .last-upd {
+  color: #475569 !important;
+  font-weight: 500;
+}
+
+/* High-contrast active banner */
+body.light-theme .scan-mode-bar {
+  background: #d1fae5 !important;
+  border-color: #a7f3d0 !important;
+  color: #065f46 !important;
+}
+body.light-theme .scan-mode-bar div {
+  color: #065f46 !important;
 }
 
 /* 🏛️ ALWAYS-OPEN PINNED ACCESSIBLE SIDEBAR */
