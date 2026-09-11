@@ -67,6 +67,8 @@ jobs:
           [ -f adaptation_overrides.json ]  || echo '{}' > adaptation_overrides.json
           [ -f coin_dossier.json ]          || echo '{}' > coin_dossier.json
           [ -f adaptation_proposals.json ]  || echo '[]' > adaptation_proposals.json
+          [ -f reliability.json ]           || echo '{}' > reliability.json
+          [ -f cooldown.json ]              || echo '{}' > cooldown.json
           mkdir -p data
 
       - name: Run bot
@@ -107,6 +109,8 @@ jobs:
           cp orphan_candidates.json   /tmp/orphan_candidates_runtime.json 2>/dev/null || echo '{}' > /tmp/orphan_candidates_runtime.json
           cp scan_status.json         /tmp/scan_status_runtime.json       2>/dev/null || echo '{}' > /tmp/scan_status_runtime.json
           cp predictions.json         /tmp/predictions_runtime.json       2>/dev/null || echo '[]' > /tmp/predictions_runtime.json
+          cp reliability.json         /tmp/reliability_runtime.json       2>/dev/null || echo '{}' > /tmp/reliability_runtime.json
+          cp cooldown.json            /tmp/cooldown_runtime.json          2>/dev/null || echo '{}' > /tmp/cooldown_runtime.json
 
           # ── 2. Reset working tree to clear modified files for git pull ──
           git reset --hard HEAD
@@ -123,6 +127,8 @@ jobs:
           cp /tmp/scan_mode_runtime.json         scan_mode.json
           cp /tmp/orphan_candidates_runtime.json orphan_candidates.json
           cp /tmp/scan_status_runtime.json       scan_status.json
+          cp /tmp/reliability_runtime.json       reliability.json
+          cp /tmp/cooldown_runtime.json          cooldown.json
 
           # ATOMIC MERGE: Preserves audited marks while appending new scan predictions
           python -c "
@@ -155,6 +161,8 @@ jobs:
           git add orphan_candidates.json || true
           git add scan_status.json       || true
           git add predictions.json       || true
+          git add reliability.json       || true
+          git add cooldown.json          || true
           git add data/                  || true
 
           git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
