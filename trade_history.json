@@ -14924,5 +14924,61 @@
     "mfe_atr": 4.18,
     "mae_atr": 1.65,
     "failure_tag": "PREMATURE_WHIPSAW"
+  },
+  {
+    "symbol": "UNIUSDT",
+    "signal": "BUY",
+    "entry": 5.92019092,
+    "stop": 5.747,
+    "tp1": 6.131,
+    "tp2": 6.372,
+    "qty": 447.06,
+    "qty_tp1": 447.06,
+    "qty_tp2": 447.06,
+    "risk_usd": 154.86,
+    "budget_risk_usd": 1524.51,
+    "balance_at_open": 105868.77,
+    "risk_mult": 0.48,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049227124642171",
+      "stop_loss": "USDC-SLMS-45424",
+      "tp1": "USDC-210049227124649874",
+      "tp2": "USDC-210049227124650304"
+    },
+    "opened_at": "2026-09-10T13:53:41.722622+00:00",
+    "tp1_hit": true,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 44.0,
+    "score": 4,
+    "reasons": [
+      "Valid conf (44%)",
+      "Strong ADX 41",
+      "RSI not overbought (42)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfc6 Proven Winners",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "UNIUSDT_1789048418582",
+    "snapshot": {
+      "entry_atr": 0.06023562758360707,
+      "rsi_15m": 41.6024113876926,
+      "adx_15m": 41.22413768300464,
+      "rsi_4h": 30.991704526279065,
+      "ema_4h_bullish": true,
+      "fng_value": 69,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.6175351508221932,
+      "btc_beta_20": 1.2554813935435263
+    },
+    "stop_mult_used": 2.875,
+    "close_price": 6.131,
+    "pnl": 94.2443,
+    "closed_at": "2026-09-11T05:20:20.196884+00:00",
+    "close_reason": "TP1 hit [order]",
+    "partial": true
   }
 ]
