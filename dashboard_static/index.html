@@ -2016,6 +2016,60 @@ function renderHistoryFiltered() {
   }).join('');
 }
 
+function renderPerfBars(trades) {
+  const container = document.getElementById('perfBars');
+  if (!container) return;
+  if (!trades.length) {
+    container.innerHTML = '<div class="empty"><div class="emsg">No closed trades yet</div></div>';
+    return;
+  }
+
+  // Take the last 40 closed trades in chronological order
+  const recent = trades.slice(-40);
+  const maxPnl = Math.max(...recent.map(t => Math.abs(parseFloat(t.pnl || 0))), 1);
+
+  container.innerHTML = recent.map(t => {
+    const pnl = parseFloat(t.pnl || 0);
+    const isWin = pnl >= 0;
+    const heightPct = Math.max(8, Math.min(100, Math.round((Math.abs(pnl) / maxPnl) * 100)));
+    const tooltip = `${t.symbol}: ${isWin ? '+' : ''}$${pnl.toFixed(2)} USDT (${t.close_reason || 'Closed'})`;
+
+    return `<div class="perf-bar ${isWin ? 'win' : 'loss'}" 
+                 style="height:${heightPct}%; cursor:pointer;" 
+                 title="${tooltip}"></div>`;
+  }).join('');
+}
+
+function renderWinLossRatio(wins, losses) {
+  const container = document.getElementById('wlRatioBody');
+  if (!container) return;
+  const total = wins.length + losses.length;
+  if (!total) {
+    container.innerHTML = '<div class="empty"><div class="emsg">No closed trades yet</div></div>';
+    return;
+  }
+
+  const winRate = ((wins.length / total) * 100).toFixed(1);
+  const lossRate = (100 - parseFloat(winRate)).toFixed(1);
+
+  container.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:12px; padding:8px 4px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <span style="font-family:var(--sans); font-size:24px; font-weight:800; color:var(--green);">${winRate}%</span>
+        <span style="font-size:11px; color:var(--text3);">${wins.length} Wins / ${losses.length} Losses (${total} Total)</span>
+      </div>
+      <div style="height:10px; border-radius:5px; display:flex; overflow:hidden; background:var(--bg);">
+        <div style="width:${winRate}%; background:var(--green); transition:width 0.4s ease;" title="${wins.length} Wins (${winRate}%)"></div>
+        <div style="width:${lossRate}%; background:var(--red); transition:width 0.4s ease;" title="${losses.length} Losses (${lossRate}%)"></div>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:10px;">
+        <span style="color:var(--green); font-weight:600;">✓ Wins: ${wins.length} (${winRate}%)</span>
+        <span style="color:var(--red); font-weight:600;">✕ Losses: ${losses.length} (${lossRate}%)</span>
+      </div>
+    </div>
+  `;
+}
+
 async function fetchHistory() {
   const data = await apiFetch('/api/trades/history', []);
   allHistory = data;
@@ -2042,7 +2096,38 @@ async function fetchHistory() {
     el.textContent = vals[i];
   });
 
+  renderPerfBars(real);
+  renderWinLossRatio(wins, loss);
   renderCoinPerformance(real);
+}
+
+function renderCoinPerformance(realTrades) {
+  const grid = document.getElementById('coinPerfGrid');
+  if (!grid) return;
+
+  const isWin = t => (t.pnl||0) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason||'').includes(k));
+
+  grid.innerHTML = ALL_COINS.map(coin => {
+    const cTrades = realTrades.filter(t => t.symbol === coin);
+    const total   = cTrades.length;
+    const wins    = cTrades.filter(isWin).length;
+    const losses  = total - wins;
+    const pnl     = cTrades.reduce((s,t) => s + (t.pnl||0), 0);
+    const wr      = total ? (wins / total * 100).toFixed(0) : null;
+    const wrColor = wr == null ? 'var(--text3)' : wr >= 60 ? 'var(--green)' : wr >= 40 ? 'var(--amber)' : 'var(--red)';
+    const pnlColor= pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)';
+
+    return `
+      <div class="coin-perf-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span class="coin-perf-sym">${coin.replace('USDT','')}</span>
+          <span style="font-size:9px;color:${pnlColor};font-weight:700;">${pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '$0'}</span>
+        </div>
+        <div class="coin-perf-wr" style="color:${wrColor}">${wr != null ? wr + '%' : '—'}</div>
+        <div class="coin-perf-sub">${total > 0 ? `${wins}W / ${losses}L` : 'No trades'}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderCoinPerformance(realTrades) {
