@@ -1,4 +1,4 @@
-# dashboard.py — V5.18: Unified Intelligence Control Plane + Multi-Provider HTTP Email Engine
+# dashboard.py — V5.19: Unified Intelligence Control Plane, HTTP Multi-Provider Email & Verified Healing Engine
 
 import os
 import json
@@ -819,11 +819,29 @@ def api_trades_heal():
         log.error(f"  🚨 Failed to place repair bracket orders on Deribit: {e}")
         return jsonify({"ok": False, "error": f"Exchange order placement failed: {e}"}), 502
 
+    # 1. Inherit authentic tier from config instead of hardcoding "Repaired"
+    import config
+    symbol_tier = getattr(config, "get_tier", lambda s: "Majors")(symbol)
+
+    # 2. Extract genuine exchange entry price rather than blindly using live_p
+    actual_entry = live_p
+    try:
+        for p in client.get_positions():
+            inst = p.get("instrument_name", "")
+            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+            if f"{base}USDT" == symbol:
+                avg_p = float(p.get("average_price", 0) or 0)
+                if avg_p > 0:
+                    actual_entry = avg_p
+                break
+    except Exception as pos_e:
+        log.warning(f"Could not extract average entry for {symbol}: {pos_e}")
+
     trades = get("trades.json", {})
     trades[symbol] = {
         "symbol": symbol,
         "signal": "BUY" if is_long else "SELL",
-        "entry": live_p,
+        "entry": actual_entry,
         "stop": stop_p,
         "tp1": tp1_p,
         "tp2": 0,
@@ -838,7 +856,7 @@ def api_trades_heal():
         "confidence": 50.0,
         "score": 5,
         "reasons": ["Healed Bracket Attachment via Dashboard"],
-        "tier": "Repaired",
+        "tier": symbol_tier,
         "exchange": "deribit_testnet"
     }
 
@@ -908,7 +926,7 @@ def api_probation():
                 "time_left_hrs": round(time_left_sec / 3600, 1),
                 "required_buy_conf": req_buy,
                 "required_sell_conf": req_sell,
-                "required_conf": req_buy,
+                "required_conf": max(req_buy, req_sell),
                 "benched_at": datetime.fromtimestamp(benched_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if benched_at else "—"
             })
     return jsonify({"ok": True, "probated_coins": probated_coins})
@@ -1074,8 +1092,11 @@ def api_approve_proposal(proposal_id):
     if target.get("status") != "pending":
         return jsonify({"ok": False, "error": f"Proposal already {target.get('status')}"}), 400
 
+    now_iso = datetime.now(timezone.utc).isoformat()
     target["status"] = "approved"
-    target["approved_at"] = datetime.now(timezone.utc).isoformat()
+    target["approved_at"] = now_iso
+    target["decided_at"] = now_iso
+    target["decided_at_occurrences"] = int(target.get("occurrences", 0))
 
     overrides = get(OVERRIDES_FILE, {})
     if not isinstance(overrides, dict): overrides = {}
@@ -1083,7 +1104,7 @@ def api_approve_proposal(proposal_id):
     overrides.setdefault(symbol, {})
     overrides[symbol][target["param"]] = {
         "reason_tag": target["tag"],
-        "applied_at": target["approved_at"],
+        "applied_at": now_iso,
         "occurrences_at_approval": target.get("occurrences"),
     }
     if target["param"] == "atr_stop_mult_override":
@@ -1110,8 +1131,12 @@ def api_reject_proposal(proposal_id):
     if not target:
         return jsonify({"ok": False, "error": "Proposal not found"}), 404
 
+    now_iso = datetime.now(timezone.utc).isoformat()
     target["status"] = "rejected"
-    target["rejected_at"] = datetime.now(timezone.utc).isoformat()
+    target["rejected_at"] = now_iso
+    target["decided_at"] = now_iso
+    target["decided_at_occurrences"] = int(target.get("occurrences", 0))
+
     push_ok = _write_and_push(PROPOSALS_FILE, proposals)
     return jsonify({"ok": True, "proposal": target, "synced": push_ok})
 
