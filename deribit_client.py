@@ -10,102 +10,43 @@ log = logging.getLogger(__name__)
 TESTNET_BASE = "https://test.deribit.com/api/v2"
 PROD_BASE    = "https://www.deribit.com/api/v2"
 
-# ── Execution Protection Constants ──
-DEFAULT_LEVERAGE         = 2       # 2x leverage — capital-safe margin
-MAX_SLIPPAGE_PCT         = 0.002   # 0.2% max acceptable entry slippage
-WIDE_SPREAD_WARN_PCT     = 0.003   # Warn if spread > 0.3%
-MAX_TRADEABLE_SPREAD_PCT = 0.05    # Hard abort entry if spread > 5%
+DEFAULT_LEVERAGE         = 2
+MAX_SLIPPAGE_PCT         = 0.002
+WIDE_SPREAD_WARN_PCT     = 0.003
+MAX_TRADEABLE_SPREAD_PCT = 0.05
 
-# ── FULL SYMBOL MAP (Categorized & Verified Linear USDC Specs) ─────────
 SYMBOL_MAP = {
-    # ── 👑 Tier 1: Majors ──
-    "ETHUSDT":   {"instrument": "ETH_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.0001, "max_amount": 5000,     "tick_size": 0.05},
-    "BNBUSDT":   {"instrument": "BNB_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.001,  "max_amount": 1000,     "tick_size": 0.05},
-    "SOLUSDT":   {"instrument": "SOL_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.001,  "max_amount": 50000,    "tick_size": 0.01},
-    # "BTCUSDT":   {"instrument": "BTC_USDC-PERPETUAL",   "currency": "USDC",
-    #               "min_amount": 0.0001, "max_amount": 100,      "tick_size": 0.5},
-
-    # ── 🏆 Tier 2: Proven Winners ──
-    "XRPUSDT":   {"instrument": "XRP_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
-    "NEARUSDT":  {"instrument": "NEAR_USDC-PERPETUAL",  "currency": "USDC",
-                  "min_amount": 0.1,    "max_amount": 100000,   "tick_size": 0.0001},
-    "LTCUSDT":   {"instrument": "LTC_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.01,   "max_amount": 1000,     "tick_size": 0.01},
-    "UNIUSDT":   {"instrument": "UNI_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
-    "BCHUSDT":   {"instrument": "BCH_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
-    "DOTUSDT":   {"instrument": "DOT_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    "ALGOUSDT":  {"instrument": "ALGO_USDC-PERPETUAL",  "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
-
-    # ── 💎 Tier 3: Micro-Granular Gems ──
-    "ENAUSDT":   {"instrument": "ENA_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
-    "DOGEUSDT":  {"instrument": "DOGE_USDC-PERPETUAL",  "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 1000000,  "tick_size": 0.00001},
-    "TRUMPUSDT": {"instrument": "TRUMP_USDC-PERPETUAL", "currency": "USDC",
-                  "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
-    "PUMPUSDT":  {"instrument": "PUMP_USDC-PERPETUAL",  "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 5000000,  "tick_size": 0.00001},
-    "AAVEUSDT":  {"instrument": "AAVE_USDC-PERPETUAL",  "currency": "USDC",
-                  "min_amount": 0.01,   "max_amount": 1000,     "tick_size": 0.01},
-    # "HYPEUSDT":  {"instrument": "HYPE_USDC-PERPETUAL",  "currency": "USDC",
-    #               "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
-
-    # ── 🏛 Tier 4: Deep Liquidity Altcoins ──
-    "LINKUSDT":  {"instrument": "LINK_USDC-PERPETUAL",  "currency": "USDC",
-                  "min_amount": 0.01,   "max_amount": 10000,    "tick_size": 0.001},
-    "SUIUSDT":   {"instrument": "SUI_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.1,    "max_amount": 100000,   "tick_size": 0.0001},
-    "AVAXUSDT":  {"instrument": "AVAX_USDC-PERPETUAL",  "currency": "USDC",
-                  "min_amount": 0.001,  "max_amount": 10000,    "tick_size": 0.001},
-    "ADAUSDT":   {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.0001},
-    "TRXUSDT":   {"instrument": "TRX_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
-    "XLMUSDT":   {"instrument": "XLM_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
-    # "APTUSDT":   {"instrument": "APT_USDC-PERPETUAL",   "currency": "USDC",
-    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    # "ATOMUSDT":  {"instrument": "ATOM_USDC-PERPETUAL",  "currency": "USDC",
-    #               "min_amount": 1.0,    "max_amount": 2100,     "tick_size": 0.001},
-    # "FETUSDT":   {"instrument": "FET_USDC-PERPETUAL",   "currency": "USDC",
-    #               "min_amount": 1.0,    "max_amount": 100000,   "tick_size": 0.0001},
-
-    # ── 🧪 Tier 5: New Verified Multi-Regime Additions ──
-    "ZECUSDT":   {"instrument": "ZEC_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
-    "HBARUSDT":  {"instrument": "HBAR_USDC-PERPETUAL",  "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 500000,   "tick_size": 0.00001},
-    "CRVUSDT":   {"instrument": "CRV_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 1.0,    "max_amount": 100000,   "tick_size": 0.0001},
-    "FILUSDT":   {"instrument": "FIL_USDC-PERPETUAL",   "currency": "USDC",
-                  "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    # "TAOUSDT":   {"instrument": "TAO_USDC-PERPETUAL",   "currency": "USDC",
-    #               "min_amount": 0.001,  "max_amount": 500,      "tick_size": 0.01},
-    # "PENDLEUSDT":{"instrument": "PENDLE_USDC-PERPETUAL","currency": "USDC",
-    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    # "RENDERUSDT":{"instrument": "RNDR_USDC-PERPETUAL",  "currency": "USDC",
-    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    # "WIFUSDT":   {"instrument": "WIF_USDC-PERPETUAL",   "currency": "USDC",
-    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    # "JUPUSDT":   {"instrument": "JUP_USDC-PERPETUAL",   "currency": "USDC",
-    #               "min_amount": 0.1,    "max_amount": 10000,    "tick_size": 0.001},
-    # "PAXGUSDT":  {"instrument": "PAXG_USDC-PERPETUAL",  "currency": "USDC",
-    #               "min_amount": 0.0001, "max_amount": 100,      "tick_size": 0.01},
+    "ETHUSDT":   {"instrument": "ETH_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.0001, "max_amount": 5000,   "tick_size": 0.05},
+    "BNBUSDT":   {"instrument": "BNB_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.001,  "max_amount": 1000,   "tick_size": 0.05},
+    "SOLUSDT":   {"instrument": "SOL_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.001,  "max_amount": 50000,  "tick_size": 0.01},
+    "XRPUSDT":   {"instrument": "XRP_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1.0,    "max_amount": 500000, "tick_size": 0.0001},
+    "NEARUSDT":  {"instrument": "NEAR_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.1,    "max_amount": 100000, "tick_size": 0.0001},
+    "LTCUSDT":   {"instrument": "LTC_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.01,   "max_amount": 1000,   "tick_size": 0.01},
+    "UNIUSDT":   {"instrument": "UNI_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.01,   "max_amount": 10000,  "tick_size": 0.001},
+    "BCHUSDT":   {"instrument": "BCH_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.001,  "max_amount": 500,    "tick_size": 0.01},
+    "DOTUSDT":   {"instrument": "DOT_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.1,    "max_amount": 10000,  "tick_size": 0.001},
+    "ALGOUSDT":  {"instrument": "ALGO_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1.0,    "max_amount": 500000, "tick_size": 0.0001},
+    "ENAUSDT":   {"instrument": "ENA_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1.0,    "max_amount": 500000, "tick_size": 0.0001},
+    "DOGEUSDT":  {"instrument": "DOGE_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1.0,    "max_amount": 1000000,"tick_size": 0.00001},
+    "TRUMPUSDT": {"instrument": "TRUMP_USDC-PERPETUAL", "currency": "USDC", "min_amount": 0.01,   "max_amount": 10000,  "tick_size": 0.001},
+    "PUMPUSDT":  {"instrument": "PUMP_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1.0,    "max_amount": 5000000,"tick_size": 0.00001},
+    "AAVEUSDT":  {"instrument": "AAVE_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.01,   "max_amount": 1000,   "tick_size": 0.01},
+    "LINKUSDT":  {"instrument": "LINK_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.01,   "max_amount": 10000,  "tick_size": 0.001},
+    "SUIUSDT":   {"instrument": "SUI_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.1,    "max_amount": 100000, "tick_size": 0.0001},
+    "AVAXUSDT":  {"instrument": "AVAX_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 0.001,  "max_amount": 10000,  "tick_size": 0.001},
+    "ADAUSDT":   {"instrument": "ADA_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1.0,    "max_amount": 500000, "tick_size": 0.0001},
+    "TRXUSDT":   {"instrument": "TRX_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1.0,    "max_amount": 500000, "tick_size": 0.00001},
+    "XLMUSDT":   {"instrument": "XLM_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1.0,    "max_amount": 500000, "tick_size": 0.00001},
+    "ZECUSDT":   {"instrument": "ZEC_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.001,  "max_amount": 500,    "tick_size": 0.01},
+    "HBARUSDT":  {"instrument": "HBAR_USDC-PERPETUAL",  "currency": "USDC", "min_amount": 1.0,    "max_amount": 500000, "tick_size": 0.00001},
+    "CRVUSDT":   {"instrument": "CRV_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 1.0,    "max_amount": 100000, "tick_size": 0.0001},
+    "FILUSDT":   {"instrument": "FIL_USDC-PERPETUAL",   "currency": "USDC", "min_amount": 0.1,    "max_amount": 10000,  "tick_size": 0.001},
 }
 
 TRADEABLE_SYMBOLS: list = []
 
 
 def _calc_decimals(val: float) -> int:
-    """Calculates decimal precision without scientific notation formatting bugs."""
     if val <= 0:
         return 4
     s = f"{val:.10f}".rstrip("0")
@@ -129,18 +70,12 @@ class DeribitClient:
         self._authenticate()
         self._verify_instruments()
 
-    # ── Auth ──────────────────────────────────────────────────────────
-
     def _authenticate(self):
         for attempt in range(3):
             try:
                 r = self.session.get(
                     f"{self.base}/public/auth",
-                    params={
-                        "grant_type":    "client_credentials",
-                        "client_id":      self.client_id,
-                        "client_secret": self.client_secret,
-                    },
+                    params={"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self.client_secret},
                     timeout=15
                 )
                 r.raise_for_status()
@@ -189,19 +124,16 @@ class DeribitClient:
         r.raise_for_status()
         return data.get("result", data)
 
-    # ── Instrument Management ─────────────────────────────────────────
-
     def _verify_instruments(self):
         global TRADEABLE_SYMBOLS
         active = {}
         try:
-            res = self._get("/public/get_instruments",
-                            {"currency": "USDC", "kind": "future", "expired": "false"})
+            res = self._get("/public/get_instruments", {"currency": "USDC", "kind": "future", "expired": "false"})
             if isinstance(res, list):
                 active = {i["instrument_name"]: i for i in res}
         except Exception as e:
             log.warning(f"  Instrument list error: {e}")
-            
+
         confirmed = []
         for sym, info in SYMBOL_MAP.items():
             target = info["instrument"]
@@ -227,13 +159,10 @@ class DeribitClient:
         name = self.get_instrument_name(symbol)
         if name not in self._instrument_cache:
             try:
-                self._instrument_cache[name] = self._get(
-                    "/public/get_instrument", {"instrument_name": name})
+                self._instrument_cache[name] = self._get("/public/get_instrument", {"instrument_name": name})
             except Exception:
                 pass
         return self._instrument_cache.get(name, {})
-
-    # ── Precision & Sizing ────────────────────────────────────────────
 
     def get_tick_size(self, symbol: str) -> float:
         info = self.get_instrument_info(symbol)
@@ -247,9 +176,7 @@ class DeribitClient:
     def get_max_trade_amount(self, symbol: str) -> float:
         info    = self.get_instrument_info(symbol)
         api_max = info.get("max_trade_amount") or info.get("max_amount")
-        return float(api_max) if api_max else float(
-            SYMBOL_MAP.get(symbol, {}).get("max_amount", float("inf"))
-        )
+        return float(api_max) if api_max else float(SYMBOL_MAP.get(symbol, {}).get("max_amount", float("inf")))
 
     def round_price(self, symbol: str, price: float) -> float:
         if price <= 0:
@@ -292,8 +219,6 @@ class DeribitClient:
         decimals = _calc_decimals(step)
         return (round(tp1, decimals), round(tp2, decimals)) if decimals else (int(round(tp1)), int(round(tp2)))
 
-    # ── Market Data ───────────────────────────────────────────────────
-
     def get_live_price(self, symbol: str) -> float:
         try:
             t = self._get("/public/ticker", {"instrument_name": self.get_instrument_name(symbol)})
@@ -320,10 +245,7 @@ class DeribitClient:
 
     def get_order_book_spread(self, symbol: str) -> dict:
         try:
-            book = self._get("/public/get_order_book", {
-                "instrument_name": self.get_instrument_name(symbol),
-                "depth": 5,
-            })
+            book = self._get("/public/get_order_book", {"instrument_name": self.get_instrument_name(symbol), "depth": 5})
             bids = book.get("bids", [])
             asks = book.get("asks", [])
             if not bids or not asks:
@@ -337,20 +259,12 @@ class DeribitClient:
             is_wide = spread_pct > WIDE_SPREAD_WARN_PCT
             if is_wide:
                 log.warning(f"  ⚠️ Wide spread on {symbol}: {spread_pct*100:.3f}% (bid={best_bid}, ask={best_ask})")
-            return {
-                "best_bid":   best_bid,
-                "best_ask":   best_ask,
-                "spread_pct": spread_pct,
-                "is_wide":    is_wide,
-            }
+            return {"best_bid": best_bid, "best_ask": best_ask, "spread_pct": spread_pct, "is_wide": is_wide}
         except Exception as e:
             log.warning(f"  order book {symbol}: {e}")
             return {"best_bid": 0, "best_ask": 0, "spread_pct": 999, "is_wide": True}
 
-    # ── Sizing Calculations ───────────────────────────────────────────
-
-    def calc_contracts(self, symbol: str, balance_usd: float,
-                       entry: float, stop: float, risk_mult: float = 1.0):
+    def calc_contracts(self, symbol: str, balance_usd: float, entry: float, stop: float, risk_mult: float = 1.0):
         try:
             from config import RISK_PER_TRADE as rpt
         except ImportError:
@@ -378,8 +292,6 @@ class DeribitClient:
         log.info(f"  Contracts: {result} {symbol} | notional≈${notional:.2f} | risk=${risk_usd:.2f}")
         return result
 
-    # ── Order Placement ───────────────────────────────────────────────
-
     @staticmethod
     def _is_position_size_limit_error(e) -> bool:
         return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
@@ -396,8 +308,7 @@ class DeribitClient:
 
             effective_ceiling = 0.50 if reduce_only else MAX_TRADEABLE_SPREAD_PCT
             if spread["spread_pct"] > effective_ceiling:
-                log.warning(f"  🚫 {symbol}: spread {spread['spread_pct']*100:.1f}% exceeds "
-                            f"{effective_ceiling*100:.0f}% ceiling — book too thin, aborting.")
+                log.warning(f"  🚫 {symbol}: spread {spread['spread_pct']*100:.1f}% exceeds {effective_ceiling*100:.0f}% ceiling — book too thin, aborting.")
                 return {}
 
             if best_bid > 0 and best_ask > 0:
@@ -412,13 +323,9 @@ class DeribitClient:
                 for attempt in range(4):
                     try:
                         result = self._post(method, {
-                            "instrument_name": instrument,
-                            "amount":          cur_amount,
-                            "type":            "limit",
-                            "price":           worst_price,
-                            "time_in_force":   "immediate_or_cancel",
-                            "label":           label,
-                            "reduce_only":     "true" if reduce_only else "false",
+                            "instrument_name": instrument, "amount": cur_amount, "type": "limit",
+                            "price": worst_price, "time_in_force": "immediate_or_cancel",
+                            "label": label, "reduce_only": "true" if reduce_only else "false",
                         })
                         order = result.get("order", result)
                         state = order.get("order_state", "")
@@ -441,16 +348,12 @@ class DeribitClient:
         except Exception as e:
             log.warning(f"  IoC order failed ({e}) — falling back to market order")
 
-        # Fallback pure market order
         cur_amount = amount
         for attempt in range(4):
             try:
                 result = self._post(method, {
-                    "instrument_name": instrument,
-                    "amount":          cur_amount,
-                    "type":            "market",
-                    "label":           label,
-                    "reduce_only":     "true" if reduce_only else "false",
+                    "instrument_name": instrument, "amount": cur_amount, "type": "market",
+                    "label": label, "reduce_only": "true" if reduce_only else "false",
                 })
                 order = result.get("order", result)
                 log.info(f"  ✅ MARKET {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
@@ -467,8 +370,6 @@ class DeribitClient:
 
         log.error(f"  🚨 {symbol}: order NOT placed, manual intervention required")
         return {}
-
-    # ── Fill Tracking ─────────────────────────────────────────────────
 
     def get_fill_price(self, market_result: dict, fallback: float) -> float:
         try:
@@ -495,9 +396,7 @@ class DeribitClient:
                         mark = float(p.get("mark_price", 0) or 0)
                         if mark > 0:
                             converted = size / mark
-                            log.info(f"  🔧 get_position_size {symbol}: size={size} {size_ccy} "
-                                     f"(notional, not coin units) -> {converted:.6f} {base_ccy} "
-                                     f"via mark_price {mark}")
+                            log.info(f"  🔧 get_position_size {symbol}: size={size} {size_ccy} (notional, not coin units) -> {converted:.6f} {base_ccy} via mark_price {mark}")
                             return converted
                     return size
             return 0.0
@@ -549,8 +448,6 @@ class DeribitClient:
                 "trigger":         "mark_price",
                 "label":           f"bot_sl_{int(time.time())}",
             }
-            if use_reduce_only:
-                body["reduce_only"] = "true"
         else:
             body = {
                 "instrument_name": instrument,
@@ -559,6 +456,18 @@ class DeribitClient:
                 "price":           safe_price,
                 "label":           f"bot_tp_{int(time.time())}",
             }
+
+        # FIX: use_reduce_only was previously set ONLY inside the stop_price
+        # branch above ("if use_reduce_only: body['reduce_only']=..." lived
+        # inside that if-block). Every TP order has stop_price=None, so it
+        # fell into the else branch and reduce_only was NEVER added to the
+        # body regardless of what the caller passed. This silently defeated
+        # the trade_executor.py fix -- both TP placement and the TP self-heal
+        # retry pass use_reduce_only=True, but it was being dropped right
+        # here before ever reaching Deribit's API. Moved outside the if/else
+        # so it's applied uniformly to SL and TP orders alike.
+        if use_reduce_only:
+            body["reduce_only"] = "true"
 
         result = self._post(method, body)
         order  = result.get("order", result)
@@ -608,11 +517,7 @@ class DeribitClient:
     def get_trade_history_for_instrument(self, symbol: str, count: int = 10) -> list:
         try:
             instrument = self.get_instrument_name(symbol)
-            result     = self._get("/private/get_user_trades_by_instrument", {
-                "instrument_name": instrument,
-                "count":           count,
-                "sorting":         "desc",
-            })
+            result     = self._get("/private/get_user_trades_by_instrument", {"instrument_name": instrument, "count": count, "sorting": "desc"})
             return result if isinstance(result, list) else result.get("trades", [])
         except Exception as e:
             log.warning(f"  Trade history {symbol}: {e}")
@@ -639,10 +544,7 @@ class DeribitClient:
         try:
             self._ensure_auth()
             instrument = self.get_instrument_name(symbol)
-            result = self._get("/private/set_leverage", {
-                "instrument_name": instrument,
-                "leverage":        leverage,
-            })
+            result = self._get("/private/set_leverage", {"instrument_name": instrument, "leverage": leverage})
             actual = result.get("leverage", leverage) if isinstance(result, dict) else leverage
             log.info(f"  ⚡ Leverage set to {actual}x — {instrument}")
             return True
