@@ -1067,7 +1067,11 @@ function renderProbationTracker() {
       <td style="color:var(--green);font-weight:600;">${c.probation_wins} / 3 Wins</td>
       <td style="color:var(--red);">${c.probation_consecutive_losses} / 3 Losses</td>
       <td style="color:var(--amber);">${c.time_left_hrs}h remaining</td>
-      <td><span class="tag" style="background:var(--amber2);color:var(--amber);border:1px solid #f59e0b40">BUY ≥${c.required_buy_conf}% | SELL ≥${c.required_sell_conf}%</span></td>
+      <td>
+        <span class="tag" style="background:var(--amber2);color:var(--amber);border:1px solid #f59e0b40">
+          BUY ≥${c.required_buy_conf ? c.required_buy_conf.toFixed(1) : c.required_conf.toFixed(1)}% | SELL ≥${c.required_sell_conf ? c.required_sell_conf.toFixed(1) : c.required_conf.toFixed(1)}%
+        </span>
+      </td>
       <td><button onclick="releaseProbation('${c.symbol}')" style="background:var(--green2);border:1px solid var(--green);color:var(--green);padding:4px 9px;border-radius:5px;cursor:pointer;font-size:9px;font-weight:600;font-family:var(--mono)">🔓 Release</button></td>
     </tr>
   `).join('');
