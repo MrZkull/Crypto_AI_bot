@@ -18,8 +18,28 @@
   --purple: #8b5cf6; --purple2: #8b5cf615; --cyan: #06b6d4; --cyan2: #06b6d415;
   --nav-w: 200px; --mono: 'JetBrains Mono', monospace; --sans: 'Syne', sans-serif;
 }
+
+body.light-theme {
+  --bg: #f8fafc; --bg2: #ffffff; --bg3: #f1f5f9; --bg4: #e2e8f0;
+  --border: #e2e8f0; --border2: #cbd5e1; --text: #0f172a; --text2: #334155; --text3: #64748b;
+  --green2: #10b98120; --red2: #f43f5e20; --amber2: #f59e0b20; --blue2: #3b82f620;
+  --purple2: #8b5cf620; --cyan2: #06b6d420;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; min-height: 100vh; display: flex; overflow-x: auto; }
+body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; min-height: 100vh; display: flex; overflow-x: auto; transition: background 0.2s ease, color 0.2s ease; }
+
+body.light-theme .logo-text,
+body.light-theme .page-title,
+body.light-theme .stat-value,
+body.light-theme .tc-sym,
+body.light-theme .sc-sym,
+body.light-theme .mc-price {
+  color: #0f172a !important;
+}
+body.light-theme .fbtn {
+  background: var(--bg2);
+}
 
 /* 🏛️ ALWAYS-OPEN PINNED ACCESSIBLE SIDEBAR */
 .sidebar { width: var(--nav-w); min-height: 100vh; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; z-index: 200; flex-shrink: 0; }
@@ -35,14 +55,14 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 .nav-badge { margin-left: auto; font-size: 8px; background: var(--red); color: #fff; border-radius: 10px; padding: 1px 5px; font-weight: 700; }
 .nav-badge.green { background: var(--green); }
 .nav-badge.amber { background: var(--amber); color: #000; }
-.sidebar-bottom { margin-top: auto; padding: 10px; border-top: 1px solid var(--border); }
+.sidebar-bottom { margin-top: auto; padding: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
 .mode-badge { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 6px; font-size: 10px; font-weight: 500; }
 .mode-badge.active-mode { background: var(--green2); border: 1px solid #10b98130; color: var(--green); }
 .sidebar-coins { padding: 8px 10px; }
 .coins-label { font-size: 8px; letter-spacing: 1px; color: var(--text3); text-transform: uppercase; margin-bottom: 6px; }
 
 /* 🔒 CONSTANT SOLID COLOR CHIPS (ZERO BLINKING/FLASHING) */
-.coin-chips { display: flex; flex-wrap: wrap; gap: 3px; max-height: 220px; overflow-y: auto; }
+.coin-chips { display: flex; flex-wrap: wrap; gap: 3px; max-height: 200px; overflow-y: auto; }
 .coin-chip { font-size: 8px; padding: 3px 6px; border-radius: 4px; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); cursor: pointer; user-select: none; }
 .coin-chip.has-signal { border-color: var(--green) !important; color: var(--green) !important; background: rgba(16, 185, 129, 0.18) !important; font-weight: 600; }
 .coin-chip.probated-chip { border-color: var(--amber) !important; color: var(--amber) !important; background: rgba(245, 158, 11, 0.22) !important; font-weight: 700; }
@@ -155,7 +175,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
 /* System Monitor Grid */
 .mon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .mon-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.mon-card-hd { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--bg3); }
+.mon-card-hd { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--bg3); flex-wrap: wrap; gap: 6px; }
 .mon-card-title { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text2); }
 .mon-card-bd { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
 .mon-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 4px; background: var(--bg3); }
@@ -236,7 +256,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
     <div class="coins-label">Monitored Coins</div>
     <div class="coin-chips" id="coinChips"></div>
   </div>
+  
   <div class="sidebar-bottom">
+    <!-- ☀️ LIGHT / 🌙 DARK MODE TOGGLE SWITCH -->
+    <button id="themeToggleBtn" onclick="toggleTheme()" class="fbtn" style="width:100%;display:flex;align-items:center;justify-content:center;gap:6px;padding:6px 8px;font-weight:600;">
+      <span id="themeIcon">☀️</span> <span id="themeLabel">Light Mode</span>
+    </button>
     <div class="mode-badge active-mode" id="sidebarMode">
       <div class="mode-dot"></div>
       <div>
@@ -674,29 +699,29 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
   </div>
 
   <!-- 12. INTELLIGENCE PAGE (PREDICTION LEDGER & ADAPTATION PROPOSALS) -->
-<div class="page" id="page-intel">  
-  <div class="stats-row">    
-    <div class="stat-card c-purple"><div class="stat-label">Prediction Ledger</div><div class="stat-value purple" id="intel-total-preds">—</div><div class="stat-sub" id="intel-unaudited">— unaudited</div></div>    
-    <div class="stat-card c-green"><div class="stat-label">Overall Hit Rate</div><div class="stat-value green" id="intel-hitrate">—</div><div class="stat-sub">audited predictions</div></div>    
-    <div class="stat-card c-cyan"><div class="stat-label">Avg Disagreement</div><div class="stat-value cyan" id="intel-disagreement">—</div><div class="stat-sub">ensemble spread</div></div>    
-    <div class="stat-card c-amber"><div class="stat-label">Pending Proposals</div><div class="stat-value amber" id="intel-pending">0</div><div class="stat-sub">awaiting review</div></div>  
-  </div>  
-  <div class="panel">    
-    <div class="panel-header"><span class="panel-title">Per-Coin Calibration &amp; Failure Tags</span></div>    
-    <div class="panel-body" style="overflow-x:auto">      
-      <table class="htable">        
-        <thead><tr><th>Symbol</th><th>Audited</th><th>Hit Rate</th><th>Disagreement (Correct)</th><th>Disagreement (Incorrect)</th><th>Failure Tags</th></tr></thead>        
-        <tbody id="dossierBody"><tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text3)">Loading...</td></tr></tbody>      
-      </table>    
+  <div class="page" id="page-intel">  
+    <div class="stats-row">    
+      <div class="stat-card c-purple"><div class="stat-label">Prediction Ledger</div><div class="stat-value purple" id="intel-total-preds">—</div><div class="stat-sub" id="intel-unaudited">— unaudited</div></div>    
+      <div class="stat-card c-green"><div class="stat-label">Overall Hit Rate</div><div class="stat-value green" id="intel-hitrate">—</div><div class="stat-sub">audited predictions</div></div>    
+      <div class="stat-card c-cyan"><div class="stat-label">Avg Disagreement</div><div class="stat-value cyan" id="intel-disagreement">—</div><div class="stat-sub">ensemble spread</div></div>    
+      <div class="stat-card c-amber"><div class="stat-label">Pending Proposals</div><div class="stat-value amber" id="intel-pending">0</div><div class="stat-sub">awaiting review</div></div>  
     </div>  
-  </div>  
-  <div class="panel">    
-    <div class="panel-header"><span class="panel-title">🧪 Adaptation Proposals — Requires Approval</span></div>    
-    <div class="panel-body" id="proposalsBody">      
-      <div class="empty"><div class="emsg">Loading proposals...</div></div>    
+    <div class="panel">    
+      <div class="panel-header"><span class="panel-title">Per-Coin Calibration &amp; Failure Tags</span></div>    
+      <div class="panel-body" style="overflow-x:auto">      
+        <table class="htable">        
+          <thead><tr><th>Symbol</th><th>Audited</th><th>Hit Rate</th><th>Disagreement (Correct)</th><th>Disagreement (Incorrect)</th><th>Failure Tags</th></tr></thead>        
+          <tbody id="dossierBody"><tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text3)">Loading...</td></tr></tbody>      
+        </table>    
+      </div>  
     </div>  
-  </div>
-</div> 
+    <div class="panel">    
+      <div class="panel-header"><span class="panel-title">🧪 Adaptation Proposals — Requires Approval</span></div>    
+      <div class="panel-body" id="proposalsBody">      
+        <div class="empty"><div class="emsg">Loading proposals...</div></div>    
+      </div>  
+    </div>
+  </div> 
   
   <!-- 9. MODEL HEALTH PAGE -->
   <div class="page" id="page-modelhealth">
@@ -780,10 +805,18 @@ body { background: var(--bg); color: var(--text); font-family: var(--mono); font
       <button onclick="runMonitorChecks()" style="background:var(--blue2);border:1px solid var(--blue);color:var(--blue);padding:6px 12px;border-radius:5px;cursor:pointer;font-size:10px;font-weight:600;font-family:var(--mono)">↻ Refresh</button>
     </div>
     
-    <!-- 🔒 PROBATION TRACKER PANEL -->
+    <!-- 🔒 PROBATION TRACKER PANEL WITH MANUAL BENCH CONTROL -->
     <div class="mon-card" style="margin-bottom:14px;">
       <div class="mon-card-hd">
         <span class="mon-card-title">🔒 Probation Tracker (+10.0% Confidence Premium Required)</span>
+        
+        <!-- ➕ MANUAL BENCH DROPDOWN & TRIGGER -->
+        <div style="display:flex;align-items:center;gap:6px;">
+          <select id="benchCoinSelect" class="fselect" style="max-width:140px;">
+            <option value="">Select Coin...</option>
+          </select>
+          <button onclick="manualBenchCoin()" style="background:var(--amber2);border:1px solid var(--amber);color:var(--amber);padding:4px 9px;border-radius:5px;cursor:pointer;font-size:9px;font-weight:700;font-family:var(--mono);">➕ Bench Coin</button>
+        </div>
       </div>
       <div style="overflow-x:auto;">
         <table class="htable">
@@ -972,6 +1005,27 @@ let scanRunning = false, monTimer = null;
 let equityChartInst = null, dailyPnlChartInst = null, calibrationChartInst = null;
 let allEquityPoints = [], allDailyPnlPoints = [];
 
+// ── THEME INITIALIZATION & TOGGLE ──
+function initTheme() {
+  const saved = localStorage.getItem('theme') || 'dark';
+  if (saved === 'light') {
+    document.body.classList.add('light-theme');
+    const icon = document.getElementById('themeIcon');
+    const label = document.getElementById('themeLabel');
+    if (icon) icon.textContent = '🌙';
+    if (label) label.textContent = 'Dark Mode';
+  }
+}
+
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light-theme');
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+  const icon = document.getElementById('themeIcon');
+  const label = document.getElementById('themeLabel');
+  if (icon) icon.textContent = isLight ? '🌙' : '☀️';
+  if (label) label.textContent = isLight ? 'Dark Mode' : 'Light Mode';
+}
+
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -1048,6 +1102,7 @@ async function fetchProbationData() {
     probatedCoinsData = d.probated_coins || [];
     probatedCoinsSet = new Set(probatedCoinsData.map(c => c.symbol));
     renderProbationTracker();
+    populateBenchSelect();
     updateCoinChips();
   }
 }
@@ -1061,20 +1116,56 @@ function renderProbationTracker() {
     return;
   }
 
-  tbody.innerHTML = probatedCoinsData.map(c => `
+  tbody.innerHTML = probatedCoinsData.map(c => {
+    const buyConf = c.required_buy_conf ? c.required_buy_conf.toFixed(1) : c.required_conf.toFixed(1);
+    const sellConf = c.required_sell_conf ? c.required_sell_conf.toFixed(1) : c.required_conf.toFixed(1);
+    return `
     <tr>
-      <td style="color:#fff;font-weight:700;">${c.symbol}</td>
+      <td style="color:var(--text);font-weight:700;">${c.symbol}</td>
       <td style="color:var(--green);font-weight:600;">${c.probation_wins} / 3 Wins</td>
       <td style="color:var(--red);">${c.probation_consecutive_losses} / 3 Losses</td>
       <td style="color:var(--amber);">${c.time_left_hrs}h remaining</td>
       <td>
         <span class="tag" style="background:var(--amber2);color:var(--amber);border:1px solid #f59e0b40">
-          BUY ≥${c.required_buy_conf ? c.required_buy_conf.toFixed(1) : c.required_conf.toFixed(1)}% | SELL ≥${c.required_sell_conf ? c.required_sell_conf.toFixed(1) : c.required_conf.toFixed(1)}%
+          BUY ≥${buyConf}% | SELL ≥${sellConf}%
         </span>
       </td>
       <td><button onclick="releaseProbation('${c.symbol}')" style="background:var(--green2);border:1px solid var(--green);color:var(--green);padding:4px 9px;border-radius:5px;cursor:pointer;font-size:9px;font-weight:600;font-family:var(--mono)">🔓 Release</button></td>
     </tr>
-  `).join('');
+  `}).join('');
+}
+
+function populateBenchSelect() {
+  const sel = document.getElementById('benchCoinSelect');
+  if (!sel || !ALL_COINS.length) return;
+  const eligible = ALL_COINS.filter(c => !probatedCoinsSet.has(c));
+  sel.innerHTML = '<option value="">Select Coin...</option>' +
+    eligible.map(c => `<option value="${c}">${c.replace('USDT','')}</option>`).join('');
+}
+
+async function manualBenchCoin() {
+  const sel = document.getElementById('benchCoinSelect');
+  const symbol = sel ? sel.value : '';
+  if (!symbol) {
+    alert("Please select a coin to place on probation.");
+    return;
+  }
+  if (!confirm(`Place ${symbol} on probation?\n\nThis will enforce a +10% confidence premium until 3 recovery wins are achieved.`)) return;
+  try {
+    const r = await fetch('/api/probation/bench', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.ok) {
+      await fetchProbationData();
+    } else {
+      alert(`🚨 Bench failed: ${data.error || 'Server error'}`);
+    }
+  } catch(e) {
+    alert(`🚨 Connection error: ${e.message}`);
+  }
 }
 
 async function releaseProbation(symbol) {
@@ -1117,7 +1208,7 @@ function renderCooldownTracker(cooldowns) {
 
   tbody.innerHTML = cooldowns.map(c => `
     <tr>
-      <td style="color:#fff;font-weight:700;">${c.symbol}</td>
+      <td style="color:var(--text);font-weight:700;">${c.symbol}</td>
       <td style="color:var(--text2);font-size:9px;">${c.reason}</td>
       <td style="color:var(--text3);font-size:9px;">${c.blocked_at}</td>
       <td style="color:var(--amber);">${c.time_left_hrs}h remaining</td>
@@ -1319,7 +1410,7 @@ async function fetchIntel() {
   if (dossier.ok && dossier.coins.length) {    
     dBody.innerHTML = dossier.coins.map(c => `      
       <tr>        
-        <td style="color:#fff;font-weight:600">${c.symbol}</td>        
+        <td style="color:var(--text);font-weight:600">${c.symbol}</td>        
         <td>${c.total_audited}</td>        
         <td style="color:${c.hit_rate >= 55 ? 'var(--green)' : c.hit_rate >= 40 ? 'var(--amber)' : 'var(--red)'}">${c.hit_rate ?? '—'}%</td>        
         <td>${c.avg_disagreement_when_correct ?? '—'}</td>        
@@ -1463,7 +1554,6 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   const live   = parseFloat(t.live_price || 0);
   const tp1Hit = t.tp1_hit || false;
 
-  // Genuine bracket failure condition: missing entry, invalid stop, or both take-profits missing
   if (!entry || sl <= 0 || (tp1 <= 0 && tp2 <= 0)) {
     return `<div style="padding:6px 0">
       <div style="height:6px;background:rgba(244,63,94,0.15);border-radius:3px;border:1px dashed var(--red)"></div>
@@ -1866,7 +1956,7 @@ function renderHistoryFiltered() {
       Math.round((new Date(t.closed_at) - new Date(t.opened_at)) / 60000) + 'm' : '—';
     return `<tr>
       <td style="color:var(--text3);font-size:9px">${idx + 1}</td>
-      <td style="color:#fff;font-weight:600">${t.symbol}</td>
+      <td style="color:var(--text);font-weight:600">${t.symbol}</td>
       <td style="color:var(--text3);font-size:9px">${(t.tier||'').replace(/[👑⚡🏛🤖🧪]/g,'').trim()}</td>
       <td><span class="tag ${t.signal==='BUY'?'buy':'sell'}">${t.signal||'—'}</span></td>
       <td style="color:var(--blue)">${fp(t.entry,dec)}</td>
@@ -1977,7 +2067,7 @@ async function fetchMarketData() {
         const dec = price < 1 ? 4 : price < 100 ? 2 : 0;
         return `<div class="market-card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-family:var(--sans);font-size:12px;font-weight:700;color:#fff">${sym.replace('USDT','')}</span>
+            <span style="font-family:var(--sans);font-size:12px;font-weight:700;color:var(--text)">${sym.replace('USDT','')}</span>
             <span class="mc-chg ${chg>=0?'up':'down'}">${pct(chg)}</span>
           </div>
           <div class="mc-price">$${price.toLocaleString('en',{minimumFractionDigits:dec,maximumFractionDigits:dec})}</div>
@@ -2257,6 +2347,7 @@ async function fetchConfig() {
 
   buildCoinChips();
   populateDynamicPicklists();
+  populateBenchSelect();
 
   const bind = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   
@@ -2604,7 +2695,7 @@ async function fetchEmailTracker() {
   tbody.innerHTML = logs.map(l => `
     <tr>
       <td style="color:var(--text3);">${l.timestamp}</td>
-      <td style="color:#fff; font-weight:600;">${l.recipient}</td>
+      <td style="color:var(--text); font-weight:600;">${l.recipient}</td>
       <td style="color:var(--text2); font-size:9px;">${l.scope}</td>
       <td>${l.total_trades}</td>
       <td style="color:${parseFloat(l.net_pnl) >= 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">$${l.net_pnl}</td>
@@ -2629,6 +2720,7 @@ async function refreshAll() {
   updateCoinChips();
 }
 
+initTheme();
 refreshAll();
 setInterval(refreshAll, 15000);
 
