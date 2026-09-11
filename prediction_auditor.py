@@ -1,9 +1,15 @@
-# prediction_auditor.py — closes the loop on predictions.json
+# prediction_auditor.py — Closes the loop on predictions.json with dynamic barrier imports
 
 import json, time, logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import requests
+
+try:
+    from config import ATR_STOP_MULT, ATR_TARGET1_MULT
+except ImportError:
+    ATR_STOP_MULT    = 2.5
+    ATR_TARGET1_MULT = 3.5
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
@@ -14,9 +20,6 @@ BAR_MINUTES      = 15
 LOOKAHEAD_BARS   = 24
 AUDIT_GRACE_BARS = 2
 MAX_AUDIT_BATCH  = 300
-
-ATR_STOP_MULT    = 2.5
-ATR_TARGET1_MULT = 3.5
 
 BINANCE_ENDPOINTS = [
     "https://data-api.binance.vision/api/v3/klines",
@@ -68,7 +71,6 @@ def _window_closed(pred, now):
 
 
 def audit_one(pred):
-    """Replay the exact triple-barrier rule from make_targets() against real data."""
     symbol = pred["symbol"]
     sig    = pred["predicted_signal"]
     entry  = pred.get("entry_ref")
@@ -105,8 +107,8 @@ def audit_one(pred):
     highs = [k["high"] for k in klines]
     lows  = [k["low"] for k in klines]
 
-    buy_tp,  buy_sl  = entry + atr*ATR_TARGET1_MULT, entry - atr*ATR_STOP_MULT
-    sell_tp, sell_sl = entry - atr*ATR_TARGET1_MULT, entry + atr*ATR_STOP_MULT
+    buy_tp,  buy_sl  = entry + atr * ATR_TARGET1_MULT, entry - atr * ATR_STOP_MULT
+    sell_tp, sell_sl = entry - atr * ATR_TARGET1_MULT, entry + atr * ATR_STOP_MULT
 
     buy_success = sell_success = False
     for h, l in zip(highs, lows):
@@ -156,7 +158,6 @@ def update_coin_dossier(audited_preds):
             continue
         sym = p["symbol"]
         
-        # DEFENSIVE INITIALIZATION: Guarantees keys exist regardless of who touched dossier first
         if sym not in dossier or not isinstance(dossier[sym], dict):
             dossier[sym] = {}
             
