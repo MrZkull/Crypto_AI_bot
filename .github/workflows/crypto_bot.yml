@@ -56,17 +56,17 @@ jobs:
 
       - name: Init state files if missing
         run: |
-          [ -f trades.json ]               || echo '{}' > trades.json
-          [ -f trade_history.json ]        || echo '[]' > trade_history.json
-          [ -f signals.json ]              || echo '[]' > signals.json
-          [ -f scan_mode.json ]            || echo '{}' > scan_mode.json
-          [ -f balance.json ]              || echo '{}' > balance.json
-          [ -f orphan_candidates.json ]    || echo '{}' > orphan_candidates.json
-          [ -f scan_status.json ]          || echo '{}' > scan_status.json
-          [ -f predictions.json ]          || echo '[]' > predictions.json
-          [ -f adaptation_overrides.json ] || echo '{}' > adaptation_overrides.json
-          [ -f coin_dossier.json ]         || echo '{}' > coin_dossier.json
-          [ -f adaptation_proposals.json ] || echo '[]' > adaptation_proposals.json
+          [ -f trades.json ]                || echo '{}' > trades.json
+          [ -f trade_history.json ]         || echo '[]' > trade_history.json
+          [ -f signals.json ]               || echo '[]' > signals.json
+          [ -f scan_mode.json ]             || echo '{}' > scan_mode.json
+          [ -f balance.json ]               || echo '{}' > balance.json
+          [ -f orphan_candidates.json ]     || echo '{}' > orphan_candidates.json
+          [ -f scan_status.json ]           || echo '{}' > scan_status.json
+          [ -f predictions.json ]           || echo '[]' > predictions.json
+          [ -f adaptation_overrides.json ]  || echo '{}' > adaptation_overrides.json
+          [ -f coin_dossier.json ]          || echo '{}' > coin_dossier.json
+          [ -f adaptation_proposals.json ]  || echo '[]' > adaptation_proposals.json
           mkdir -p data
 
       - name: Run bot
@@ -115,7 +115,7 @@ jobs:
           git fetch origin main
           git pull --rebase origin main || git pull origin main || true
 
-          # ── 4. Restore fresh runtime state back over pulled files ──
+          # ── 4. Restore runtime state without erasing background audits ──
           cp /tmp/trades_runtime.json            trades.json
           cp /tmp/trade_history_runtime.json     trade_history.json
           cp /tmp/signals_runtime.json           signals.json
@@ -123,7 +123,28 @@ jobs:
           cp /tmp/scan_mode_runtime.json         scan_mode.json
           cp /tmp/orphan_candidates_runtime.json orphan_candidates.json
           cp /tmp/scan_status_runtime.json       scan_status.json
-          cp /tmp/predictions_runtime.json       predictions.json
+
+          # ATOMIC MERGE: Preserves audited marks while appending new scan predictions
+          python -c "
+          import json, shutil
+          try:
+              with open('/tmp/predictions_runtime.json') as f:
+                  local_preds = {p['pred_id']: p for p in json.load(f)}
+              with open('predictions.json') as f:
+                  remote_preds = {p['pred_id']: p for p in json.load(f)}
+              merged = remote_preds.copy()
+              for pid, p in local_preds.items():
+                  if pid in merged and merged[pid].get('audited'):
+                      if p.get('was_executed'):
+                          merged[pid]['was_executed'] = True
+                  else:
+                      merged[pid] = p
+              with open('predictions.json', 'w') as f:
+                  json.dump(list(merged.values())[-10000:], f, indent=2)
+          except Exception as e:
+              print(f'Prediction merge warning: {e}')
+              shutil.copyfile('/tmp/predictions_runtime.json', 'predictions.json')
+          "
 
           # ── 5. Stage, commit, and push updated state ──
           git add trades.json            || true
@@ -138,4 +159,3 @@ jobs:
 
           git diff --cached --quiet || git commit -m "Sync Bot State [skip ci]"
           git push origin main
-          
