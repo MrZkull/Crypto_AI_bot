@@ -966,6 +966,45 @@ def api_probation_release():
     log.info(f"  🔓 [MANUAL] {symbol} released from probation via dashboard")
     return jsonify({"ok": True, "symbol": symbol, "status": "released", "synced": push_ok})
 
+@app.route("/api/probation/bench", methods=["POST", "OPTIONS"])
+def api_probation_bench():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    data = request.get_json(silent=True) or {}
+    symbol = str(data.get("symbol", "")).strip().upper()
+    if not symbol:
+        return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
+    rel = get(RELIABILITY_FILE, {})
+    if not isinstance(rel, dict): rel = {}
+
+    if symbol not in rel or not isinstance(rel[symbol], dict):
+        rel[symbol] = {
+            "normal_consecutive_losses": 0, "probation_wins": 0,
+            "probation_consecutive_losses": 0, "is_benched": False,
+            "benched_at": 0, "wins": 0, "losses": 0, "ghosts": 0
+        }
+
+    rel[symbol]["is_benched"] = True
+    rel[symbol]["benched_at"] = time.time()
+    rel[symbol]["probation_wins"] = 0
+    rel[symbol]["probation_consecutive_losses"] = 0
+    rel[symbol]["normal_consecutive_losses"] = 0
+    rel[symbol]["manually_benched_at"] = datetime.now(timezone.utc).isoformat()
+
+    for p in [Path(RELIABILITY_FILE), Path("data") / RELIABILITY_FILE]:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(rel, indent=2))
+        except Exception: pass
+    _cache[RELIABILITY_FILE] = rel
+    _cache_ts[RELIABILITY_FILE] = time.time()
+    push_ok = gh_push(RELIABILITY_FILE, rel)
+
+    log.info(f"  🔒 [MANUAL] {symbol} manually placed on probation via dashboard")
+    return jsonify({"ok": True, "symbol": symbol, "status": "benched", "synced": push_ok})
+
 @app.route("/api/cooldown")
 def api_cooldown():
     cd = get(COOLDOWN_FILE, {})
