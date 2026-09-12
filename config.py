@@ -97,7 +97,7 @@ LIVE_LIMIT        = 300
 SCAN_INTERVAL_MIN = 15
 
 # ── Strategy & Filter Baselines ───────────────────────────────────────
-MIN_CONFIDENCE    = 50.0
+MIN_CONFIDENCE    = 52.0
 MIN_ADX           = 15.0
 MIN_SCORE         = 3
 
