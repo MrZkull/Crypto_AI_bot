@@ -53,30 +53,58 @@
     },
     "stop_mult_used": 2.5
   },
-  "ETHUSDT": {
-    "symbol": "ETHUSDT",
-    "signal": "SELL",
-    "entry": 2502.725,
-    "stop": 2572.33,
-    "tp1": 2496.39,
-    "tp2": 0,
-    "qty": 2.1476,
-    "qty_tp1": 2.1476,
-    "qty_tp2": 0,
+  "LTCUSDT": {
+    "symbol": "LTCUSDT",
+    "signal": "BUY",
+    "entry": 54.18871067,
+    "stop": 53.85,
+    "tp1": 54.66,
+    "tp2": 55.2,
+    "qty": 97.57,
+    "qty_tp1": 48.78,
+    "qty_tp2": 48.79,
+    "risk_usd": 33.05,
+    "budget_risk_usd": 3888.16,
+    "balance_at_open": 105707.59,
+    "risk_mult": 1.2260734446416799,
+    "exit_mode": "DUAL_TP",
     "order_ids": {
-      "stop_loss": "USDC-SLMB-46446",
-      "tp1": "USDC-210049227550195106"
+      "entry": "USDC-210049227729410137",
+      "stop_loss": "USDC-SLMS-46558",
+      "tp1": "USDC-210049227729415413",
+      "tp2": "USDC-210049227729415779"
     },
-    "opened_at": "2026-09-11T20:24:58.066431+00:00",
+    "opened_at": "2026-09-12T09:26:59.384209+00:00",
     "tp1_hit": false,
     "tp2_hit": false,
     "closed": false,
-    "confidence": 50.0,
-    "score": 5,
+    "confidence": 45.2,
+    "score": 7,
     "reasons": [
-      "Healed Bracket Attachment via Dashboard"
+      "Valid conf (45%)",
+      "ADX 24",
+      "RSI not overbought (64)",
+      "EMA bullish",
+      "1h confirms",
+      "4h trend aligns (RSI 58)",
+      "4h trend established (20h)"
     ],
-    "tier": "\ud83d\udc51 Majors",
-    "exchange": "deribit_testnet"
+    "tier": "\ud83c\udfc6 Proven Winners",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "LTCUSDT_1789205215890",
+    "snapshot": {
+      "entry_atr": 0.13519348349351334,
+      "rsi_15m": 63.50420768305664,
+      "adx_15m": 24.093790617540762,
+      "rsi_4h": 57.835106655197364,
+      "ema_4h_bullish": true,
+      "fng_value": 63,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.3883853789740501,
+      "btc_beta_20": 1.8304882741625161
+    },
+    "stop_mult_used": 2.5
   }
 }
