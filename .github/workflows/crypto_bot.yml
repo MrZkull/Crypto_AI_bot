@@ -33,6 +33,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # ── Download 230 MB model artifact from GitHub Release v2.0 ──
+      - name: Download Model Artifact from GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+        run: |
+          if [ ! -f pro_crypto_ai_model.pkl ]; then
+            echo "Fetching pro_crypto_ai_model.pkl from Release v2.0..."
+            gh release download v2.0 --pattern "pro_crypto_ai_model.pkl" --clobber --repo "${{ github.repository }}"
+          fi
+
       - name: Init state files if missing
         run: |
           [ -f trades.json ]            || echo '{}' > trades.json
