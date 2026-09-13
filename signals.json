@@ -14551,5 +14551,61 @@
     "stop_mult_used": 2.5,
     "type": "executed",
     "generated_at": "2026-09-13T11:42:27.869474+00:00"
+  },
+  {
+    "symbol": "ENAUSDT",
+    "signal": "SELL",
+    "entry": 0.14,
+    "stop": 0.1424,
+    "tp1": 0.1366,
+    "tp2": 0.1328,
+    "qty": 37950,
+    "qty_tp1": 18970,
+    "qty_tp2": 18980,
+    "risk_usd": 91.08,
+    "budget_risk_usd": 1395.05,
+    "balance_at_open": 105439.26,
+    "risk_mult": 0.4410269091622819,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049228135505525",
+      "stop_loss": "USDC-SLMB-46861",
+      "tp1": "USDC-210049228135511387",
+      "tp2": "USDC-210049228135512004"
+    },
+    "opened_at": "2026-09-13T15:06:48.494381+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 45.9,
+    "score": 7,
+    "reasons": [
+      "Valid conf (46%)",
+      "Strong ADX 28",
+      "RSI not oversold (44)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 36)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83d\udc8e Micro-Granular Gems",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "ENAUSDT_1789312004646",
+    "snapshot": {
+      "entry_atr": 0.0009637371125660792,
+      "rsi_15m": 44.11010562169961,
+      "adx_15m": 28.029036800626244,
+      "rsi_4h": 36.27576848658599,
+      "ema_4h_bullish": false,
+      "fng_value": 61,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.7908318195886956,
+      "btc_beta_20": 3.5444737025638866
+    },
+    "stop_mult_used": 2.5,
+    "type": "executed",
+    "generated_at": "2026-09-13T15:06:48.498505+00:00"
   }
 ]
