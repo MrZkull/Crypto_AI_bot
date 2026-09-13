@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: '4,19,34,49 * * * *'
   workflow_dispatch:
+  repository_dispatch: {}
 
 concurrency:
   group: crypto-bot-scan
