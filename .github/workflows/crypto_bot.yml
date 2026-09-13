@@ -142,3 +142,16 @@ jobs:
 
           git diff --cached --quiet || git commit -m "Update Bot State & Sync Predictions [skip ci]"
           git push origin main
+
+      # ── 6. Trigger Historical Auditor automatically after successful scan ──
+      - name: Trigger Auditor Workflow
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+        run: |
+          echo "Triggering audit_workflow.yml..."
+          curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/audit_workflow.yml/dispatches \
+            -d '{"ref":"main"}' || true
