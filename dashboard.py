@@ -1,4 +1,4 @@
-# dashboard.py — V5.19: Unified Intelligence Control Plane, HTTP Multi-Provider Email & Verified Healing Engine
+# dashboard.py — V5.20: Unified Intelligence Control Plane, HTTP Multi-Provider Email & Dust-Safe Reconciler
 
 import os
 import json
@@ -452,7 +452,7 @@ def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     _cache_ts[EMAIL_TRACKER_FILE] = time.time()
     gh_push(EMAIL_TRACKER_FILE, logs)
 
-# ── MULTI-PROVIDER HTTP EMAIL SENDER (FROM V5.11) ──────────────────────
+# ── MULTI-PROVIDER HTTP EMAIL SENDER ──────────────────────────────────
 @app.route("/api/send_report", methods=["POST", "OPTIONS"])
 def api_send_report():
     if request.method == "OPTIONS":
@@ -534,7 +534,7 @@ def api_send_report():
         except Exception as e:
             log.warning(f"Brevo API error: {e} — trying next provider")
 
-    # 3. RESEND HTTP API (Attachment + Link)
+    # 3. RESEND HTTP API
     if resend_api_key:
         try:
             link_html = f'<p><a href="{report_url}">Download Full PDF Report</a></p>' if report_url else ''
@@ -714,6 +714,11 @@ def api_open_trades():
                 inst   = p.get("instrument_name", "")
                 base   = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
                 symbol = f"{base}USDT"
+
+                # ── DUST FILTER: Ignore sub-lot dust (<= 0.0005) not actively tracked in trades.json ──
+                if abs(size) <= 0.0005 and symbol not in ai_data:
+                    continue
+
                 entry  = float(p.get("average_price", 0) or 0)
                 live   = float(p.get("mark_price", 0) or 0)
                 t      = ai_data.get(symbol, {})
@@ -778,8 +783,8 @@ def api_trades_heal():
         return jsonify({"ok": False, "error": "Deribit client unavailable"}), 500
 
     real_pos = client.get_position_size(symbol)
-    if abs(real_pos) <= 0.0001:
-        return jsonify({"ok": False, "error": f"No open exchange position found for {symbol}."}), 404
+    if abs(real_pos) <= 0.0005:
+        return jsonify({"ok": False, "error": f"No actionable exchange position found for {symbol} (position {real_pos} <= 0.0005 dust threshold)."}), 404
 
     cfg = get_live_config()
     live_p = client.get_live_price(symbol)
@@ -819,11 +824,9 @@ def api_trades_heal():
         log.error(f"  🚨 Failed to place repair bracket orders on Deribit: {e}")
         return jsonify({"ok": False, "error": f"Exchange order placement failed: {e}"}), 502
 
-    # 1. Inherit authentic tier from config instead of hardcoding "Repaired"
     import config
     symbol_tier = getattr(config, "get_tier", lambda s: "Majors")(symbol)
 
-    # 2. Extract genuine exchange entry price rather than blindly using live_p
     actual_entry = live_p
     try:
         for p in client.get_positions():
@@ -889,7 +892,7 @@ def api_signals():
     if isinstance(sigs, dict): 
         sigs = sigs.get("signals", [])
 
-    # 2. Pull rejected signals from predictions.json to populate the Inspector
+    # 2. Pull rejected signals from predictions.json to populate Inspector
     preds = get(PREDICTIONS_FILE, [])
     if isinstance(preds, list):
         for p in preds:
@@ -909,7 +912,7 @@ def api_signals():
                     "generated_at": p.get("generated_at")
                 })
 
-    # Sort newest first and return the latest 100 entries
+    # Sort newest first and return latest 100 entries
     sigs.sort(key=lambda s: str(s.get("generated_at", "")), reverse=True)
     return jsonify(sigs[:100])
 
@@ -1532,10 +1535,31 @@ def api_close_trade():
         log.error(f"Error querying Deribit position for {symbol}: {e}")
 
     has_ledger_trade = bool(trade and not trade.get("closed", False))
-    has_exchange_pos = abs(real_pos) > 0.0001
+    has_exchange_pos = abs(real_pos) > 0.0005
 
+    # ── DUST / STALE STATE RESOLVER: Clear orphan dust without throwing errors ──
     if not has_ledger_trade and not has_exchange_pos:
-        return jsonify({"ok": False, "error": f"No active position on Deribit or open record in trades.json for {symbol}."}), 404
+        if symbol in trades:
+            trades.pop(symbol, None)
+            for p in [Path("trades.json"), Path("data") / "trades.json"]:
+                try:
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(json.dumps(trades, indent=2))
+                except Exception: pass
+            _cache["trades.json"] = trades
+            _cache_ts["trades.json"] = time.time()
+            gh_push("trades.json", trades)
+            bust("trades.json")
+
+        return jsonify({
+            "ok": True,
+            "status": "closed",
+            "symbol": symbol,
+            "message": f"{symbol} sub-lot dust / untracked position cleared.",
+            "pnl": 0.0,
+            "pnl_unverified": False,
+            "cancelled_orders": 0
+        }), 200
 
     cancelled_orders = 0
     try:
