@@ -476,26 +476,64 @@ def _wait_for_position(deribit, symbol: str, side: str, entry_oid: str, timeout:
 def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, label: str, trade: dict, key: str, dec: int) -> str:
     try:
         actual_pos = abs(deribit.get_position_size(symbol))
-        if actual_pos > 0:
-            qty = min(qty, actual_pos)
-            qty = deribit.round_amount(symbol, qty)
-    except Exception: pass
+        min_lot = deribit.get_min_trade_amount(symbol)
+        if actual_pos < min_lot:
+            log.warning(f"  {label} {symbol}: actual position {actual_pos} < min lot {min_lot} — skip")
+            return ""
 
-    if qty <= 0:
-        log.warning(f"  {label} {symbol}: qty=0 after position check — skip")
-        return ""
+        # ── 1. ADOPT EXISTING RESTING ORDER (Prevent Duplicate 11030) ──
+        open_orders = deribit.get_open_orders(symbol)
+        target_side = side.lower()
+        tick = deribit.get_tick_size(symbol)
 
+        existing_reduce_qty = 0.0
+        for o in open_orders:
+            o_side = str(o.get("direction", "")).lower()
+            o_price = float(o.get("price", 0) or 0)
+            o_trig = float(o.get("trigger_price", 0) or o.get("stop_price", 0) or 0)
+            o_qty = float(o.get("amount", 0) or 0) - float(o.get("filled_amount", 0) or 0)
+
+            # Limit orders in the closing direction (excluding SL triggers)
+            if o_side == target_side and o_trig <= 0:
+                # If an order already rests at this target price, adopt it into trades.json
+                if abs(o_price - price) <= (tick * 1.5):
+                    oid = str(o.get("order_id", ""))
+                    if oid:
+                        log.info(f"  ✓ Adopted existing {label} {symbol} order on exchange @ {o_price:.{dec}f} id:{oid}")
+                        return oid
+                existing_reduce_qty += o_qty
+
+        # ── 2. CLAMP TO REMAINING UNRESERVED CAPACITY ──
+        unreserved_pos = max(0.0, actual_pos - existing_reduce_qty)
+        if unreserved_pos < min_lot:
+            log.warning(f"  {label} {symbol}: unreserved capacity ({unreserved_pos:.4f}) < min lot ({min_lot}) (reserved: {existing_reduce_qty:.4f}/{actual_pos:.4f}) — skip")
+            return ""
+
+        qty = min(qty, unreserved_pos)
+        qty = deribit.round_amount(symbol, qty)
+        if qty < min_lot:
+            log.warning(f"  {label} {symbol}: qty {qty} < min lot {min_lot} — skip")
+            return ""
+
+    except Exception as e:
+        log.debug(f"  {label} pre-check {symbol}: {e}")
+
+    # ── 3. PLACE ORDER WITH REFINED CAPACITY ──
     try:
         res = deribit.place_limit_order(symbol, side, qty, price, use_reduce_only=True)
         o   = res.get("order", res)
         oid = str(o.get("order_id", ""))
         if oid:
-            log.info(f"  🛠 Re-placed {label} {symbol} @ {price:.{dec}f}  id:{oid}")
+            log.info(f"  🛠 Re-placed {label} {symbol} @ {price:.{dec}f} × {qty} id:{oid}")
             return oid
     except Exception as e:
-        log.warning(f"  {label} re-place {symbol}: {e}")
+        err_str = str(e)
+        if "11030" in err_str:
+            log.warning(f"  {label} {symbol}: Code 11030 (capacity full) — position already covered on exchange")
+        else:
+            log.warning(f"  {label} re-place {symbol}: {e}")
     return ""
-
+    
 def _cancel_all_open_orders_for_symbol(deribit: DeribitClient, symbol: str):
     try:
         orders = deribit.get_open_orders(symbol)
@@ -901,17 +939,23 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         return False
 
     if symbol in trades and not trades[symbol].get("closed", False):
-        log.info(f"  {symbol}: already open — skip")
+        log.info(f"  {symbol}: already open in trades.json — skip")
         return False
 
+    min_lot = deribit.get_min_trade_amount(symbol)
+
+    # ── DUST GUARD: Sub-lot remnants (< min_lot) will NOT block valid setups ──
     try:
         real_pos = abs(deribit.get_position_size(symbol))
     except Exception as e:
         real_pos = 0.0
         log.debug(f"  {symbol}: real position check failed ({e})")
-    if real_pos > 0:
-        log.warning(f"  🚫 {symbol}: real exchange position ({real_pos}) already exists — SKIPPING entry.")
+
+    if real_pos >= min_lot:
+        log.warning(f"  🚫 {symbol}: real exchange position ({real_pos}) >= min lot ({min_lot}) — SKIPPING entry.")
         return False
+    elif real_pos > 0:
+        log.info(f"  ℹ️ {symbol}: sub-lot residual dust ({real_pos} < {min_lot}) detected — bypassing position guard")
 
     if not deribit.is_supported(symbol):
         log.info(f"  {symbol}: not on Deribit — skip")
@@ -996,7 +1040,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         final_risk_mult = risk_mult * risk_boost * vol_scalar
 
     total_q = deribit.calc_contracts(symbol, balance, entry, stop, final_risk_mult)
-    min_lot = deribit.get_min_trade_amount(symbol)
 
     if total_q < min_lot and sig.get("fg_override", False):
         min_lot_risk = abs(entry - stop) * min_lot
@@ -1024,8 +1067,11 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     try:
         from deribit_client import DEFAULT_LEVERAGE
         existing_pos = abs(deribit.get_position_size(symbol))
-        if existing_pos == 0:
-            deribit.set_leverage(symbol, DEFAULT_LEVERAGE)
+        if existing_pos < min_lot:
+            try:
+                deribit.set_leverage(symbol, DEFAULT_LEVERAGE)
+            except Exception as lev_e:
+                log.debug(f"  Leverage setup skipped: {lev_e}")
 
         er = deribit.place_market_order(symbol, side, total_q)
         if not er:
@@ -1084,17 +1130,21 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         tick = deribit.get_tick_size(symbol)
         sl_limit = deribit.round_price(symbol, stop - (tick * 3) if signal == "BUY" else stop + (tick * 3))
 
+        # ── POST-FILL POSITION SIZING (Dust-Inclusive & Partial Fill Safe) ──
+        sl_qty = total_q
         try:
             actual_pos_size = abs(deribit.get_position_size(symbol))
-            if actual_pos_size > 0 and actual_pos_size < total_q:
-                qty_tp1 = min(qty_tp1, actual_pos_size)
-                qty_tp2 = min(qty_tp2, max(0, actual_pos_size - qty_tp1))
-                qty_tp1 = deribit.round_amount(symbol, qty_tp1)
-                qty_tp2 = deribit.round_amount(symbol, qty_tp2)
+            if actual_pos_size >= min_lot:
+                sl_qty = actual_pos_size
+                if actual_pos_size < total_q:
+                    qty_tp1 = min(qty_tp1, actual_pos_size)
+                    qty_tp2 = min(qty_tp2, max(0.0, actual_pos_size - qty_tp1))
+                    qty_tp1 = deribit.round_amount(symbol, qty_tp1)
+                    qty_tp2 = deribit.round_amount(symbol, qty_tp2)
         except Exception as pos_e:
             log.debug(f"  Position size check: {pos_e}")
 
-        order_plan = [("SL", total_q, sl_limit, stop, "stop_loss"), ("TP1", qty_tp1, tp1, None, "tp1")]
+        order_plan = [("SL", sl_qty, sl_limit, stop, "stop_loss"), ("TP1", qty_tp1, tp1, None, "tp1")]
         if qty_tp2 > 0:
             order_plan.append(("TP2", qty_tp2, tp2, None, "tp2"))
 
@@ -1115,7 +1165,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         if not order_ids.get("stop_loss"):
             log.critical(f"  🚨 {symbol}: Stop-Loss order failed — immediate retry")
             try:
-                res = deribit.place_limit_order(symbol, sl_side, total_q, sl_limit, stop_price=stop, use_reduce_only=True)
+                res = deribit.place_limit_order(symbol, sl_side, sl_qty, sl_limit, stop_price=stop, use_reduce_only=True)
                 o   = res.get("order", res)
                 oid = str(o.get("order_id", ""))
                 if oid:
@@ -1126,7 +1176,7 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
         if not order_ids.get("stop_loss"):
             try:
-                deribit.place_market_order(symbol, sl_side, total_q, reduce_only=True)
+                deribit.place_market_order(symbol, sl_side, sl_qty, reduce_only=True)
                 _send(f"🚨 *EMERGENCY CLOSE — {symbol}*\nSL rejected. Position flattened.")
             except Exception as ce:
                 log.critical(f"  🚨🚨 {symbol}: Emergency flatten failed: {ce}")
