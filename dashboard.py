@@ -884,9 +884,34 @@ def api_trade_history():
 
 @app.route("/api/signals")
 def api_signals():
+    # 1. Load executed signals
     sigs = get("signals.json", [])
-    if isinstance(sigs, dict): sigs = sigs.get("signals", [])
-    return jsonify(list(reversed(sigs[-100:])))
+    if isinstance(sigs, dict): 
+        sigs = sigs.get("signals", [])
+
+    # 2. Pull rejected signals from predictions.json to populate the Inspector
+    preds = get(PREDICTIONS_FILE, [])
+    if isinstance(preds, list):
+        for p in preds:
+            if p.get("reject_reason") and not p.get("was_executed"):
+                sigs.append({
+                    "symbol": p.get("symbol"),
+                    "signal": p.get("predicted_signal", "NO_TRADE"),
+                    "confidence": p.get("confidence", 0.0),
+                    "score": 0,
+                    "entry": p.get("entry_ref", 0.0),
+                    "stop": p.get("predicted_stop", 0.0),
+                    "tp1": p.get("predicted_tp1", 0.0),
+                    "tp2": 0.0,
+                    "rejected": True,
+                    "isRejected": True,
+                    "reject_reason": p.get("reject_reason"),
+                    "generated_at": p.get("generated_at")
+                })
+
+    # Sort newest first and return the latest 100 entries
+    sigs.sort(key=lambda s: str(s.get("generated_at", "")), reverse=True)
+    return jsonify(sigs[:100])
 
 @app.route("/api/log")
 def api_log():
