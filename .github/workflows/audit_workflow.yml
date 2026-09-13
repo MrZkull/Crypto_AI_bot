@@ -5,6 +5,10 @@ on:
     - cron: '12,42 * * * *'
   workflow_dispatch:
 
+concurrency:
+  group: crypto-bot-audit
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -57,7 +61,7 @@ jobs:
           cp trade_history.json        /tmp/trade_history_runtime.json        2>/dev/null || echo '[]' > /tmp/trade_history_runtime.json
           cp adaptation_proposals.json /tmp/adaptation_proposals_runtime.json 2>/dev/null || echo '[]' > /tmp/adaptation_proposals_runtime.json
 
-          # ── 2. Clean tree and pull remote changes cleanly ──
+          # ── 2. Pull remote changes cleanly ──
           git reset --hard HEAD
           git fetch origin main
           git pull --rebase origin main || git pull origin main || true
@@ -75,7 +79,6 @@ jobs:
               except Exception: return default
 
           # -- predictions.json: Keyed by pred_id --
-          # Applies audit scores, preserves new scan predictions, protects was_executed
           try:
               local_preds  = {p['pred_id']: p for p in load('/tmp/predictions_runtime.json', [])}
               remote_preds = {p['pred_id']: p for p in load('predictions.json', [])}
@@ -92,8 +95,7 @@ jobs:
               print(f'Prediction merge warning: {e}')
               shutil.copyfile('/tmp/predictions_runtime.json', 'predictions.json')
 
-          # -- trade_history.json: Keyed by trade composite key --
-          # Keeps taxonomy tags, appends concurrent closes from scanner
+          # -- trade_history.json: Keyed by composite trade tuple --
           def trade_key(t):
               return (t.get('symbol'), t.get('opened_at'), t.get('closed_at'), t.get('close_reason'))
           try:
@@ -110,8 +112,7 @@ jobs:
               print(f'Trade history merge warning: {e}')
               shutil.copyfile('/tmp/trade_history_runtime.json', 'trade_history.json')
 
-          # -- adaptation_proposals.json: Remote decisions take precedence --
-          # Preserves dashboard approvals/rejections, appends newly raised proposals
+          # -- adaptation_proposals.json: Remote approvals take precedence --
           try:
               local_props  = {p['id']: p for p in load('/tmp/adaptation_proposals_runtime.json', [])}
               remote_props = {p['id']: p for p in load('adaptation_proposals.json', [])}
@@ -135,4 +136,3 @@ jobs:
 
           git diff --cached --quiet || git commit -m "Audit Predictions & Run Taxonomy [skip ci]"
           git push origin main
-          
