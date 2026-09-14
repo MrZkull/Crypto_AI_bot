@@ -1,6 +1,10 @@
-# train_meta_model.py — Research Pipeline: Unwrapped OOF Meta-Training & 6-Tier Gate 10
+#!/usr/bin/env python3
+# train_meta_model.py — Research Pipeline: Unwrapped OOF Meta-Training & Canonical Candidate Appending
 
-import json, logging, time
+import json
+import logging
+import time
+import hashlib
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
@@ -8,20 +12,22 @@ import joblib
 
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import accuracy_score
 from sklearn.base import clone
 from sklearn.frozen import FrozenEstimator
 from xgboost import XGBClassifier
 
 from train_model import (
-    build_dataset_from_local_parquet, FULL_FEATURES, MODEL_FILE, EMBARGO_BARS,
+    build_dataset_from_local_parquet, FULL_FEATURES, EMBARGO_BARS,
     TEST_SPLIT, CALIB_SPLIT, N_FEATURES, temporal_symbol_split
 )
+from gate10 import evaluate_gate_10
+from execution_policy import get_file_hash
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger(__name__)
 
-META_MODEL_FILE = "meta_pipeline.pkl"
+CANDIDATE_MODEL_FILE = "candidate_model.pkl"
+META_MODEL_FILE = "candidate_meta_model.pkl"
 N_META_FEATURES = 25
 META_SYSTEM_FEATURES = [
     "meta_primary_conf",
@@ -30,16 +36,6 @@ META_SYSTEM_FEATURES = [
     "meta_macd_directional",
     "meta_trend_aligned",
 ]
-
-
-class Gate10Policy:
-    MIN_TEST_TRADES: int = 50
-    MIN_NET_EV_R: float = 0.05
-    MIN_PRECISION_LIFT_PCT: float = 2.5
-    MIN_RETENTION_RATE: float = 0.35
-    CONFIDENCE_LEVEL: float = 0.95
-    BOOTSTRAP_ROUNDS: int = 10_000
-    BLOCK_SIZE_MS: int = 24 * 60 * 60 * 1000  # 24-hour calendar clusters
 
 
 def augment_meta_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -175,201 +171,9 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
     return augment_meta_features(out)
 
 
-def evaluate_gate_10(
-    primary_test_pred: pd.DataFrame,
-    test_proba: np.ndarray | pd.Series | dict,
-    meta_threshold: float,
-    primary_threshold: float,
-    realized_returns_by_id: pd.Series | dict = None,
-    friction_r: float = 0.12
-) -> dict:
-    required_cols = {"pred_id", "open_time", "meta_label", "primary_conf", "primary_side"}
-    missing = required_cols - set(primary_test_pred.columns)
-    if missing:
-        raise ValueError(f"CRITICAL: primary_test_pred missing columns: {missing}")
-
-    if primary_test_pred["pred_id"].duplicated().any():
-        raise ValueError("CRITICAL: Duplicate pred_id entries found in primary_test_pred.")
-
-    y_test = primary_test_pred["meta_label"].values
-    unique_labels = set(np.unique(y_test))
-    if not unique_labels.issubset({0, 1}):
-        raise ValueError(f"CRITICAL: Non-binary meta_label detected: {unique_labels}")
-
-    df = primary_test_pred.copy()
-
-    if isinstance(test_proba, (pd.Series, dict)):
-        proba_map = pd.Series(test_proba)
-        if proba_map.index.duplicated().any():
-            raise ValueError("CRITICAL: Duplicate pred_id detected in test_proba map.")
-        df["meta_prob"] = df["pred_id"].map(proba_map)
-        if df["meta_prob"].isna().any():
-            missing_prob_ids = df.loc[df["meta_prob"].isna(), "pred_id"].tolist()
-            raise ValueError(f"CRITICAL: {len(missing_prob_ids)} predictions unaligned in test_proba map.")
-    else:
-        test_proba_arr = np.asarray(test_proba, dtype=float)
-        if len(test_proba_arr) != len(df):
-            raise ValueError(
-                f"CRITICAL: test_proba length ({len(test_proba_arr)}) != "
-                f"primary_test_pred rows ({len(df)})."
-            )
-        df["meta_prob"] = test_proba_arr
-
-    is_production_mode = realized_returns_by_id is not None
-    if is_production_mode:
-        if "is_primary_eligible" not in df.columns:
-            raise ValueError(
-                "CRITICAL: Production Gate 10 requires is_primary_eligible, "
-                "representing the full live primary-entry policy."
-            )
-        df["primary_selected"] = df["is_primary_eligible"].astype(bool)
-    else:
-        df["primary_selected"] = df["primary_conf"] >= primary_threshold
-
-    df["meta_selected"] = df["primary_selected"] & (df["meta_prob"] >= meta_threshold)
-
-    eval_mode = "PRODUCTION_REALIZED_RETURNS" if is_production_mode else "RESEARCH_SYNTHETIC_PAYOFF"
-
-    if is_production_mode:
-        if not isinstance(realized_returns_by_id, (pd.Series, dict)):
-            raise TypeError("realized_returns_by_id must be a pd.Series or dict keyed by pred_id")
-
-        returns_map = pd.Series(realized_returns_by_id)
-        if returns_map.index.duplicated().any():
-            dup_ids = returns_map.index[returns_map.index.duplicated()].unique().tolist()
-            raise ValueError(f"CRITICAL: Duplicate pred_id in realized return map: {dup_ids}")
-
-        df["net_r"] = df["pred_id"].map(returns_map)
-        if df["net_r"].isna().any():
-            missing_ids = df.loc[df["net_r"].isna(), "pred_id"].tolist()
-            raise ValueError(f"CRITICAL: {len(missing_ids)} predictions unaligned in realized_returns_by_id.")
-        if not np.all(np.isfinite(df["net_r"])):
-            raise ValueError("CRITICAL: Non-finite realized net_r values detected.")
-    else:
-        df["net_r"] = np.where(df["meta_label"] == 1, 3.5 - friction_r, -2.5 - friction_r)
-
-    primary_sample = df[df["primary_selected"]]
-    meta_sample = df[df["meta_selected"]]
-
-    n_primary_active = len(primary_sample)
-    n_meta = len(meta_sample)
-
-    if n_primary_active == 0:
-        return {
-            "passed_production_gate": False,
-            "passed_research_gate": False,
-            "tier_failed": "SAMPLE_VALIDITY",
-            "evaluation_mode": eval_mode,
-            "reason": f"Primary policy generated 0 eligible trades at threshold {primary_threshold}"
-        }
-
-    if n_meta < Gate10Policy.MIN_TEST_TRADES:
-        return {
-            "passed_production_gate": False,
-            "passed_research_gate": False,
-            "tier_failed": "SAMPLE_VALIDITY",
-            "evaluation_mode": eval_mode,
-            "reason": f"Filtered trade count {n_meta} < minimum threshold {Gate10Policy.MIN_TEST_TRADES}"
-        }
-
-    mean_net_r = float(meta_sample["net_r"].mean())
-    if mean_net_r < Gate10Policy.MIN_NET_EV_R:
-        return {
-            "passed_production_gate": False,
-            "passed_research_gate": False,
-            "tier_failed": "ECONOMIC_VIABILITY",
-            "evaluation_mode": eval_mode,
-            "reason": f"Mean Net-R {mean_net_r:.4f} < hurdle {Gate10Policy.MIN_NET_EV_R}R"
-        }
-
-    rng = np.random.default_rng(42)
-    boot_means = np.empty(Gate10Policy.BOOTSTRAP_ROUNDS)
-
-    if is_production_mode:
-        meta_sample = meta_sample.copy()
-        meta_sample["block_id"] = meta_sample["open_time"] // Gate10Policy.BLOCK_SIZE_MS
-        unique_blocks = meta_sample["block_id"].unique()
-        n_blocks = len(unique_blocks)
-        block_returns = [meta_sample.loc[meta_sample["block_id"] == b, "net_r"].values for b in unique_blocks]
-
-        for b in range(Gate10Policy.BOOTSTRAP_ROUNDS):
-            sampled_block_indices = rng.choice(n_blocks, size=n_blocks, replace=True)
-            resampled_returns = np.concatenate([block_returns[i] for i in sampled_block_indices])
-            boot_means[b] = np.mean(resampled_returns)
-    else:
-        returns_arr = meta_sample["net_r"].values
-        for b in range(Gate10Policy.BOOTSTRAP_ROUNDS):
-            boot_means[b] = np.mean(rng.choice(returns_arr, size=n_meta, replace=True))
-
-    tail = (1.0 - Gate10Policy.CONFIDENCE_LEVEL) / 2.0
-    ci_lower = float(np.percentile(boot_means, tail * 100))
-    ci_upper = float(np.percentile(boot_means, (1.0 - tail) * 100))
-
-    if ci_lower <= 0.0:
-        return {
-            "passed_production_gate": False,
-            "passed_research_gate": False,
-            "tier_failed": "STATISTICAL_SIGNIFICANCE",
-            "evaluation_mode": eval_mode,
-            "reason": f"Bootstrap 95% CI lower bound {ci_lower:.4f} <= 0.0R"
-        }
-
-    meta_precision = float(meta_sample["meta_label"].mean())
-    primary_precision = float(primary_sample["meta_label"].mean())
-    primary_mean_r = float(primary_sample["net_r"].mean())
-
-    precision_lift_pct = (meta_precision - primary_precision) * 100.0
-    r_lift = mean_net_r - primary_mean_r
-
-    if precision_lift_pct < Gate10Policy.MIN_PRECISION_LIFT_PCT or r_lift <= 0.0:
-        return {
-            "passed_production_gate": False,
-            "passed_research_gate": False,
-            "tier_failed": "INCREMENTAL_PERFORMANCE",
-            "evaluation_mode": eval_mode,
-            "reason": (
-                f"Precision lift {precision_lift_pct:.2f}% < {Gate10Policy.MIN_PRECISION_LIFT_PCT}% "
-                f"or R-lift {r_lift:.4f} <= 0.0R"
-            )
-        }
-
-    retention_rate = n_meta / n_primary_active
-    if retention_rate < Gate10Policy.MIN_RETENTION_RATE:
-        return {
-            "passed_production_gate": False,
-            "passed_research_gate": False,
-            "tier_failed": "CAPACITY",
-            "evaluation_mode": eval_mode,
-            "reason": (
-                f"Trade retention {retention_rate*100:.1f}% < minimum "
-                f"{Gate10Policy.MIN_RETENTION_RATE*100:.1f}% of primary setups"
-            )
-        }
-
-    production_candidate_eligible = is_production_mode and (ci_lower > 0.0)
-    return {
-        "production_candidate_eligible": production_candidate_eligible,
-        "passed_production_gate": production_candidate_eligible,
-        "passed_research_gate": True,
-        "evaluation_mode": eval_mode,
-        "bootstrap_method": "24H_CALENDAR_CLUSTER_CONSERVATIVE" if is_production_mode else "IID_RESEARCH",
-        "n_primary_active": n_primary_active,
-        "n_meta_retained": n_meta,
-        "retention_rate_pct": round(retention_rate * 100, 2),
-        "primary_precision_pct": round(primary_precision * 100, 2),
-        "meta_precision_pct": round(meta_precision * 100, 2),
-        "precision_lift_pct": round(precision_lift_pct, 2),
-        "primary_mean_net_r": round(primary_mean_r, 4),
-        "meta_mean_net_r": round(mean_net_r, 4),
-        "r_lift": round(r_lift, 4),
-        "bootstrap_ci_95": [round(ci_lower, 4), round(ci_upper, 4)],
-        "production_status": "ELIGIBLE_FOR_TESTNET_MATRIX" if production_candidate_eligible else "RESEARCH_ONLY"
-    }
-
-
 def train_meta_model():
-    log.info("Loading primary model artifact...")
-    primary_pipeline = joblib.load(MODEL_FILE)
+    log.info("Loading primary candidate artifact...")
+    primary_pipeline = joblib.load(CANDIDATE_MODEL_FILE)
     ds = build_dataset_from_local_parquet()
 
     primary_train, primary_calib, primary_test = temporal_symbol_split(
@@ -443,19 +247,22 @@ def train_meta_model():
             best_score, best_thresh = score, thresh
 
     primary_baseline_threshold = float(primary_pipeline.get("recommended_threshold", 0.45))
-    # No realized execution-return map is available in this training job.
-    # Therefore Gate 10 is intentionally RESEARCH_ONLY here and cannot promote
-    # the meta-model to production. A production Gate 10 run must supply
-    # pred_id-keyed realized returns plus the full live primary eligibility mask.
-    gate10_result = evaluate_gate_10(
-        primary_test_pred=primary_test_pred,
-        test_proba=test_proba,
-        meta_threshold=best_thresh,
-        primary_threshold=primary_baseline_threshold,
-        friction_r=0.12
-    )
+    friction_r = 0.12
 
-    log.info(f"Gate 10 Result: {json.dumps(gate10_result, indent=2)}")
+    # ──────────────────────────────────────────────────────────────
+    # 1. Evaluate strictly in Synthetic Barrier Mode using gate10.py
+    # ──────────────────────────────────────────────────────────────
+    synth_df = pd.DataFrame({
+        "pred_id": primary_test_pred["pred_id"],
+        "evidence_type": "SYNTHETIC_BARRIER",
+        "primary_selected": (primary_test_pred["primary_conf"] >= primary_baseline_threshold),
+        "meta_selected": (primary_test_pred["primary_conf"] >= primary_baseline_threshold) & (test_proba >= best_thresh),
+        "thesis_label": primary_test_pred["meta_label"],
+        "net_r": np.where(primary_test_pred["meta_label"] == 1, 3.5 - friction_r, -2.5 - friction_r)
+    })
+
+    gate10_result = evaluate_gate_10(synth_df)
+    log.info(f"Synthetic Research Gate 10 Result: {json.dumps(gate10_result, indent=2)}")
 
     meta_pipeline = {
         "meta_ensemble": calibrated_meta,
@@ -467,11 +274,27 @@ def train_meta_model():
         "gate10_summary": gate10_result,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
+    
+    # 2. Dump exclusively to candidate artifact
     joblib.dump(meta_pipeline, META_MODEL_FILE)
     log.info(f"✅ Saved meta-model pipeline: {META_MODEL_FILE}")
 
     with open("meta_model_performance.json", "w") as f:
         json.dump(gate10_result, f, indent=2)
+
+    # 3. Append cryptographic identity into Candidate Manifest
+    meta_sha256 = get_file_hash(META_MODEL_FILE)
+    try:
+        with open("candidate_manifest.json", "r") as f:
+            manifest = json.load(f)
+            
+        manifest["decision_policy_hash"] = meta_sha256
+        
+        with open("candidate_manifest.json", "w") as f:
+            json.dump(manifest, f, indent=2)
+        log.info(f"✅ Appended Meta-Model SHA256 to Candidate Manifest.")
+    except Exception as e:
+        log.error(f"Failed to append hash to candidate manifest: {e}")
 
 
 if __name__ == "__main__":
