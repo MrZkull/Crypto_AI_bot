@@ -46,8 +46,8 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           fi
-          pip install pyarrow fastparquet filelock websockets
-          python -c "import pyarrow; print('pyarrow', pyarrow.__version__)"
+          pip install pyarrow fastparquet filelock websockets pytest pandas numpy scipy scikit-learn xgboost ta joblib requests
+          python -c "import pyarrow; print('✓ PyArrow verified:', pyarrow.__version__)"
 
       - name: Verify source modules exist
         run: |
