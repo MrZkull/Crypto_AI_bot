@@ -43,7 +43,6 @@ class Gate10Policy:
 
 
 def augment_meta_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Injects primary model decision parameters and directional interaction terms."""
     df = df.copy()
     side_code = df["primary_side"].map({"BUY": 1.0, "SELL": -1.0}).fillna(0.0)
     df["meta_primary_side_code"] = side_code
@@ -101,7 +100,6 @@ def build_meta_labels(ds: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict) -> pd.DataFrame:
-    """Generates out-of-fold primary predictions unwrapping FrozenEstimator and isolating folds."""
     if primary_train.empty:
         return primary_train.copy()
 
@@ -115,7 +113,7 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
     production_ensemble = primary_pipeline["ensemble"]
     base_estimator = getattr(production_ensemble, "estimator", None)
     if hasattr(base_estimator, "estimator"):
-        base_estimator = base_estimator.estimator  # Unwrap FrozenEstimator
+        base_estimator = base_estimator.estimator
     if base_estimator is None:
         base_estimator = getattr(production_ensemble, "base_estimator", None)
     if base_estimator is None:
@@ -185,16 +183,6 @@ def evaluate_gate_10(
     realized_returns_by_id: pd.Series | dict = None,
     friction_r: float = 0.12
 ) -> dict:
-    """
-    Evaluates locked test performance adhering to the 6-tier hierarchy:
-    1. DATA INTEGRITY: Schema validation, {0, 1} targets, pred_id join
-    2. SAMPLE VALIDITY: N_meta >= 50, primary active > 0
-    3. ECONOMIC VIABILITY: Mean Net-R >= 0.05R
-    4. STATISTICAL SIGNIFICANCE: Cluster/Block bootstrap 95% CI lower bound > 0.0R
-    5. INCREMENTAL PERFORMANCE: Precision lift >= 2.5% & R-lift > 0 vs fixed primary policy
-    6. CAPACITY: Retention >= 35% of primary-eligible setups
-    """
-    # ── TIER 1: DATA INTEGRITY ──
     required_cols = {"pred_id", "open_time", "meta_label", "primary_conf", "primary_side"}
     missing = required_cols - set(primary_test_pred.columns)
     if missing:
@@ -210,7 +198,6 @@ def evaluate_gate_10(
 
     df = primary_test_pred.copy()
 
-    # Probability Alignment via pred_id-keyed series or verified array length
     if isinstance(test_proba, (pd.Series, dict)):
         proba_map = pd.Series(test_proba)
         if proba_map.index.duplicated().any():
@@ -228,14 +215,11 @@ def evaluate_gate_10(
             )
         df["meta_prob"] = test_proba_arr
 
-    # Primary baseline: evaluate the full production eligibility mask if supplied,
-    # otherwise fallback to the primary confidence threshold.
     if "is_primary_eligible" in df.columns:
         df["primary_selected"] = df["is_primary_eligible"].astype(bool)
     else:
         df["primary_selected"] = df["primary_conf"] >= primary_threshold
 
-    # Meta-model acts strictly as a downstream filter on fully qualified primary setups
     df["meta_selected"] = df["primary_selected"] & (df["meta_prob"] >= meta_threshold)
 
     is_production_mode = realized_returns_by_id is not None
@@ -265,7 +249,6 @@ def evaluate_gate_10(
     n_primary_active = len(primary_sample)
     n_meta = len(meta_sample)
 
-    # ── TIER 2: SAMPLE VALIDITY ──
     if n_primary_active == 0:
         return {
             "passed_production_gate": False,
@@ -284,7 +267,6 @@ def evaluate_gate_10(
             "reason": f"Filtered trade count {n_meta} < minimum threshold {Gate10Policy.MIN_TEST_TRADES}"
         }
 
-    # ── TIER 3: ECONOMIC VIABILITY ──
     mean_net_r = float(meta_sample["net_r"].mean())
     if mean_net_r < Gate10Policy.MIN_NET_EV_R:
         return {
@@ -295,7 +277,6 @@ def evaluate_gate_10(
             "reason": f"Mean Net-R {mean_net_r:.4f} < hurdle {Gate10Policy.MIN_NET_EV_R}R"
         }
 
-    # ── TIER 4: STATISTICAL SIGNIFICANCE (Cluster Bootstrap) ──
     rng = np.random.default_rng(42)
     boot_means = np.empty(Gate10Policy.BOOTSTRAP_ROUNDS)
 
@@ -328,7 +309,6 @@ def evaluate_gate_10(
             "reason": f"Bootstrap 95% CI lower bound {ci_lower:.4f} <= 0.0R"
         }
 
-    # ── TIER 5: INCREMENTAL PERFORMANCE ──
     meta_precision = float(meta_sample["meta_label"].mean())
     primary_precision = float(primary_sample["meta_label"].mean())
     primary_mean_r = float(primary_sample["net_r"].mean())
@@ -348,7 +328,6 @@ def evaluate_gate_10(
             )
         }
 
-    # ── TIER 6: CAPACITY / TURNOVER ──
     retention_rate = n_meta / n_primary_active
     if retention_rate < Gate10Policy.MIN_RETENTION_RATE:
         return {
@@ -395,17 +374,14 @@ def train_meta_model():
 
     log.info(f"PRIMARY ERAS: train={len(primary_train):,} calib={len(primary_calib):,} locked_test={len(primary_test):,}")
 
-    # 1. Generate out-of-fold training data strictly within primary train era
     meta_train = build_oof_meta_training(primary_train, primary_pipeline)
     if len(meta_train) < 50 or meta_train["meta_label"].nunique() < 2:
         raise ValueError("Insufficient two-class OOF meta-training data")
 
-    # 2. Meta calibration on untouched primary calibration era
     primary_calib_pred = augment_meta_features(build_meta_labels(get_primary_predictions(primary_calib.copy(), primary_pipeline)))
     if len(primary_calib_pred) < 20 or primary_calib_pred["meta_label"].nunique() < 2:
         raise ValueError("Insufficient two-class primary calibration data")
 
-    # 3. Locked Test: touched once for final Gate 10 evaluation
     primary_test_pred = augment_meta_features(build_meta_labels(get_primary_predictions(primary_test.copy(), primary_pipeline)))
     if len(primary_test_pred) < 20 or primary_test_pred["meta_label"].nunique() < 2:
         raise ValueError("Insufficient two-class locked-test data")
