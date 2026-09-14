@@ -1,0 +1,182 @@
+name: CryptoBot AI — Model Build & Controlled Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to publish only after empirical Gate 10 passes'
+        required: true
+        default: 'v2.1'
+        type: string
+      publish_release:
+        description: 'Publish a GitHub Release after all checks pass'
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: crypto-bot-model-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          token: ${{ secrets.GH_PAT_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify canonical research inputs
+        run: |
+          test -f train_model.py
+          test -f train_meta_model.py
+          test -f market_data_integrity.py
+          test -f research/audit_archive_cadence.py
+          test -d data/historical
+
+      - name: Run canonical archive integrity gate
+        run: |
+          python research/audit_archive_cadence.py
+
+      - name: Compile training sources
+        run: |
+          python -m py_compile train_model.py train_meta_model.py market_data_integrity.py
+
+      - name: Train primary model
+        run: |
+          python train_model.py
+
+      - name: Verify primary model artifact
+        run: |
+          test -s pro_crypto_ai_model.pkl
+          python - <<'PY'
+          import joblib
+          p = joblib.load("pro_crypto_ai_model.pkl")
+          required = {"ensemble", "selector", "all_features", "label_map"}
+          missing = required - set(p)
+          if missing:
+              raise SystemExit(f"CRITICAL: primary model artifact missing keys: {sorted(missing)}")
+          print("Primary model artifact validation: PASS")
+          PY
+
+      - name: Train meta model
+        run: |
+          python train_meta_model.py
+
+      - name: Verify meta-model artifacts
+        run: |
+          test -s meta_pipeline.pkl
+          test -s meta_model_performance.json
+
+      - name: Read Gate 10 status
+        id: gate10
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("meta_model_performance.json")
+          data = json.loads(path.read_text())
+
+          passed_prod = bool(data.get("passed_production_gate", False))
+          eval_mode = str(data.get("evaluation_mode", ""))
+
+          print(f"Gate 10 evaluation mode: {eval_mode}")
+          print(f"Gate 10 production pass: {passed_prod}")
+
+          Path("gate10_production_pass.txt").write_text("true" if passed_prod else "false")
+
+          if eval_mode != "PRODUCTION_REALIZED_RETURNS":
+              print("WARNING: Gate 10 is not based on realized execution returns.")
+          if not passed_prod:
+              print("WARNING: Production release eligibility = FALSE.")
+          PY
+
+      - name: Block release unless empirical production Gate 10 passes
+        if: ${{ inputs.publish_release }}
+        shell: bash
+        run: |
+          test "$(cat gate10_production_pass.txt)" = "true" || {
+            echo "CRITICAL: Release requested but production Gate 10 did not pass."
+            echo "The current training path must provide empirical pred_id-keyed realized returns."
+            exit 1
+          }
+
+      - name: Verify release tag does not already exist
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+        run: |
+          if gh release view "${{ inputs.release_tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "CRITICAL: Release ${{ inputs.release_tag }} already exists."
+            exit 1
+          fi
+
+      - name: Write model build manifest
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          gate = json.loads(Path("meta_model_performance.json").read_text())
+
+          manifest = {
+              "built_at": datetime.now(timezone.utc).isoformat(),
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "release_tag_requested": "${{ inputs.release_tag }}",
+              "publish_release_requested": bool("${{ inputs.publish_release }}" == "true"),
+              "primary_model": "pro_crypto_ai_model.pkl",
+              "meta_model": "meta_pipeline.pkl",
+              "gate10": gate,
+          }
+
+          Path("model_build_manifest.json").write_text(
+              json.dumps(manifest, indent=2)
+          )
+          PY
+
+      - name: Upload model build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-build-${{ github.run_number }}
+          path: |
+            pro_crypto_ai_model.pkl
+            meta_pipeline.pkl
+            meta_model_performance.json
+            model_build_manifest.json
+          retention-days: 30
+
+      - name: Publish immutable GitHub Release
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+        run: |
+          gh release create "${{ inputs.release_tag }}"             pro_crypto_ai_model.pkl             meta_pipeline.pkl             meta_model_performance.json             model_build_manifest.json             --repo "${{ github.repository }}"             --title "CryptoBot AI ${{ inputs.release_tag }}"             --notes "Controlled model release. Empirical production Gate 10 passed."
+
+      - name: Report controlled non-release build
+        if: ${{ !inputs.publish_release }}
+        run: |
+          echo "Model build completed as a candidate artifact."
+          echo "No GitHub Release was published."
+          echo "Promotion requires a later run with empirical production Gate 10 passing."
