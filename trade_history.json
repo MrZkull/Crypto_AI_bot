@@ -17160,5 +17160,63 @@
     "mfe_atr": 1.35,
     "mae_atr": 2.68,
     "failure_tag": "UNCLASSIFIED"
+  },
+  {
+    "symbol": "BCHUSDT",
+    "signal": "SELL",
+    "entry": 221.606,
+    "stop": 224.696,
+    "tp1": 217.28,
+    "tp2": 212.337,
+    "qty": 23.816,
+    "qty_tp1": 11.908,
+    "qty_tp2": 11.908,
+    "risk_usd": 73.59,
+    "budget_risk_usd": 639.0,
+    "balance_at_open": 105572.38,
+    "risk_mult": 0.20175808407389484,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049228267916344",
+      "stop_loss": "USDC-SLMB-46960",
+      "tp1": "USDC-210049228267923371",
+      "tp2": "USDC-210049228267924167"
+    },
+    "opened_at": "2026-09-14T00:47:05.698383+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 66.4,
+    "score": 7,
+    "reasons": [
+      "Valid conf (66%)",
+      "Strong ADX 36",
+      "RSI not oversold (47)",
+      "EMA bearish",
+      "1h confirms",
+      "4h trend aligns (RSI 32)",
+      "4h trend established (20h)"
+    ],
+    "tier": "\ud83c\udfc6 Proven Winners",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "BCHUSDT_1789346821612",
+    "snapshot": {
+      "entry_atr": 1.2358612600061973,
+      "rsi_15m": 47.10694038251145,
+      "adx_15m": 35.5387860081856,
+      "rsi_4h": 32.38898551540365,
+      "ema_4h_bullish": false,
+      "fng_value": 57,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.8691065496209511,
+      "btc_beta_20": 1.894198988220299
+    },
+    "stop_mult_used": 2.5,
+    "close_price": 223.03,
+    "pnl": -33.914,
+    "closed_at": "2026-09-14T13:16:23.367458+00:00",
+    "close_reason": "Time exit (12h [PRE-TP1 STALL])"
   }
 ]
