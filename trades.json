@@ -52,5 +52,59 @@
       "btc_beta_20": 1.894198988220299
     },
     "stop_mult_used": 2.5
+  },
+  "TRUMPUSDT": {
+    "symbol": "TRUMPUSDT",
+    "signal": "SELL",
+    "entry": 1.99662073,
+    "stop": 2.0357,
+    "tp1": 1.9419,
+    "tp2": 1.8794,
+    "qty": 2634.79,
+    "qty_tp1": 1317.39,
+    "qty_tp2": 1317.4,
+    "risk_usd": 102.97,
+    "budget_risk_usd": 632.07,
+    "balance_at_open": 105344.46,
+    "risk_mult": 0.2,
+    "exit_mode": "DUAL_TP",
+    "order_ids": {
+      "entry": "USDC-210049228310121414",
+      "stop_loss": "USDC-SLMB-47012",
+      "tp1": "USDC-210049228310126994",
+      "tp2": "USDC-210049228310127309"
+    },
+    "opened_at": "2026-09-14T03:47:04.000158+00:00",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "closed": false,
+    "confidence": 54.6,
+    "score": 7,
+    "reasons": [
+      "Valid conf (55%)",
+      "Strong ADX 49",
+      "RSI not oversold (62)",
+      "1h confirms",
+      "4h trend aligns (RSI 45)",
+      "4h trend established (20h)",
+      "Volume surge 1.8\u00d7"
+    ],
+    "tier": "\ud83d\udc8e Micro-Granular Gems",
+    "fg_override": false,
+    "exchange": "deribit_testnet",
+    "pred_id": "TRUMPUSDT_1789357621209",
+    "snapshot": {
+      "entry_atr": 0.015633773231430538,
+      "rsi_15m": 62.46608649439133,
+      "adx_15m": 49.0280145731969,
+      "rsi_4h": 45.31273096771423,
+      "ema_4h_bullish": false,
+      "fng_value": 57,
+      "whale_bias": null,
+      "btc_bias": null,
+      "btc_corr_20": 0.6865548406008981,
+      "btc_beta_20": 1.6587540732470345
+    },
+    "stop_mult_used": 2.5
   }
 }
