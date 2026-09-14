@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          lfs: false
+          lfs: true
           token: ${{ secrets.GH_PAT_TOKEN }}
 
       - name: Set up Python 3.11
@@ -48,16 +48,64 @@ jobs:
 
       - name: Verify canonical research inputs
         run: |
-          test -f train_model.py
-          test -f market_data_integrity.py
-          test -f research/audit_archive_cadence.py
-          test -d data/historical
+          set -euo pipefail
+
+          required_files=(
+            "train_model.py"
+            "market_data_integrity.py"
+            "feature_engineering.py"
+            "research/audit_archive_cadence.py"
+          )
+
+          for file in "${required_files[@]}"; do
+            test -f "$file" || {
+              echo "::error::Missing required file: $file"
+              exit 1
+            }
+          done
+
+          test -d data/historical || {
+            echo "::error::Missing canonical archive directory: data/historical"
+            echo "Run the canonical archive population workflow before retraining."
+            exit 1
+          }
+
+          python - <<'PY'
+          from pathlib import Path
+          from config import SYMBOLS
+
+          root = Path("data/historical")
+          missing = []
+
+          for symbol in SYMBOLS:
+              for interval in ("15m", "1h", "4h"):
+                  path = root / f"{symbol}_{interval}.parquet"
+                  if not path.is_file():
+                      missing.append(str(path))
+
+          # BTC benchmark is required by train_model.py for the point-in-time
+          # BTC context features, even when BTCUSDT is not in SYMBOLS.
+          btc_path = root / "BTCUSDT_15m.parquet"
+          if not btc_path.is_file():
+              missing.append(str(btc_path))
+
+          if missing:
+              print("Missing canonical archive files:")
+              for path in missing:
+                  print(f"  - {path}")
+              raise SystemExit(
+                  f"CRITICAL: {len(missing)} canonical archive files are missing."
+              )
+
+          expected = len(SYMBOLS) * 3 + 1
+          print(f"Canonical archive presence check: PASS ({expected} required files)")
+          PY
 
       - name: Run archive integrity gate
         run: |
           python research/audit_archive_cadence.py
 
-      - name: Compile training sources
+      - name: Compile research and training sources
         run: |
           python -m py_compile \
             train_model.py \
@@ -67,8 +115,10 @@ jobs:
       - name: Clean stale candidate artifacts
         run: |
           rm -f pro_crypto_ai_model.pkl
-          rm -f model_performance.json accuracy.txt
-          rm -f meta_pipeline.pkl meta_model_performance.json
+          rm -f model_performance.json
+          rm -f accuracy.txt
+          rm -f meta_pipeline.pkl
+          rm -f meta_model_performance.json
 
       - name: Run primary model training
         env:
@@ -81,16 +131,19 @@ jobs:
 
       - name: Verify fresh primary outputs
         run: |
+          set -euo pipefail
+
           test -s pro_crypto_ai_model.pkl || {
             echo "::error::Primary model artifact was not produced."
             exit 1
           }
+
           test -s model_performance.json || {
             echo "::error::Primary model performance file was not produced."
             exit 1
           }
 
-      - name: Validate primary model artifact
+      - name: Validate primary artifact
         run: |
           python - <<'PY'
           import json
@@ -100,25 +153,49 @@ jobs:
               performance = json.load(f)
 
           pipeline = joblib.load("pro_crypto_ai_model.pkl")
-          required = {"ensemble", "selector", "all_features", "label_map"}
-          missing = required - set(pipeline)
+
+          required_keys = {
+              "ensemble",
+              "selector",
+              "all_features",
+              "best_features",
+              "label_map",
+              "label_encoder",
+              "recommended_threshold_buy",
+              "recommended_threshold_sell",
+          }
+
+          missing = required_keys - set(pipeline)
           if missing:
               raise SystemExit(
-                  f"CRITICAL: primary model artifact missing keys: {sorted(missing)}"
+                  f"CRITICAL: primary artifact missing keys: {sorted(missing)}"
               )
 
+          for field in ("buy_precision", "sell_precision"):
+              value = performance.get(field)
+              if value is None:
+                  raise SystemExit(
+                      f"CRITICAL: model_performance.json missing {field}"
+                  )
+
           print("Primary artifact structure: PASS")
-          print(f"Accuracy: {performance.get('accuracy', 0)}%")
-          print(f"WF score: {performance.get('wf_mean', 0)}%")
-          print(f"Train samples: {performance.get('n_train', 0)}")
-          print(f"Test samples: {performance.get('n_test', 0)}")
+          print(f"Accuracy:       {performance.get('accuracy', 0)}%")
+          print(f"WF mean:        {performance.get('wf_mean', 0)}%")
+          print(f"Train samples:  {performance.get('n_train', 0)}")
+          print(f"Calibration:    {performance.get('n_calib', 0)}")
+          print(f"Test samples:   {performance.get('n_test', 0)}")
+          print(f"BUY precision:  {performance.get('buy_precision', 0)}")
+          print(f"SELL precision: {performance.get('sell_precision', 0)}")
           PY
 
       - name: Write accuracy note
         run: |
           python - <<'PY'
           import json
-          p = json.load(open("model_performance.json"))
+
+          with open("model_performance.json") as f:
+              p = json.load(f)
+
           with open("accuracy.txt", "w") as f:
               f.write(f"{p.get('accuracy', 0)}% accuracy")
           PY
@@ -137,25 +214,31 @@ jobs:
             echo "::error::Meta-model requested but meta_pipeline.pkl was not produced."
             exit 1
           }
+
           test -s meta_model_performance.json || {
             echo "::error::Meta-model requested but meta_model_performance.json was not produced."
             exit 1
           }
 
-      - name: Show training results
+      - name: Show primary results
         run: |
           python - <<'PY'
           import json
+
           with open("model_performance.json") as f:
               p = json.load(f)
+
           print("=" * 60)
           print(f"ACCURACY:        {p.get('accuracy', 0)}%")
           print(f"WF SCORE:        {p.get('wf_mean', 0)}% +/- {p.get('wf_std', 0)}%")
           print(f"TRAIN SET:       {p.get('n_train', 0)}")
+          print(f"CALIBRATION:     {p.get('n_calib', 0)}")
           print(f"TEST SET:        {p.get('n_test', 0)}")
           print(f"BUY PRECISION:   {p.get('buy_precision', 0)}")
           print(f"SELL PRECISION:  {p.get('sell_precision', 0)}")
           print(f"NO-TRADE PREC.:  {p.get('no_trade_precision', 0)}")
+          print(f"BUY THRESHOLD:   {p.get('recommended_threshold_buy', 0)}")
+          print(f"SELL THRESHOLD:  {p.get('recommended_threshold_sell', 0)}")
           print("=" * 60)
           PY
 
@@ -164,33 +247,41 @@ jobs:
         run: |
           python - <<'PY'
           import json
-          p = json.load(open("meta_model_performance.json"))
+
+          with open("meta_model_performance.json") as f:
+              p = json.load(f)
+
           print("=" * 60)
           print(f"EVALUATION MODE: {p.get('evaluation_mode', 'UNKNOWN')}")
           print(f"RESEARCH PASS:   {p.get('passed_research_gate', False)}")
           print(f"PRODUCTION PASS: {p.get('passed_production_gate', False)}")
-          print(f"META RETAINED:  {p.get('n_meta_retained', 0)}")
+          print(f"META RETAINED:   {p.get('n_meta_retained', 0)}")
           print(f"META MEAN NET-R: {p.get('meta_mean_net_r', 0)}")
           print(f"R LIFT:          {p.get('r_lift', 0)}")
-          print("Research result is not a production release authorization.")
+          print("Research output is not a production release authorization.")
           print("=" * 60)
           PY
 
       - name: Commit research metrics only
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add model_performance.json accuracy.txt
+
           if [ -f meta_model_performance.json ]; then
             git add meta_model_performance.json
           fi
 
-          git diff --cached --quiet || git commit -m "Research model retrain metrics [skip ci]"
+          git diff --cached --quiet || \
+            git commit -m "Research model retrain metrics [skip ci]"
 
           git fetch origin main
+
           git rebase origin/main || {
-            echo "Rebase failed; aborting rather than overwriting remote state."
+            echo "::error::Rebase failed; aborting rather than overwriting remote state."
             git rebase --abort || true
             exit 1
           }
@@ -213,5 +304,5 @@ jobs:
       - name: Explicit promotion status
         run: |
           echo "Candidate model build completed."
-          echo "No live release was modified by this workflow."
-          echo "Production promotion is handled only by the controlled model release workflow after empirical Gate 10 approval."
+          echo "No production GitHub Release was modified by this workflow."
+          echo "Production promotion is handled only by the controlled model release workflow."
