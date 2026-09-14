@@ -151,13 +151,25 @@ class DeribitClient:
         if not info.get("is_active", False):
             raise ValueError(f"CRITICAL: Instrument {name} is inactive on exchange.")
 
-        # Instrument Classification Check
-        inst_type   = str(info.get("instrument_type", "")).lower()
-        kind        = str(info.get("kind", "")).lower()
-        future_type = str(info.get("future_type", "")).lower()
+        # Strict instrument classification invariants. Do not fall back across
+        # independent exchange metadata fields: each invariant must pass.
+        inst_type = str(info.get("instrument_type", "")).lower()
+        if inst_type != "linear":
+            raise ValueError(
+                f"CRITICAL: {name} instrument_type='{inst_type}', expected 'linear'. "
+                f"Non-linear/reversed instruments are strictly prohibited."
+            )
 
-        if inst_type != "linear" and kind not in ("future", "perpetual") and future_type != "perpetual":
-            raise ValueError(f"CRITICAL: {name} is not linear perpetual (type='{inst_type}', kind='{kind}').")
+        kind = str(info.get("kind", "")).lower()
+        if kind != "future":
+            raise ValueError(f"CRITICAL: {name} kind='{kind}', expected 'future'.")
+
+        settlement_period = str(info.get("settlement_period", "")).lower()
+        if settlement_period != "perpetual":
+            raise ValueError(
+                f"CRITICAL: {name} settlement_period='{settlement_period}', expected 'perpetual'. "
+                f"Expiring/dated futures are prohibited."
+            )
 
         # Strict Settlement Currency Check
         settlement_ccy = str(info.get("settlement_currency", "")).upper()
@@ -172,8 +184,16 @@ class DeribitClient:
         min_amt = float(info.get("min_trade_amount", 0.0))
         tick = float(info.get("tick_size", 0.0))
         steps = info.get("tick_size_steps", [])
-        if min_amt <= 0 or tick <= 0:
-            raise ValueError(f"CRITICAL: Invalid lot/tick specs for {name}: min={min_amt}, tick={tick}")
+        if (
+            not math.isfinite(min_amt)
+            or not math.isfinite(tick)
+            or min_amt <= 0
+            or tick <= 0
+        ):
+            raise ValueError(
+                f"CRITICAL: Invalid lot/tick specs for {name}: "
+                f"min={min_amt}, tick={tick}"
+            )
 
         base_ccy = str(info.get("base_currency", "")).upper()
         step_summary = [f"(>{s.get('above_price')}={s.get('tick_size')})" for s in steps]
