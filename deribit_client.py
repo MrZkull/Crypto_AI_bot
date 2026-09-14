@@ -1,4 +1,4 @@
-# deribit_client.py — V13.0: Institutional Deribit Client & Verification Engine
+# deribit_client.py — V13.2: Linear USDC Contract Semantics & Authoritative Verification
 
 import math
 import time
@@ -131,36 +131,43 @@ class DeribitClient:
     def verify_instrument_contract(self, symbol: str) -> dict:
         """
         Validates linear USDC perpetual contract invariants against live exchange metadata:
-        - Instrument exists and matches requested symbol identifier
+        - Instrument exists and matches requested target symbol
         - Active status confirmed
-        - Classified as future/perpetual
-        - Explicit USDC settlement
-        - Contract size is exactly 1.0 base coin
+        - Instrument type is explicitly 'linear' (or future/perpetual)
+        - Explicit USDC settlement currency
+        - Contract size is positive and finite
+        - Order sizing units represent base currency coin amounts
         """
         name = self.get_instrument_name(symbol)
         info = self._get("/public/get_instrument", {"instrument_name": name})
+
         if not info:
             raise ValueError(f"CRITICAL: Instrument {name} not found on Deribit.")
 
         api_name = str(info.get("instrument_name", ""))
         if api_name != name:
-            raise ValueError(f"CRITICAL: Symbol mapping mismatch. Config='{name}', Exchange='{api_name}'.")
+            raise ValueError(f"CRITICAL: Target instrument mismatch. Config='{name}', Exchange='{api_name}'.")
 
         if not info.get("is_active", False):
             raise ValueError(f"CRITICAL: Instrument {name} is inactive on exchange.")
 
-        kind = str(info.get("kind", "")).lower()
+        # Instrument Classification Check
+        inst_type   = str(info.get("instrument_type", "")).lower()
+        kind        = str(info.get("kind", "")).lower()
         future_type = str(info.get("future_type", "")).lower()
-        if kind not in ("future", "perpetual") and future_type != "perpetual":
-            raise ValueError(f"CRITICAL: {name} classification failed (kind='{kind}', future_type='{future_type}').")
 
+        if inst_type != "linear" and kind not in ("future", "perpetual") and future_type != "perpetual":
+            raise ValueError(f"CRITICAL: {name} is not linear perpetual (type='{inst_type}', kind='{kind}').")
+
+        # Strict Settlement Currency Check
         settlement_ccy = str(info.get("settlement_currency", "")).upper()
         if settlement_ccy != "USDC":
             raise ValueError(f"CRITICAL: {name} settlement currency is '{settlement_ccy}', expected 'USDC'.")
 
+        # Contract Multiplier Physical Positivity Check
         contract_size = float(info.get("contract_size", 0.0))
-        if not math.isclose(contract_size, 1.0, rel_tol=1e-5):
-            raise ValueError(f"CRITICAL: {name} contract_size={contract_size} != 1.0 (non-linear sizing invariant).")
+        if not math.isfinite(contract_size) or contract_size <= 0:
+            raise ValueError(f"CRITICAL: {name} invalid contract_size={contract_size} <= 0.")
 
         min_amt = float(info.get("min_trade_amount", 0.0))
         tick = float(info.get("tick_size", 0.0))
@@ -168,11 +175,12 @@ class DeribitClient:
         if min_amt <= 0 or tick <= 0:
             raise ValueError(f"CRITICAL: Invalid lot/tick specs for {name}: min={min_amt}, tick={tick}")
 
+        base_ccy = str(info.get("base_currency", "")).upper()
         step_summary = [f"(>{s.get('above_price')}={s.get('tick_size')})" for s in steps]
         step_str = f" | steps: {', '.join(step_summary)}" if steps else ""
         log.info(
-            f"  ✓ Verified {name}: settlement={settlement_ccy} | contract_size={contract_size:.1f} "
-            f"| min_lot={min_amt} | base_tick={tick}{step_str}"
+            f"  ✓ Verified {name}: settlement={settlement_ccy} | mult={contract_size} {base_ccy}/contract "
+            f"| order_units={base_ccy} | min_lot={min_amt} | base_tick={tick}{step_str}"
         )
         return info
 
@@ -215,7 +223,6 @@ class DeribitClient:
         return self._instrument_cache.get(name, {})
 
     def get_tick_size(self, symbol: str, price: float = None) -> float:
-        """Resolves dynamic tick size from price tier ladders (tick_size_steps)."""
         info = self.get_instrument_info(symbol)
         base_tick = float(info.get("tick_size") or SYMBOL_MAP.get(symbol, {}).get("tick_size", 0.0001))
         steps = info.get("tick_size_steps", [])
@@ -255,7 +262,6 @@ class DeribitClient:
         return rounded
 
     def round_amount(self, symbol: str, raw: float) -> float:
-        """Floors position size to step increments. Returns 0.0 if below minimum lot."""
         if raw <= 0:
             return 0.0
         step     = self.get_min_trade_amount(symbol)
@@ -299,7 +305,6 @@ class DeribitClient:
             return 0.0
 
     def get_funding_rate(self, symbol: str):
-        """Returns float funding rate, or None if unavailable (fail-closed semantics)."""
         try:
             t = self._get("/public/ticker", {"instrument_name": self.get_instrument_name(symbol)})
             rate = t.get("current_funding") if t.get("current_funding") is not None else t.get("funding_8h")
@@ -338,6 +343,7 @@ class DeribitClient:
         if stop_dist <= 0 or entry <= 0 or risk_usd <= 0:
             return 0.0
 
+        # In linear USDC perps, amount is in base-asset coin units
         raw      = risk_usd / stop_dist
         max_pct  = (balance_usd * 0.05) / entry
         max_risk = (risk_usd * 10) / entry
@@ -350,7 +356,7 @@ class DeribitClient:
 
         result   = self.round_amount(symbol, raw)
         notional = result * entry
-        log.info(f"  Contracts: {result} {symbol} | notional≈${notional:.2f} | risk=${risk_usd:.2f}")
+        log.info(f"  Amount: {result} {symbol} (base coin units) | notional≈${notional:.2f} | risk=${risk_usd:.2f}")
         return result
 
     @staticmethod
@@ -358,9 +364,6 @@ class DeribitClient:
         return "10057" in str(e) or "non_pme_max_future_position_size" in str(e)
 
     def place_stop_loss(self, symbol: str, side: str, amount: float, stop_price: float) -> dict:
-        """
-        Dispatches native stop_market order and queries exchange to verify parameter registration.
-        """
         instrument   = self.get_instrument_name(symbol)
         method       = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         safe_trigger = self.round_price(symbol, stop_price)
@@ -381,7 +384,6 @@ class DeribitClient:
         if not order_id:
             raise RuntimeError(f"SL placement on {symbol} returned no order_id.")
 
-        # Hard Invariant: Authoritative exchange state verification
         state = self.get_order(order_id)
         if not state:
             raise RuntimeError(f"Exchange state query failed for SL {order_id} on {symbol}.")
@@ -497,7 +499,7 @@ class DeribitClient:
 
     def get_all_balances(self) -> dict:
         balances = {}
-        for cur in ["BTC", "ETH", "USDC", "USDT"]:
+        for cur in ["USDC", "BTC", "ETH", "USDT"]:
             try:
                 s  = self._get("/private/get_account_summary", {"currency": cur, "extended": "true"})
                 eq = float(s.get("equity_usd") or s.get("equity") or 0)
@@ -512,16 +514,16 @@ class DeribitClient:
         return round(sum(v["equity_usd"] for v in self.get_all_balances().values()), 2)
 
     def get_positions(self) -> list:
-        try:
-            positions = []
-            for cur in ["BTC", "ETH", "USDC"]:
+        """Isolated position queries prioritizing USDC linear settlement."""
+        positions = []
+        for cur in ["USDC", "BTC", "ETH"]:
+            try:
                 r = self._get("/private/get_positions", {"currency": cur, "kind": "future"})
                 if isinstance(r, list):
                     positions.extend(p for p in r if float(p.get("size", 0) or 0) != 0)
-            return positions
-        except Exception as e:
-            log.warning(f"  get_positions: {e}")
-            return []
+            except Exception as e:
+                log.debug(f"  get_positions note for {cur}: {e}")
+        return positions
 
     def get_order(self, order_id: str) -> dict:
         try:
