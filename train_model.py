@@ -69,7 +69,8 @@ NEW_FEATURES = [
     "btc_beta_20",
     "btc_rel_strength",
 ]
-FULL_FEATURES = ALL_FEATURES + NEW_FEATURES
+# Canonical deduplication preserving column order
+FULL_FEATURES = list(dict.fromkeys(ALL_FEATURES + NEW_FEATURES))
 
 
 # ── Strict HTF Alignment & Target Engineering ─────────────────────────
@@ -323,6 +324,9 @@ def train(ds: pd.DataFrame) -> float:
         except Exception as e:
             log.warning(f"Failed to inspect existing manifest ({e}) — proceeding with new candidate.")
 
+    # Deduplicate DataFrame columns if any duplicate merges occurred
+    ds = ds.loc[:, ~ds.columns.duplicated()].copy()
+
     for f in FULL_FEATURES:
         if f not in ds.columns:
             ds[f] = 0.0
@@ -361,8 +365,9 @@ def train(ds: pd.DataFrame) -> float:
     selected  = [f for f in essential if f in FULL_FEATURES]
 
     for i in top_idx:
-        if FULL_FEATURES[i] not in selected:
-            selected.append(FULL_FEATURES[i])
+        feat = FULL_FEATURES[i]
+        if feat not in selected:
+            selected.append(feat)
         if len(selected) >= N_FEATURES:
             break
 
