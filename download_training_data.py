@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
-download_training_data.py — Canonical Historical Archive Builder.
+download_training_data.py — Canonical historical market-data downloader.
 
-Builds:
+Purpose
+-------
+Populate the canonical research archive used by train_model.py:
+
     data/historical/{SYMBOL}_{15m,1h,4h}.parquet
 
-The archive is the canonical research input for train_model.py.
-
-Properties:
-- 15m / 1h / 4h only
-- Binance closed-candle data
-- exact inclusive millisecond timestamps
-- zero-repair validation
-- duplicate/cadence validation
-- bounded history per symbol/timeframe
-- atomic file replacement
+The downloader:
+1. Fetches Binance klines in bounded batches.
+2. Keeps only the canonical 15m / 1h / 4h intervals.
+3. Preserves exact inclusive millisecond timestamps:
+       close_time = open_time + interval_ms - 1
+4. Validates OHLCV structure and completed-candle status.
+5. Rejects duplicate/corrupt rows instead of repairing them.
+6. Requires continuous expected candle cadence.
+7. Writes one immutable research dataset per symbol/timeframe.
 """
 
-from __future__ import annotations
-
+import sys
 import time
 from pathlib import Path
 
@@ -35,27 +36,16 @@ HISTORICAL_DIR = BASE_DIR / "data" / "historical"
 
 INTERVALS = ("15m", "1h", "4h")
 
-# Keep the research build bounded so GitHub Actions remains practical.
-# These are candles PER SYMBOL / TIMEFRAME.
-CANDLES_PER_INTERVAL = {
-    "15m": 15_000,
-    "1h": 10_000,
-    "4h": 5_000,
-}
-
-# BTC 15m is required separately by train_model.py for BTC context features.
-BTC_BENCHMARK_CANDLES = CANDLES_PER_INTERVAL["15m"]
-
-REQUEST_LIMIT = 1000
-REQUEST_TIMEOUT = 20
-RETRIES = 3
-RETRY_SLEEP = 2.0
-REQUEST_SLEEP = 0.15
-
 BINANCE_ENDPOINTS = (
     "https://data-api.binance.vision/api/v3/klines",
     "https://api.binance.com/api/v3/klines",
 )
+
+REQUEST_LIMIT = 1000
+REQUEST_TIMEOUT = 20
+RETRY_COUNT = 3
+RETRY_SLEEP_SECONDS = 2.0
+BATCH_SLEEP_SECONDS = 0.25
 
 REQUIRED_COLUMNS = [
     "open_time",
@@ -68,7 +58,7 @@ REQUIRED_COLUMNS = [
 ]
 
 
-def fetch_batch(
+def _fetch_klines(
     session: requests.Session,
     symbol: str,
     interval: str,
@@ -85,7 +75,7 @@ def fetch_batch(
 
     last_error = None
 
-    for attempt in range(1, RETRIES + 1):
+    for attempt in range(RETRY_COUNT):
         for endpoint in BINANCE_ENDPOINTS:
             try:
                 response = session.get(
@@ -94,13 +84,11 @@ def fetch_batch(
                     timeout=REQUEST_TIMEOUT,
                 )
                 response.raise_for_status()
-
                 payload = response.json()
 
                 if not isinstance(payload, list):
                     raise ValueError(
-                        f"Unexpected Binance response type: "
-                        f"{type(payload).__name__}"
+                        f"Unexpected Binance response type: {type(payload).__name__}"
                     )
 
                 return payload
@@ -108,34 +96,43 @@ def fetch_batch(
             except Exception as exc:
                 last_error = exc
 
-        if attempt < RETRIES:
-            time.sleep(RETRY_SLEEP * attempt)
+        if attempt < RETRY_COUNT - 1:
+            time.sleep(RETRY_SLEEP_SECONDS * (attempt + 1))
 
     raise RuntimeError(
-        f"Failed fetching {symbol} {interval}: {last_error}"
+        f"Binance kline download failed for {symbol} {interval}: {last_error}"
     )
 
 
-def raw_to_frame(raw: list, interval: str) -> pd.DataFrame:
+def _raw_to_frame(raw: list, interval: str) -> pd.DataFrame:
+    if not raw:
+        return pd.DataFrame(columns=REQUIRED_COLUMNS)
+
     rows = []
 
-    expected_duration = interval_ms(interval) - 1
-
-    for candle in raw:
-        if len(candle) < 7:
+    for kline in raw:
+        if len(kline) < 7:
             continue
 
         try:
-            open_time = int(candle[0])
-            open_price = float(candle[1])
-            high_price = float(candle[2])
-            low_price = float(candle[3])
-            close_price = float(candle[4])
-            volume = float(candle[5])
+            open_time = int(kline[0])
+            open_price = float(kline[1])
+            high_price = float(kline[2])
+            low_price = float(kline[3])
+            close_price = float(kline[4])
+            volume = float(kline[5])
+            exchange_close_time = int(kline[6])
 
-            # Binance's close_time is retained only indirectly.
-            # The archive uses our canonical inclusive-ms invariant.
-            close_time = open_time + expected_duration
+            # Do not silently repair exchange timestamps. Require the exchange
+            # response to already match the canonical inclusive-ms convention.
+            close_time = open_time + interval_ms(interval) - 1
+
+            if exchange_close_time != close_time:
+                raise ValueError(
+                    f"{interval}: exchange close_time mismatch for "
+                    f"open_time={open_time}: "
+                    f"exchange={exchange_close_time}, expected={close_time}"
+                )
 
             rows.append(
                 {
@@ -148,129 +145,44 @@ def raw_to_frame(raw: list, interval: str) -> pd.DataFrame:
                     "volume": volume,
                 }
             )
-
         except (TypeError, ValueError, OverflowError):
             continue
 
     return pd.DataFrame(rows, columns=REQUIRED_COLUMNS)
 
 
-def fetch_history(
-    session: requests.Session,
-    symbol: str,
-    interval: str,
-    max_candles: int,
-) -> pd.DataFrame:
-    batches = []
-
-    # Current UTC time. Binance will not return future candles.
-    end_time_ms = int(time.time() * 1000)
-
-    collected = 0
-
-    while collected < max_candles:
-        raw = fetch_batch(
-            session,
-            symbol,
-            interval,
-            end_time_ms,
-        )
-
-        if not raw:
-            break
-
-        frame = raw_to_frame(raw, interval)
-
-        if frame.empty:
-            raise RuntimeError(
-                f"{symbol} {interval}: received only malformed candles"
-            )
-
-        batches.append(frame)
-        collected += len(frame)
-
-        oldest = int(frame["open_time"].min())
-
-        end_time_ms = oldest - 1
-
-        print(
-            f"      batch={len(batches):>2} "
-            f"candles={len(frame):>4} "
-            f"collected={collected:>6}/{max_candles}"
-        )
-
-        if len(raw) < REQUEST_LIMIT:
-            break
-
-        time.sleep(REQUEST_SLEEP)
-
-    if not batches:
-        return pd.DataFrame(columns=REQUIRED_COLUMNS)
-
-    df = pd.concat(
-        batches,
-        ignore_index=True,
-    )
-
-    df = (
-        df.drop_duplicates("open_time", keep="first")
-        .sort_values("open_time")
-        .reset_index(drop=True)
-    )
-
-    # Keep exactly the requested number of newest candles.
-    if len(df) > max_candles:
-        df = df.iloc[-max_candles:].reset_index(drop=True)
-
-    return df
-
-
-def validate_archive_frame(
-    df: pd.DataFrame,
-    symbol: str,
-    interval: str,
-) -> None:
+def _validate_archive_frame(df: pd.DataFrame, interval: str) -> None:
     if df.empty:
-        raise ValueError(
-            f"{symbol} {interval}: empty historical dataset"
-        )
+        raise ValueError(f"{interval}: no valid candles after sanitization")
 
     cadence = interval_ms(interval)
     expected_duration = cadence - 1
 
     if not pd.api.types.is_integer_dtype(df["open_time"]):
-        raise ValueError(
-            f"{symbol} {interval}: open_time must be integer dtype"
-        )
+        raise ValueError(f"{interval}: open_time is not integer dtype")
 
     if not pd.api.types.is_integer_dtype(df["close_time"]):
-        raise ValueError(
-            f"{symbol} {interval}: close_time must be integer dtype"
-        )
+        raise ValueError(f"{interval}: close_time is not integer dtype")
 
     if df["open_time"].duplicated().any():
-        raise ValueError(
-            f"{symbol} {interval}: duplicate open_time values"
-        )
+        raise ValueError(f"{interval}: duplicate open_time timestamps found")
 
     if not df["open_time"].is_monotonic_increasing:
-        raise ValueError(
-            f"{symbol} {interval}: open_time is not monotonic"
-        )
+        raise ValueError(f"{interval}: open_time is not monotonically increasing")
 
     durations = df["close_time"] - df["open_time"]
-
     if not (durations == expected_duration).all():
         raise ValueError(
-            f"{symbol} {interval}: invalid inclusive candle duration"
+            f"{interval}: inclusive duration violation; "
+            f"expected {expected_duration}ms"
         )
 
     diffs = df["open_time"].diff().dropna()
-
-    if not diffs.empty and not (diffs == cadence).all():
-        bad = int((diffs != cadence).sum())
+    if not (diffs == cadence).all():
+        anomalies = diffs[diffs != cadence]
         raise ValueError(
-            f"{symbol} {interval}: {bad} cadence anomalies detected"
+            f"{interval}: cadence violation; "
+            f"{len(anomalies)} anomalous spacings detected"
         )
 
     numeric = df[
@@ -278,9 +190,7 @@ def validate_archive_frame(
     ].to_numpy(dtype=np.float64)
 
     if not np.isfinite(numeric).all():
-        raise ValueError(
-            f"{symbol} {interval}: non-finite OHLCV detected"
-        )
+        raise ValueError(f"{interval}: non-finite OHLCV values found")
 
     if (
         (df["open"] <= 0).any()
@@ -288,186 +198,187 @@ def validate_archive_frame(
         or (df["low"] <= 0).any()
         or (df["close"] <= 0).any()
     ):
-        raise ValueError(
-            f"{symbol} {interval}: non-positive price detected"
-        )
+        raise ValueError(f"{interval}: non-positive price found")
 
     if (df["volume"] < 0).any():
-        raise ValueError(
-            f"{symbol} {interval}: negative volume detected"
-        )
+        raise ValueError(f"{interval}: negative volume found")
 
-    if (
-        df["high"] < df[["open", "close"]].max(axis=1)
-    ).any():
-        raise ValueError(
-            f"{symbol} {interval}: high violates OHLC physics"
-        )
+    if (df["high"] < df[["open", "close"]].max(axis=1)).any():
+        raise ValueError(f"{interval}: high below max(open, close)")
 
-    if (
-        df["low"] > df[["open", "close"]].min(axis=1)
-    ).any():
-        raise ValueError(
-            f"{symbol} {interval}: low violates OHLC physics"
-        )
+    if (df["low"] > df[["open", "close"]].min(axis=1)).any():
+        raise ValueError(f"{interval}: low above min(open, close)")
 
 
-def build_one(
+def fetch_full_history(
     session: requests.Session,
     symbol: str,
     interval: str,
-    max_candles: int,
-) -> Path:
-    print(
-        f"    Downloading {symbol} {interval} "
-        f"({max_candles:,} candles)..."
-    )
+) -> pd.DataFrame:
+    """
+    Walk backward through Binance history until no older candles remain.
 
-    raw_df = fetch_history(
-        session,
-        symbol,
-        interval,
-        max_candles,
-    )
+    The query boundary is moved to one millisecond before the oldest candle
+    returned by the previous request, avoiding repeated boundary rows.
+    """
+    batches = []
 
-    if raw_df.empty:
-        raise RuntimeError(
-            f"{symbol} {interval}: no data returned"
+    # Binance may include the currently-forming candle when endTime is now.
+    # Start from the latest fully completed candle instead.
+    now_ms = int(time.time() * 1000)
+    cadence = interval_ms(interval)
+    current_open = (now_ms // cadence) * cadence
+    end_time_ms = current_open - 1
+
+    while True:
+        raw = _fetch_klines(
+            session=session,
+            symbol=symbol,
+            interval=interval,
+            end_time_ms=end_time_ms,
         )
 
-    observation_time_ms = int(time.time() * 1000)
+        if not raw:
+            break
 
-    clean_rows = sanitize_closed_candles(
-        raw_df,
-        interval_ms_value=interval_ms(interval),
-        observation_time_ms=observation_time_ms,
-    )
+        frame = _raw_to_frame(raw, interval)
 
-    clean_df = pd.DataFrame(
-        clean_rows,
-        columns=REQUIRED_COLUMNS,
-    )
+        if frame.empty:
+            raise ValueError(
+                f"{symbol} {interval}: Binance returned only malformed rows"
+            )
 
-    # Zero-repair rule:
-    # the downloader must never silently discard invalid archive rows.
-    if len(clean_df) != len(raw_df):
-        rejected = len(raw_df) - len(clean_df)
-        raise RuntimeError(
-            f"{symbol} {interval}: sanitizer rejected "
-            f"{rejected} rows; refusing to write archive"
+        batches.append(frame)
+
+        oldest_open = int(frame["open_time"].min())
+
+        print(
+            f"      batch={len(batches):>3} "
+            f"rows={len(frame):>4} "
+            f"oldest={pd.to_datetime(oldest_open, unit='ms', utc=True)}"
         )
 
-    validate_archive_frame(
-        clean_df,
-        symbol,
-        interval,
+        # Move strictly before the oldest returned candle.
+        next_end = oldest_open - 1
+
+        if next_end >= end_time_ms:
+            raise RuntimeError(
+                f"{symbol} {interval}: pagination did not move backward"
+            )
+
+        end_time_ms = next_end
+
+        # Once the API returns fewer than the request limit, this is the
+        # earliest available page for practical purposes.
+        if len(raw) < REQUEST_LIMIT:
+            break
+
+        time.sleep(BATCH_SLEEP_SECONDS)
+
+    if not batches:
+        return pd.DataFrame(columns=REQUIRED_COLUMNS)
+
+    combined = pd.concat(batches, ignore_index=True)
+
+    combined = combined.drop_duplicates(
+        subset=["open_time"],
+        keep="first",
     )
 
-    HISTORICAL_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    combined = combined.sort_values("open_time").reset_index(drop=True)
 
-    target = HISTORICAL_DIR / f"{symbol}_{interval}.parquet"
-    temp = target.with_suffix(".parquet.tmp")
-
-    clean_df.to_parquet(
-        temp,
-        index=False,
-    )
-
-    # Final integrity readback before replacement.
-    verify = pd.read_parquet(temp)
-
-    if len(verify) != len(clean_df):
-        temp.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"{symbol} {interval}: Parquet readback row count mismatch"
-        )
-
-    validate_archive_frame(
-        verify,
-        symbol,
-        interval,
-    )
-
-    temp.replace(target)
-
-    print(
-        f"      ✓ {target.relative_to(BASE_DIR)} "
-        f"({len(clean_df):,} rows)"
-    )
-
-    return target
+    return combined
 
 
-def main() -> None:
-    HISTORICAL_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+def build_canonical_archive() -> None:
+    HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
 
     session = requests.Session()
     session.headers.update(
         {
-            "User-Agent": "CryptoBot-AI/Canonical-Archive",
+            "User-Agent": "CryptoBot-AI/Canonical-Archive-Downloader",
             "Accept": "application/json",
         }
     )
 
-    symbols = list(dict.fromkeys(SYMBOLS))
-
-    # BTC benchmark is required even when BTCUSDT is not in SYMBOLS.
-    if "BTCUSDT" not in symbols:
-        benchmark_targets = [("BTCUSDT", "15m")]
-    else:
-        benchmark_targets = []
-
-    targets = [
-        (symbol, interval)
-        for symbol in symbols
-        for interval in INTERVALS
-    ]
-
-    targets.extend(benchmark_targets)
-
-    print("=" * 72)
-    print(" CRYPTOBOT AI — CANONICAL HISTORICAL ARCHIVE BUILDER")
-    print("=" * 72)
-    print(f"Symbols: {len(symbols)}")
-    print("Intervals: 15m, 1h, 4h")
-    print(f"Output: {HISTORICAL_DIR}")
-    print(f"Files to build: {len(targets)}")
-    print()
-
+    total = len(SYMBOLS) * len(INTERVALS)
     completed = 0
 
-    for symbol, interval in targets:
-        completed += 1
+    print("=" * 72)
+    print(" CRYPTOBOT AI — CANONICAL HISTORICAL ARCHIVE BUILDER ")
+    print("=" * 72)
+    print(f"Symbols: {len(SYMBOLS)}")
+    print(f"Intervals: {', '.join(INTERVALS)}")
+    print(f"Target files: {total}")
+    print(f"Output: {HISTORICAL_DIR}")
+    print()
 
-        print(
-            f"[{completed}/{len(targets)}] "
-            f"{symbol} {interval}"
-        )
+    for symbol in SYMBOLS:
+        for interval in INTERVALS:
+            completed += 1
+            print(
+                f"[{completed}/{total}] "
+                f"Downloading {symbol} {interval}"
+            )
 
-        if symbol == "BTCUSDT" and interval == "15m":
-            count = BTC_BENCHMARK_CANDLES
-        else:
-            count = CANDLES_PER_INTERVAL[interval]
+            try:
+                raw_df = fetch_full_history(
+                    session=session,
+                    symbol=symbol,
+                    interval=interval,
+                )
 
-        build_one(
-            session,
-            symbol,
-            interval,
-            count,
-        )
+                if raw_df.empty:
+                    raise ValueError("No historical candles returned")
 
-        time.sleep(0.25)
+                # Reject anything not fully available at observation time.
+                observation_ms = int(time.time() * 1000)
+
+                clean_rows = sanitize_closed_candles(
+                    raw_df,
+                    interval_ms_value=interval_ms(interval),
+                    observation_time_ms=observation_ms,
+                )
+
+                clean_df = pd.DataFrame(clean_rows, columns=REQUIRED_COLUMNS)
+
+                # Zero-repair policy: downloader must never silently remove
+                # historical rows and still call the file complete.
+                if len(clean_df) != len(raw_df):
+                    rejected = len(raw_df) - len(clean_df)
+                    raise ValueError(
+                        f"Sanitizer rejected {rejected} rows; "
+                        f"refusing to create canonical archive"
+                    )
+
+                _validate_archive_frame(clean_df, interval)
+
+                output = HISTORICAL_DIR / f"{symbol}_{interval}.parquet"
+
+                clean_df.to_parquet(
+                    output,
+                    index=False,
+                )
+
+                print(
+                    f"    ✓ Wrote {len(clean_df):,} candles -> "
+                    f"{output.relative_to(BASE_DIR)}"
+                )
+
+            except Exception as exc:
+                print(
+                    f"    ❌ FAILED {symbol} {interval}: {exc}"
+                )
+                raise
 
     print()
     print("=" * 72)
     print("✅ CANONICAL HISTORICAL ARCHIVE BUILD COMPLETE")
     print("=" * 72)
+
+
+def main() -> None:
+    build_canonical_archive()
 
 
 if __name__ == "__main__":
