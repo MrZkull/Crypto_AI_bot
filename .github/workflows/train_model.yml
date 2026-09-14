@@ -1,4 +1,4 @@
-name: Train ML Model
+name: Train & Build Candidate Model
 
 on:
   schedule:
@@ -12,7 +12,7 @@ on:
       train_meta:
         description: 'Run Meta-Model research pipeline?'
         required: false
-        default: false
+        default: true
         type: boolean
 
 concurrency:
@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  train:
+  build-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -46,134 +46,55 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           fi
-          pip install pyarrow fastparquet
+          pip install pyarrow fastparquet filelock websockets
+          python -c "import pyarrow; print('pyarrow', pyarrow.__version__)"
 
       - name: Verify source modules exist
         run: |
           set -euo pipefail
           test -f train_model.py || { echo "::error::Missing train_model.py"; exit 1; }
+          test -f execution_policy.py || { echo "::error::Missing execution_policy.py"; exit 1; }
+          test -f gate10.py || { echo "::error::Missing gate10.py"; exit 1; }
           test -f download_training_data.py || { echo "::error::Missing download_training_data.py"; exit 1; }
           test -f market_data_integrity.py || { echo "::error::Missing market_data_integrity.py"; exit 1; }
           test -f feature_engineering.py || { echo "::error::Missing feature_engineering.py"; exit 1; }
-          test -f research/audit_archive_cadence.py || { echo "::error::Missing research/audit_archive_cadence.py"; exit 1; }
 
       - name: Populate canonical historical archive
         run: |
           set -euo pipefail
-          echo "Populating canonical local Parquet files..."
           python download_training_data.py
           test -d data/historical || { echo "::error::Archive downloader failed to create data/historical"; exit 1; }
 
       - name: Run archive cadence & integrity gate
         run: |
           set -euo pipefail
-          echo "Executing Zero-Repair Archive Cadence & Physics Audit..."
           python research/audit_archive_cadence.py
+
+      - name: Run deterministic funding tests
+        run: |
+          set -euo pipefail
+          pytest tests/test_funding.py -v
 
       - name: Clean stale candidate artifacts
         run: |
-          rm -f pro_crypto_ai_model.pkl meta_pipeline.pkl
-          rm -f model_performance.json meta_model_performance.json accuracy.txt
+          rm -f candidate_model.pkl candidate_meta_model.pkl candidate_manifest.json
+          rm -f model_performance.json meta_model_performance.json
 
       - name: Run primary model training
         run: |
-          echo "Starting model training at $(date -u)"
-          echo "Note: ${{ github.event.inputs.note || 'Scheduled monthly retrain' }}"
+          echo "Starting candidate model training at $(date -u)"
           python train_model.py
-          echo "Primary training complete at $(date -u)"
-
-      - name: Verify primary model outputs
-        run: |
-          test -s pro_crypto_ai_model.pkl || { echo "::error::pro_crypto_ai_model.pkl was not produced"; exit 1; }
-          test -s model_performance.json || { echo "::error::model_performance.json was not produced"; exit 1; }
-
-      - name: Show primary metrics
-        run: |
-          python -c "
-          import json
-          p = json.load(open('model_performance.json'))
-          print('='*55)
-          print(f'ACCURACY:           {p.get(\"accuracy\", 0)}%')
-          print(f'WF SCORE:           {p.get(\"wf_mean\", 0)}% +/- {p.get(\"wf_std\", 0)}%')
-          print(f'TRAIN SET:          {p.get(\"n_train\", 0)} samples')
-          print(f'CALIB SET:          {p.get(\"n_calib\", 0)} samples')
-          print(f'TEST SET:           {p.get(\"n_test\", 0)} samples')
-          print(f'BUY precision:      {p.get(\"buy_precision\", 0):.4f}')
-          print(f'SELL precision:     {p.get(\"sell_precision\", 0):.4f}')
-          print(f'NO_TRADE precision: {p.get(\"no_trade_precision\", 0):.4f}')
-          print('='*55)
-          "
-
-      - name: Write plain-text accuracy note
-        run: |
-          python -c "
-          import json
-          p = json.load(open('model_performance.json'))
-          with open('accuracy.txt', 'w') as f:
-              f.write(f'{p.get(\"accuracy\", 0)}% accuracy')
-          "
 
       - name: Train Meta Model (Research Pipeline)
-        if: ${{ github.event.inputs.train_meta == 'true' }}
-        id: train_meta
+        if: ${{ github.event.inputs.train_meta == 'true' || github.event_name == 'schedule' }}
         run: |
-          echo "Starting meta-model training at $(date -u)"
+          echo "Starting meta-model candidate training at $(date -u)"
           python train_meta_model.py
-          echo "Meta-model training complete at $(date -u)"
 
-      - name: Evaluate Gate 10 Production Promotion
-        id: gate10
+      - name: Verify candidate outputs
         run: |
-          python - <<'PYEOF'
-          import json, os, sys
-
-          gh_out = os.environ.get("GITHUB_OUTPUT", "")
-
-          if not os.path.exists("meta_model_performance.json"):
-              print("ℹ️ Meta-model evaluation was not run.")
-              print("   Primary model artifact accepted as CANDIDATE-ONLY.")
-              with open(gh_out, "a") as f:
-                  f.write("promote=false\n")
-                  f.write("reason=NO_META_PIPELINE\n")
-              sys.exit(0)
-
-          meta = json.load(open("meta_model_performance.json"))
-          prod_eligible = meta.get("production_candidate_eligible", False)
-          passed_prod_gate = meta.get("passed_production_gate", False)
-          eval_mode = meta.get("evaluation_mode", "")
-          ci_lower = meta.get("bootstrap_ci_95", [0, 0])[0]
-          mean_net_r = meta.get("meta_mean_net_r", 0.0)
-          precision_lift = meta.get("precision_lift_pct", 0.0)
-          retention = meta.get("retention_rate_pct", 0.0)
-
-          print("=" * 60)
-          print(" GATE 10 PRODUCTION PROMOTION AUDIT")
-          print("=" * 60)
-          print(f"Evaluation Mode:           {eval_mode}")
-          print(f"Production Candidate Flag: {prod_eligible}")
-          print(f"Passed Production Gate:    {passed_prod_gate}")
-          print(f"Bootstrap 95% CI Lower:    {ci_lower:.4f}R (Hurdle: > 0.0R)")
-          print(f"Mean Net Return:           {mean_net_r:.4f}R (Hurdle: >= 0.05R)")
-          print(f"Precision Lift:            {precision_lift:.2f}% (Hurdle: >= 2.5%)")
-          print(f"Trade Retention:           {retention:.1f}% (Hurdle: >= 35%)")
-          print("=" * 60)
-
-          # Invariant: Gate 10 Promotion requires real empirical returns, positive CI, and hurdle clearance
-          if prod_eligible and passed_prod_gate and ci_lower > 0.0 and mean_net_r >= 0.05:
-              print("✅ GATE 10 CLEARED: Model promoted to production.")
-              with open(gh_out, "a") as f:
-                  f.write("promote=true\n")
-                  f.write("reason=GATE_10_PASSED\n")
-          else:
-              print("🛑 GATE 10 FAILED: Promotion blocked.")
-              if eval_mode != "PRODUCTION_REALIZED_RETURNS":
-                  print("   BLOCKER: Evaluation used synthetic barrier payoffs. Empirical fill returns required.")
-              else:
-                  print("   BLOCKER: Failed one or more statistical/economic criteria.")
-              with open(gh_out, "a") as f:
-                  f.write("promote=false\n")
-                  f.write("reason=GATE_10_BLOCKED\n")
-          PYEOF
+          test -s candidate_model.pkl || { echo "::error::candidate_model.pkl was not produced"; exit 1; }
+          test -s candidate_manifest.json || { echo "::error::candidate_manifest.json was not produced"; exit 1; }
 
       - name: Commit Performance Metrics ONLY
         run: |
@@ -182,12 +103,12 @@ jobs:
 
           git add model_performance.json || true
           [ -f meta_model_performance.json ] && git add meta_model_performance.json || true
-          [ -f accuracy.txt ] && git add accuracy.txt || true
+          [ -f candidate_manifest.json ] && git add candidate_manifest.json || true
 
           if git diff --cached --quiet; then
             echo "No performance metric changes to commit."
           else
-            git commit -m "🤖 Retrain model metrics [skip ci]"
+            git commit -m "🤖 Freeze candidate model metrics [skip ci]"
             git pull origin main --rebase --autostash || true
             git push origin main || echo "Git push skipped."
           fi
@@ -197,29 +118,17 @@ jobs:
       - name: Upload Candidate Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: model-candidate-${{ github.run_number }}
+          name: candidate-build-${{ github.run_number }}
           path: |
-            pro_crypto_ai_model.pkl
+            candidate_model.pkl
+            candidate_meta_model.pkl
+            candidate_manifest.json
             model_performance.json
-            accuracy.txt
-            meta_pipeline.pkl
             meta_model_performance.json
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Upload Verified Model to Release
-        if: steps.gate10.outputs.promote == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Log Immutable Candidate Status
         run: |
-          gh release upload v2.0 pro_crypto_ai_model.pkl --clobber
-          gh release upload v2.0 model_performance.json --clobber
-          [ -f meta_pipeline.pkl ] && gh release upload v2.0 meta_pipeline.pkl --clobber || true
-          [ -f meta_model_performance.json ] && gh release upload v2.0 meta_model_performance.json --clobber || true
-          echo "✅ Production candidate verified by Gate 10 and promoted to v2.0 release."
-
-      - name: Log Candidate Gate Status
-        if: steps.gate10.outputs.promote != 'true'
-        run: |
-          echo "ℹ️ Candidate artifact generated and archived in workflow run artifacts."
-          echo "Production release v2.0 was not altered (Gate 10 promotion requirements were not satisfied)."
+          echo "✅ Candidate successfully frozen and awaits prospective execution."
+          echo "Run promote_candidate.py on your execution server to evaluate empirical Gate 10."
