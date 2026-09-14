@@ -1,0 +1,58 @@
+name: CryptoBot AI — Canonical Archive Integrity
+
+on:
+  schedule:
+    - cron: '7 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: crypto-bot-archive-integrity
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  archive-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify required integrity modules
+        run: |
+          test -f market_data_integrity.py
+          test -f research/audit_archive_cadence.py
+          test -d data/historical
+
+      - name: Run canonical Parquet integrity audit
+        run: |
+          python research/audit_archive_cadence.py
+
+      - name: Upload integrity log
+        if: always()
+        run: |
+          python research/audit_archive_cadence.py > archive_integrity.log 2>&1 || true
+
+      - name: Store integrity log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-integrity-${{ github.run_number }}
+          path: archive_integrity.log
+          retention-days: 14
