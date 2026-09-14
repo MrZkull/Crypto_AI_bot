@@ -73,7 +73,7 @@ jobs:
       - name: Run deterministic funding tests
         run: |
           set -euo pipefail
-          pytest tests/test_funding.py -v
+          PYTHONPATH=. pytest tests/test_funding.py -v
 
       - name: Clean stale candidate artifacts
         run: |
