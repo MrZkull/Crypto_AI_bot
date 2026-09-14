@@ -3,6 +3,7 @@ name: CryptoBot AI — Primary Model Research Build
 on:
   schedule:
     - cron: '0 2 1 * *'
+
   workflow_dispatch:
     inputs:
       note:
@@ -46,12 +47,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verify canonical research inputs
+      # ---------------------------------------------------------------
+      # 1. Source/module presence
+      # ---------------------------------------------------------------
+      - name: Verify canonical research code
         run: |
           set -euo pipefail
 
           required_files=(
             "train_model.py"
+            "download_training_data.py"
             "market_data_integrity.py"
             "feature_engineering.py"
             "research/audit_archive_cadence.py"
@@ -64,54 +69,98 @@ jobs:
             }
           done
 
+      # ---------------------------------------------------------------
+      # 2. Build canonical archive
+      # ---------------------------------------------------------------
+      - name: Populate canonical historical archive
+        run: |
+          set -euo pipefail
+
+          echo "Building canonical historical archive..."
+          python download_training_data.py
+
           test -d data/historical || {
-            echo "::error::Missing canonical archive directory: data/historical"
-            echo "Run the canonical archive population workflow before retraining."
+            echo "::error::Archive builder did not create data/historical"
             exit 1
           }
+
+      # ---------------------------------------------------------------
+      # 3. Verify exact expected file set
+      # ---------------------------------------------------------------
+      - name: Verify canonical archive presence
+        run: |
+          set -euo pipefail
 
           python - <<'PY'
           from pathlib import Path
           from config import SYMBOLS
 
           root = Path("data/historical")
+
+          if not root.is_dir():
+              raise SystemExit(
+                  "CRITICAL: data/historical does not exist"
+              )
+
           missing = []
 
           for symbol in SYMBOLS:
               for interval in ("15m", "1h", "4h"):
                   path = root / f"{symbol}_{interval}.parquet"
+
                   if not path.is_file():
                       missing.append(str(path))
 
-          # BTC benchmark is required by train_model.py for the point-in-time
-          # BTC context features, even when BTCUSDT is not in SYMBOLS.
-          btc_path = root / "BTCUSDT_15m.parquet"
-          if not btc_path.is_file():
-              missing.append(str(btc_path))
+          # BTC 15m benchmark is required by train_model.py.
+          btc = root / "BTCUSDT_15m.parquet"
+
+          if not btc.is_file():
+              missing.append(str(btc))
 
           if missing:
               print("Missing canonical archive files:")
+
               for path in missing:
                   print(f"  - {path}")
+
               raise SystemExit(
-                  f"CRITICAL: {len(missing)} canonical archive files are missing."
+                  f"CRITICAL: {len(missing)} canonical archive files missing."
               )
 
-          expected = len(SYMBOLS) * 3 + 1
-          print(f"Canonical archive presence check: PASS ({expected} required files)")
+          expected = len(SYMBOLS) * 3
+          if "BTCUSDT" not in SYMBOLS:
+              expected += 1
+
+          print(
+              f"Canonical archive presence check: PASS "
+              f"({expected} files)"
+          )
           PY
 
+      # ---------------------------------------------------------------
+      # 4. Canonical zero-repair integrity gate
+      # ---------------------------------------------------------------
       - name: Run archive integrity gate
         run: |
+          set -euo pipefail
           python research/audit_archive_cadence.py
 
+      # ---------------------------------------------------------------
+      # 5. Compile research/training sources
+      # ---------------------------------------------------------------
       - name: Compile research and training sources
         run: |
+          set -euo pipefail
+
           python -m py_compile \
             train_model.py \
+            download_training_data.py \
             market_data_integrity.py \
             feature_engineering.py
 
+      # ---------------------------------------------------------------
+      # 6. Clean candidate outputs
+      # ---------------------------------------------------------------
       - name: Clean stale candidate artifacts
         run: |
           rm -f pro_crypto_ai_model.pkl
@@ -120,30 +169,41 @@ jobs:
           rm -f meta_pipeline.pkl
           rm -f meta_model_performance.json
 
+      # ---------------------------------------------------------------
+      # 7. Primary training
+      # ---------------------------------------------------------------
       - name: Run primary model training
         env:
           RETRAIN_NOTE: ${{ inputs.note || 'Scheduled monthly retrain' }}
         run: |
-          echo "Starting primary model training at $(date -u)"
+          echo "Starting primary training at $(date -u)"
           echo "Reason: ${RETRAIN_NOTE}"
-          python train_model.py
-          echo "Primary training complete at $(date -u)"
 
+          python train_model.py
+
+          echo "Primary training completed at $(date -u)"
+
+      # ---------------------------------------------------------------
+      # 8. Fresh-artifact check
+      # ---------------------------------------------------------------
       - name: Verify fresh primary outputs
         run: |
           set -euo pipefail
 
           test -s pro_crypto_ai_model.pkl || {
-            echo "::error::Primary model artifact was not produced."
+            echo "::error::pro_crypto_ai_model.pkl was not produced."
             exit 1
           }
 
           test -s model_performance.json || {
-            echo "::error::Primary model performance file was not produced."
+            echo "::error::model_performance.json was not produced."
             exit 1
           }
 
-      - name: Validate primary artifact
+      # ---------------------------------------------------------------
+      # 9. Artifact structure validation
+      # ---------------------------------------------------------------
+      - name: Validate primary model artifact
         run: |
           python - <<'PY'
           import json
@@ -166,19 +226,33 @@ jobs:
           }
 
           missing = required_keys - set(pipeline)
+
           if missing:
               raise SystemExit(
-                  f"CRITICAL: primary artifact missing keys: {sorted(missing)}"
+                  f"CRITICAL: model artifact missing keys: {sorted(missing)}"
               )
 
-          for field in ("buy_precision", "sell_precision"):
-              value = performance.get(field)
-              if value is None:
-                  raise SystemExit(
-                      f"CRITICAL: model_performance.json missing {field}"
-                  )
+          required_metrics = (
+              "buy_precision",
+              "sell_precision",
+              "n_train",
+              "n_calib",
+              "n_test",
+          )
 
-          print("Primary artifact structure: PASS")
+          missing_metrics = [
+              field
+              for field in required_metrics
+              if field not in performance
+          ]
+
+          if missing_metrics:
+              raise SystemExit(
+                  f"CRITICAL: model_performance.json missing: "
+                  f"{missing_metrics}"
+              )
+
+          print("Primary model artifact validation: PASS")
           print(f"Accuracy:       {performance.get('accuracy', 0)}%")
           print(f"WF mean:        {performance.get('wf_mean', 0)}%")
           print(f"Train samples:  {performance.get('n_train', 0)}")
@@ -188,80 +262,32 @@ jobs:
           print(f"SELL precision: {performance.get('sell_precision', 0)}")
           PY
 
-      - name: Write accuracy note
-        run: |
-          python - <<'PY'
-          import json
-
-          with open("model_performance.json") as f:
-              p = json.load(f)
-
-          with open("accuracy.txt", "w") as f:
-              f.write(f"{p.get('accuracy', 0)}% accuracy")
-          PY
-
+      # ---------------------------------------------------------------
+      # 10. Optional meta research
+      # ---------------------------------------------------------------
       - name: Run meta-model research pipeline
         if: ${{ inputs.train_meta }}
         run: |
-          echo "Starting meta-model research pipeline at $(date -u)"
+          echo "Starting meta-model research pipeline..."
           python train_meta_model.py
-          echo "Meta-model research complete at $(date -u)"
+          echo "Meta-model research pipeline completed."
 
       - name: Verify meta-model research outputs
         if: ${{ inputs.train_meta }}
         run: |
           test -s meta_pipeline.pkl || {
-            echo "::error::Meta-model requested but meta_pipeline.pkl was not produced."
+            echo "::error::Meta model requested but meta_pipeline.pkl missing."
             exit 1
           }
 
           test -s meta_model_performance.json || {
-            echo "::error::Meta-model requested but meta_model_performance.json was not produced."
+            echo "::error::Meta model requested but performance file missing."
             exit 1
           }
 
-      - name: Show primary results
-        run: |
-          python - <<'PY'
-          import json
-
-          with open("model_performance.json") as f:
-              p = json.load(f)
-
-          print("=" * 60)
-          print(f"ACCURACY:        {p.get('accuracy', 0)}%")
-          print(f"WF SCORE:        {p.get('wf_mean', 0)}% +/- {p.get('wf_std', 0)}%")
-          print(f"TRAIN SET:       {p.get('n_train', 0)}")
-          print(f"CALIBRATION:     {p.get('n_calib', 0)}")
-          print(f"TEST SET:        {p.get('n_test', 0)}")
-          print(f"BUY PRECISION:   {p.get('buy_precision', 0)}")
-          print(f"SELL PRECISION:  {p.get('sell_precision', 0)}")
-          print(f"NO-TRADE PREC.:  {p.get('no_trade_precision', 0)}")
-          print(f"BUY THRESHOLD:   {p.get('recommended_threshold_buy', 0)}")
-          print(f"SELL THRESHOLD:  {p.get('recommended_threshold_sell', 0)}")
-          print("=" * 60)
-          PY
-
-      - name: Show meta research results
-        if: ${{ inputs.train_meta && hashFiles('meta_model_performance.json') != '' }}
-        run: |
-          python - <<'PY'
-          import json
-
-          with open("meta_model_performance.json") as f:
-              p = json.load(f)
-
-          print("=" * 60)
-          print(f"EVALUATION MODE: {p.get('evaluation_mode', 'UNKNOWN')}")
-          print(f"RESEARCH PASS:   {p.get('passed_research_gate', False)}")
-          print(f"PRODUCTION PASS: {p.get('passed_production_gate', False)}")
-          print(f"META RETAINED:   {p.get('n_meta_retained', 0)}")
-          print(f"META MEAN NET-R: {p.get('meta_mean_net_r', 0)}")
-          print(f"R LIFT:          {p.get('r_lift', 0)}")
-          print("Research output is not a production release authorization.")
-          print("=" * 60)
-          PY
-
+      # ---------------------------------------------------------------
+      # 11. Commit metrics ONLY
+      # ---------------------------------------------------------------
       - name: Commit research metrics only
         run: |
           set -euo pipefail
@@ -269,25 +295,32 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add model_performance.json accuracy.txt
+          git add model_performance.json
+
+          if [ -f accuracy.txt ]; then
+            git add accuracy.txt
+          fi
 
           if [ -f meta_model_performance.json ]; then
             git add meta_model_performance.json
           fi
 
-          git diff --cached --quiet || \
-            git commit -m "Research model retrain metrics [skip ci]"
+          if git diff --cached --quiet; then
+            echo "No research metric changes to commit."
+          else
+            git commit \
+              -m "Research model retrain metrics [skip ci]"
 
-          git fetch origin main
+            git fetch origin main
 
-          git rebase origin/main || {
-            echo "::error::Rebase failed; aborting rather than overwriting remote state."
-            git rebase --abort || true
-            exit 1
-          }
+            git rebase origin/main
 
-          git push origin main
+            git push origin main
+          fi
 
+      # ---------------------------------------------------------------
+      # 12. Candidate artifacts
+      # ---------------------------------------------------------------
       - name: Upload candidate artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -301,8 +334,16 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Explicit promotion status
+      # ---------------------------------------------------------------
+      # 13. Explicitly prevent legacy promotion
+      # ---------------------------------------------------------------
+      - name: Research build complete — no production promotion
         run: |
-          echo "Candidate model build completed."
-          echo "No production GitHub Release was modified by this workflow."
-          echo "Production promotion is handled only by the controlled model release workflow."
+          echo "============================================================"
+          echo "PRIMARY MODEL RESEARCH BUILD COMPLETE"
+          echo "============================================================"
+          echo "Candidate artifact was generated and validated."
+          echo "This workflow does NOT modify the production release."
+          echo "Production promotion is handled only by:"
+          echo "  model_build_release.yml"
+          echo "============================================================"
