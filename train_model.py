@@ -75,7 +75,6 @@ FULL_FEATURES = ALL_FEATURES + NEW_FEATURES
 # ── Strict HTF Alignment & Target Engineering ─────────────────────────
 
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    """Strict policy: missing or incomplete 1h data returns empty to prevent unverified training."""
     if df1h.empty or len(df1h) < 5 or df15.empty:
         return pd.DataFrame()
     h = merge_completed_htf(df15, df1h, ["rsi", "adx", "trend"], prefix="htf1h")
@@ -84,7 +83,6 @@ def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
 
 
 def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    """Strict policy: missing or incomplete 4h data returns empty to prevent unverified training."""
     if df4h.empty or len(df4h) < 5 or df15.empty:
         return pd.DataFrame()
     h = merge_completed_htf(df15, df4h, ["rsi", "trend"], prefix="htf4h")
@@ -151,22 +149,17 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
                 h, l = highs[i + k], lows[i + k]
                 hit_tp = (h >= tp) if up else (l <= tp)
                 hit_sl = (l <= sl) if up else (h >= sl)
-                if hit_tp and hit_sl:
-                    return "BOTH"
-                if hit_tp:
-                    return "TP"
-                if hit_sl:
-                    return "SL"
+                if hit_tp and hit_sl: return "BOTH"
+                if hit_tp: return "TP"
+                if hit_sl: return "SL"
             return "NONE"
 
         b = first_barrier(buy_tp, buy_sl, True)
         s = first_barrier(sell_tp, sell_sl, False)
         if b == "BOTH" or s == "BOTH" or (b == "TP" and s == "TP"):
             labels[i] = "AMBIGUOUS"
-        elif b == "TP" and s != "TP":
-            labels[i] = "BUY"
-        elif s == "TP" and b != "TP":
-            labels[i] = "SELL"
+        elif b == "TP" and s != "TP": labels[i] = "BUY"
+        elif s == "TP" and b != "TP": labels[i] = "SELL"
     return pd.Series(labels, index=df.index)
 
 
@@ -520,6 +513,7 @@ def train(ds: pd.DataFrame) -> float:
         "feature_schema_hash": feature_schema_hash,
         "feature_code_hash": feature_code_hash,
         "execution_policy_hash": get_policy_hash(),
+        "decision_policy_hash": "", # To be filled by train_meta_model.py
         "config_hash": get_config_hash(current_config),
         "candidate_created_at": now_utc.isoformat(),
         "candidate_expiry_at": (now_utc + timedelta(days=30)).isoformat(),
