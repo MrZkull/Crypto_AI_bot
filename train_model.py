@@ -1,19 +1,36 @@
-# train_model.py — V3.9: Canonical Parquet Rebuild Engine, EV Friction & Provenance Invariants
+#!/usr/bin/env python3
+# train_model.py — Canonical Parquet Rebuild Engine, EV Friction & Immutable Candidate Freezing
 
-import os, json, time, logging, joblib, requests
+import os
+import sys
+import json
+import time
+import uuid
+import logging
+import hashlib
+import joblib
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
+
 import pandas as pd
 import numpy as np
-from datetime import datetime, timezone
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier, VotingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.preprocessing import LabelEncoder
-from xgboost import XGBClassifier
 from sklearn.frozen import FrozenEstimator
+from xgboost import XGBClassifier
 
 from feature_engineering import add_indicators, ALL_FEATURES, ImportanceSelector
 from market_data_integrity import sanitize_closed_candles, merge_completed_htf
+from execution_policy import (
+    get_file_hash,
+    get_policy_hash,
+    get_feature_code_hash,
+    get_feature_schema_hash,
+    build_candidate_config,
+    get_config_hash,
+)
 
 try:
     from config import (
@@ -30,13 +47,14 @@ except ImportError:
     ATR_TARGET1_MULT = 3.5
     ATR_TARGET2_MULT = 7.5
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 TEST_SPLIT         = 0.20
 CALIB_SPLIT        = 0.15
 EMBARGO_BARS       = 24
-MODEL_FILE         = "pro_crypto_ai_model.pkl"
+CANDIDATE_MODEL_FILE = "candidate_model.pkl"
+CANDIDATE_MANIFEST = Path("candidate_manifest.json")
 N_FEATURES         = 35
 MIN_BARS           = 100
 UNDERSAMPLE_RATIO  = 1.0
@@ -54,31 +72,23 @@ NEW_FEATURES = [
 FULL_FEATURES = ALL_FEATURES + NEW_FEATURES
 
 
-# ── Feature Alignment & Target Engineering ─────────────────────────────
+# ── Strict HTF Alignment & Target Engineering ─────────────────────────
 
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    defaults = {"rsi_1h": 50.0, "adx_1h": 0.0, "trend_1h": 0.0}
-    if df1h.empty or df15.empty:
-        for c, v in defaults.items():
-            df15[c] = v
-        return df15
+    """Strict policy: missing or incomplete 1h data returns empty to prevent unverified training."""
+    if df1h.empty or len(df1h) < 5 or df15.empty:
+        return pd.DataFrame()
     h = merge_completed_htf(df15, df1h, ["rsi", "adx", "trend"], prefix="htf1h")
     h = h.rename(columns={"htf1h_rsi": "rsi_1h", "htf1h_adx": "adx_1h", "htf1h_trend": "trend_1h"})
-    for c, v in defaults.items():
-        h[c] = h[c].fillna(v) if c in h else v
     return h
 
 
 def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    defaults = {"rsi_4h": 50.0, "trend_4h": 0.0}
-    if df4h.empty or df15.empty:
-        for c, v in defaults.items():
-            df15[c] = v
-        return df15
+    """Strict policy: missing or incomplete 4h data returns empty to prevent unverified training."""
+    if df4h.empty or len(df4h) < 5 or df15.empty:
+        return pd.DataFrame()
     h = merge_completed_htf(df15, df4h, ["rsi", "trend"], prefix="htf4h")
     h = h.rename(columns={"htf4h_rsi": "rsi_4h", "htf4h_trend": "trend_4h"})
-    for c, v in defaults.items():
-        h[c] = h[c].fillna(v) if c in h else v
     return h
 
 
@@ -141,17 +151,22 @@ def make_targets(df: pd.DataFrame) -> pd.Series:
                 h, l = highs[i + k], lows[i + k]
                 hit_tp = (h >= tp) if up else (l <= tp)
                 hit_sl = (l <= sl) if up else (h >= sl)
-                if hit_tp and hit_sl: return "BOTH"
-                if hit_tp: return "TP"
-                if hit_sl: return "SL"
+                if hit_tp and hit_sl:
+                    return "BOTH"
+                if hit_tp:
+                    return "TP"
+                if hit_sl:
+                    return "SL"
             return "NONE"
 
         b = first_barrier(buy_tp, buy_sl, True)
         s = first_barrier(sell_tp, sell_sl, False)
         if b == "BOTH" or s == "BOTH" or (b == "TP" and s == "TP"):
             labels[i] = "AMBIGUOUS"
-        elif b == "TP" and s != "TP": labels[i] = "BUY"
-        elif s == "TP" and b != "TP": labels[i] = "SELL"
+        elif b == "TP" and s != "TP":
+            labels[i] = "BUY"
+        elif s == "TP" and b != "TP":
+            labels[i] = "SELL"
     return pd.Series(labels, index=df.index)
 
 
@@ -170,21 +185,27 @@ def _process_segment(symbol, df15, df1h, df4h, regime, btc_df15=None):
     if not df1h.empty:
         df1h_feat = add_indicators(df1h)
         df15 = _align_1h_to_15m(df1h_feat, df15)
+        if df15.empty:
+            log.warning(f"[{symbol}] Failed 1h HTF alignment — segment dropped.")
+            return pd.DataFrame()
     else:
-        df15["rsi_1h"] = 50.0
-        df15["adx_1h"] = 0.0
-        df15["trend_1h"] = 0.0
+        log.warning(f"[{symbol}] Missing 1h historical archive — segment dropped.")
+        return pd.DataFrame()
 
     if not df4h.empty:
         df4h_feat = add_indicators(df4h)
         df15 = _align_4h_to_15m(df4h_feat, df15)
+        if df15.empty:
+            log.warning(f"[{symbol}] Failed 4h HTF alignment — segment dropped.")
+            return pd.DataFrame()
     else:
-        df15["rsi_4h"] = 50.0
-        df15["trend_4h"] = 0.0
+        log.warning(f"[{symbol}] Missing 4h historical archive — segment dropped.")
+        return pd.DataFrame()
 
     df15 = _align_btc_to_15m(btc_df15, df15)
+
     if "htf1h_source_close_time" not in df15.columns or "htf4h_source_close_time" not in df15.columns:
-        log.warning(f"[{symbol}] Missing HTF source-close provenance — rejecting segment")
+        log.warning(f"[{symbol}] Missing HTF source-close provenance — segment dropped.")
         return pd.DataFrame()
 
     df15 = _add_extra_features(df15)
@@ -213,13 +234,12 @@ def load_parquet_segment(symbol: str, interval: str) -> pd.DataFrame:
 
 
 def build_dataset_from_local_parquet() -> pd.DataFrame:
-    # Self-healing archive fallback
     if not HISTORICAL_DATA_DIR.exists() or len(list(HISTORICAL_DATA_DIR.glob("*.parquet"))) < 10:
-        log.warning("data/historical/ missing or incomplete. Auto-running download_training_data.py...")
+        log.warning("data/historical/ incomplete. Invoking download_training_data.py...")
         from download_training_data import build_canonical_archive
         build_canonical_archive()
 
-    log.info(f"Building DATASET FROM CANONICAL PARQUET — {len(SYMBOLS)} symbols")
+    log.info(f"Building Canonical Parquet Dataset across {len(SYMBOLS)} symbols...")
     all_rows = []
     btc_df15 = load_parquet_segment("BTCUSDT", "15m")
 
@@ -229,7 +249,7 @@ def build_dataset_from_local_parquet() -> pd.DataFrame:
         df4h = load_parquet_segment(symbol, "4h")
 
         if df15.empty or len(df15) < MIN_BARS:
-            log.warning(f"  [{symbol}] Insufficient Parquet data — skipping symbol.")
+            log.warning(f"  [{symbol}] Insufficient candles — skipping symbol.")
             continue
 
         seg = _process_segment(symbol, df15, df1h, df4h, regime="historical_canonical", btc_df15=btc_df15)
@@ -237,7 +257,7 @@ def build_dataset_from_local_parquet() -> pd.DataFrame:
             all_rows.append(seg)
 
     if not all_rows:
-        raise ValueError(f"CRITICAL: No valid Parquet data found in {HISTORICAL_DATA_DIR}")
+        raise ValueError(f"CRITICAL: No valid Parquet datasets qualified in {HISTORICAL_DATA_DIR}")
 
     ds = pd.concat(all_rows, ignore_index=True)
     n = len(ds)
@@ -245,12 +265,10 @@ def build_dataset_from_local_parquet() -> pd.DataFrame:
     s = (ds.target == "SELL").sum()
     nt = (ds.target == "NO_TRADE").sum()
 
-    log.info(f"\n{'='*60}")
+    log.info(f"{'='*65}")
     log.info(f"CANONICAL PARQUET DATASET: {n:,} rows | BUY: {b:,} ({b/n*100:.1f}%) | SELL: {s:,} ({s/n*100:.1f}%) | NO_TRADE: {nt:,} ({nt/n*100:.1f}%)")
-    log.info(f"{'='*60}")
+    log.info(f"{'='*65}")
     return ds
-
-build_dataset = build_dataset_from_local_parquet
 
 
 def temporal_symbol_split(ds: pd.DataFrame, test_split: float, calib_split: float, embargo: int):
@@ -297,6 +315,21 @@ def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int
 
 
 def train(ds: pd.DataFrame) -> float:
+    # 1. Enforce MAX_ACTIVE_CANDIDATES = 1
+    if CANDIDATE_MANIFEST.exists():
+        try:
+            with open(CANDIDATE_MANIFEST) as f:
+                active_manifest = json.load(f)
+            expiry = datetime.fromisoformat(active_manifest["candidate_expiry_at"])
+            if active_manifest.get("status") == "AWAITING_PROSPECTIVE_EVIDENCE" and datetime.now(timezone.utc) < expiry:
+                log.warning(
+                    f"Active candidate {active_manifest.get('candidate_id')} is currently collecting prospective evidence (expires {expiry}). "
+                    "Aborting new training run to preserve causal lineage."
+                )
+                sys.exit(0)
+        except Exception as e:
+            log.warning(f"Failed to inspect existing manifest ({e}) — proceeding with new candidate.")
+
     for f in FULL_FEATURES:
         if f not in ds.columns:
             ds[f] = 0.0
@@ -329,7 +362,7 @@ def train(ds: pd.DataFrame) -> float:
     log.info("Running feature importance scan...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train_raw, y_train_raw)
-    top_idx  = np.argsort(scanner.feature_importances_)[::-1]
+    top_idx = np.argsort(scanner.feature_importances_)[::-1]
 
     essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"]
     selected  = [f for f in essential if f in FULL_FEATURES]
@@ -378,6 +411,7 @@ def train(ds: pd.DataFrame) -> float:
     )
     ensemble.fit(Xtr, y_train)
 
+    # 4-Fold Block Walk-Forward Cross-Validation
     wf_scores = []
     window = len(Xtr) // 5
     wf_embargo = min(EMBARGO_BARS, max(window // 10, 1))
@@ -448,6 +482,7 @@ def train(ds: pd.DataFrame) -> float:
     acc = accuracy_score(y_test, y_pred_tuned)
     report = classification_report(y_test, y_pred_tuned, target_names=classes, output_dict=True, zero_division=0)
 
+    now_utc = datetime.now(timezone.utc)
     pipeline = {
         "ensemble":                   ensemble,
         "selector":                   ImportanceSelector(selected),
@@ -456,7 +491,7 @@ def train(ds: pd.DataFrame) -> float:
         "label_map":                  {i: c for i, c in enumerate(classes)},
         "label_encoder":              le,
         "accuracy":                   round(acc * 100, 1),
-        "trained_at":                 datetime.now(timezone.utc).isoformat(),
+        "trained_at":                 now_utc.isoformat(),
         "symbols":                    SYMBOLS,
         "n_features":                 len(FULL_FEATURES),
         "recommended_threshold_buy":  best_thresh_buy,
@@ -464,10 +499,39 @@ def train(ds: pd.DataFrame) -> float:
         "recommended_threshold":      max(best_thresh_buy, best_thresh_sell),
         "calibrated":                 True,
     }
-    joblib.dump(pipeline, MODEL_FILE)
-    log.info(f"✅ Saved primary model artifact: {MODEL_FILE}")
+
+    # Dump exclusively to candidate artifact
+    joblib.dump(pipeline, CANDIDATE_MODEL_FILE)
+    log.info(f"✅ Exported candidate binary: {CANDIDATE_MODEL_FILE}")
+
+    # Build immutable multi-hash provenance manifest
+    with open(CANDIDATE_MODEL_FILE, "rb") as f:
+        model_sha256 = hashlib.sha256(f.read()).hexdigest()
+
+    candidate_id = f"cand_{uuid.uuid4().hex}"
+    feature_schema_hash = get_feature_schema_hash(FULL_FEATURES)
+    feature_code_hash = get_feature_code_hash()
+    current_config = build_candidate_config()
+
+    manifest = {
+        "artifact_version": 1,
+        "candidate_id": candidate_id,
+        "model_sha256": model_sha256,
+        "feature_schema_hash": feature_schema_hash,
+        "feature_code_hash": feature_code_hash,
+        "execution_policy_hash": get_policy_hash(),
+        "config_hash": get_config_hash(current_config),
+        "candidate_created_at": now_utc.isoformat(),
+        "candidate_expiry_at": (now_utc + timedelta(days=30)).isoformat(),
+        "status": "AWAITING_PROSPECTIVE_EVIDENCE",
+    }
+
+    with open(CANDIDATE_MANIFEST, "w") as f:
+        json.dump(manifest, f, indent=2)
+    log.info(f"✅ Generated candidate manifest: {candidate_id} (SHA256: {model_sha256[:8]}...)")
 
     perf = {
+        "candidate_id":               candidate_id,
         "accuracy":                   round(acc * 100, 1),
         "test_accuracy":              f"{round(acc * 100, 1)}%",
         "wf_mean":                    round(wf_mean * 100, 1),
@@ -490,6 +554,7 @@ def train(ds: pd.DataFrame) -> float:
         "sell_f1":                    round(report.get("SELL", {}).get("f1-score", 0), 4),
         "no_trade_f1":                round(report.get("NO_TRADE", {}).get("f1-score", 0), 4),
     }
+
     with open("model_performance.json", "w") as f:
         json.dump(perf, f, indent=2)
 
@@ -500,4 +565,4 @@ if __name__ == "__main__":
     t0 = time.time()
     dataset = build_dataset_from_local_parquet()
     acc = train(dataset)
-    log.info(f"Primary rebuild complete in {(time.time()-t0)/60:.1f} min | Accuracy: {acc*100:.1f}%")
+    log.info(f"Candidate build complete in {(time.time()-t0)/60:.1f} min | Test Accuracy: {acc*100:.1f}%")
