@@ -1,10 +1,14 @@
 # trade_executor.py — V4.4: Canonical Execution Engine, Native stop_market,
 # In-Memory Pipeline Caching, Dust-Inclusive Headroom, & Authoritative Verification
 
+from __future__ import annotations
 import os, json, time, logging, requests, joblib, base64, math, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
+
+import pandas as pd
+import numpy as np
 
 load_dotenv()
 import config
@@ -21,6 +25,7 @@ from smart_scheduler import (
     check_btc_momentum, check_fear_and_greed
 )
 from whale_tracker import get_exchange_netflow
+
 
 TRADES_FILE            = "trades.json"
 HISTORY_FILE           = "trade_history.json"
