@@ -1,4 +1,4 @@
-# train_model.py — V3.9: Canonical Parquet Rebuild Engine, EV Friction & Provenance Invariants
+
 
 import os, json, time, logging, joblib, requests
 from pathlib import Path
