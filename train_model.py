@@ -1,4 +1,4 @@
-
+# train_model.py — V3.9: Canonical Parquet Rebuild Engine, EV Friction & Provenance Invariants
 
 import os, json, time, logging, joblib, requests
 from pathlib import Path
@@ -97,7 +97,6 @@ def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFram
 
 
 def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculates rolling BTC correlation, beta, and relative strength with NaN guards."""
     df = df.copy()
     if "btc_close" in df.columns and df["btc_close"].notna().sum() > 30:
         btc_ret = df["btc_close"].pct_change()
@@ -119,7 +118,6 @@ def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def make_targets(df: pd.DataFrame) -> pd.Series:
-    """Triple-barrier labeling. Same-candle TP+SL collisions are labeled AMBIGUOUS."""
     n = len(df)
     labels = np.full(n, "NO_TRADE", dtype=object)
     lookahead = 24
@@ -194,17 +192,13 @@ def _process_segment(symbol, df15, df1h, df4h, regime, btc_df15=None):
     df15["target"] = make_targets(df15)
     df15["regime"] = regime
 
-    # Invariant: Trim unevaluated forward horizon BEFORE filtering out AMBIGUOUS targets
     if len(df15) <= 24:
         return pd.DataFrame()
     df15 = df15.iloc[:-24].copy()
     return df15[df15["target"] != "AMBIGUOUS"].copy()
 
 
-# ── Canonical Local Parquet Ingestion ──────────────────────────────────
-
 def load_parquet_segment(symbol: str, interval: str) -> pd.DataFrame:
-    """Loads historical candles from canonical local storage and sanitizes closed bars."""
     path = HISTORICAL_DATA_DIR / f"{symbol}_{interval}.parquet"
     if not path.exists():
         return pd.DataFrame()
@@ -219,7 +213,12 @@ def load_parquet_segment(symbol: str, interval: str) -> pd.DataFrame:
 
 
 def build_dataset_from_local_parquet() -> pd.DataFrame:
-    """Constructs the master training dataset exclusively from verified local Parquet files."""
+    # Self-healing archive fallback
+    if not HISTORICAL_DATA_DIR.exists() or len(list(HISTORICAL_DATA_DIR.glob("*.parquet"))) < 10:
+        log.warning("data/historical/ missing or incomplete. Auto-running download_training_data.py...")
+        from download_training_data import build_canonical_archive
+        build_canonical_archive()
+
     log.info(f"Building DATASET FROM CANONICAL PARQUET — {len(SYMBOLS)} symbols")
     all_rows = []
     btc_df15 = load_parquet_segment("BTCUSDT", "15m")
@@ -251,15 +250,10 @@ def build_dataset_from_local_parquet() -> pd.DataFrame:
     log.info(f"{'='*60}")
     return ds
 
-
-# Backward-compatible alias for dataset construction
 build_dataset = build_dataset_from_local_parquet
 
 
-# ── Temporal Partitioning & Sampling ───────────────────────────────────
-
 def temporal_symbol_split(ds: pd.DataFrame, test_split: float, calib_split: float, embargo: int):
-    """Chronological per-symbol train/calibration/test split with boundary embargos."""
     if ds is None or ds.empty:
         empty = ds.iloc[:0].copy() if isinstance(ds, pd.DataFrame) else pd.DataFrame()
         return empty, empty.copy(), empty.copy()
@@ -302,8 +296,6 @@ def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int
     return X_train.iloc[keep].reset_index(drop=True), y_train[keep]
 
 
-# ── Training & Calibration Engine ──────────────────────────────────────
-
 def train(ds: pd.DataFrame) -> float:
     for f in FULL_FEATURES:
         if f not in ds.columns:
@@ -318,8 +310,6 @@ def train(ds: pd.DataFrame) -> float:
     sell_idx = classes.index("SELL")     if "SELL"     in classes else 2
 
     train_df, calib_df, test_df = temporal_symbol_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
-
-    # Invariant: sort globally by open_time so walk-forward slices strictly advance in forward time
     train_df = train_df.sort_values("open_time").reset_index(drop=True)
 
     X_train_raw = train_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -388,7 +378,6 @@ def train(ds: pd.DataFrame) -> float:
     )
     ensemble.fit(Xtr, y_train)
 
-    # Chronological Walk-Forward Slices
     wf_scores = []
     window = len(Xtr) // 5
     wf_embargo = min(EMBARGO_BARS, max(window // 10, 1))
@@ -412,7 +401,6 @@ def train(ds: pd.DataFrame) -> float:
     calibrated_ensemble.fit(Xcal, y_calib)
     ensemble = calibrated_ensemble
 
-    # Friction-Penalized Threshold Optimization Sweep (0.12R round-trip friction)
     calib_probas = ensemble.predict_proba(Xcal)
     calib_buy_n  = (y_calib == buy_idx).sum()
     calib_sell_n = (y_calib == sell_idx).sum()
@@ -495,6 +483,12 @@ def train(ds: pd.DataFrame) -> float:
         "buy_precision":              round(report.get("BUY", {}).get("precision", 0), 4),
         "sell_precision":             round(report.get("SELL", {}).get("precision", 0), 4),
         "no_trade_precision":         round(report.get("NO_TRADE", {}).get("precision", 0), 4),
+        "buy_recall":                 round(report.get("BUY", {}).get("recall", 0), 4),
+        "sell_recall":                round(report.get("SELL", {}).get("recall", 0), 4),
+        "no_trade_recall":            round(report.get("NO_TRADE", {}).get("recall", 0), 4),
+        "buy_f1":                     round(report.get("BUY", {}).get("f1-score", 0), 4),
+        "sell_f1":                    round(report.get("SELL", {}).get("f1-score", 0), 4),
+        "no_trade_f1":                round(report.get("NO_TRADE", {}).get("f1-score", 0), 4),
     }
     with open("model_performance.json", "w") as f:
         json.dump(perf, f, indent=2)
