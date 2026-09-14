@@ -382,32 +382,47 @@ def train(ds: pd.DataFrame) -> float:
     sw_asym[y_train == buy_idx]  = 2.0
     sw_asym[y_train == sell_idx] = 2.0
 
+        # ── Robust Classifier Initialization for Voting Ensemble ──
     xgb = XGBClassifier(
-        n_estimators=300, max_depth=6, learning_rate=0.03,
-        subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
-        gamma=0.05, eval_metric="mlogloss", random_state=42, n_jobs=-1,
+        n_estimators=300, 
+        max_depth=6, 
+        learning_rate=0.03,
+        subsample=0.85, 
+        colsample_bytree=0.85, 
+        min_child_weight=3,
+        gamma=0.05, 
+        random_state=42, 
+        n_jobs=-1
     )
     xgb.fit(Xtr, y_train, sample_weight=sw_asym)
 
     rf = RandomForestClassifier(
-        n_estimators=300, max_depth=12, min_samples_leaf=3,
-        max_features="sqrt", random_state=42, n_jobs=-1,
+        n_estimators=300, 
+        max_depth=12, 
+        min_samples_leaf=3,
+        max_features="sqrt", 
+        random_state=42, 
+        n_jobs=-1,
         class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
     )
     rf.fit(Xtr, y_train)
 
     gb = HistGradientBoostingClassifier(
-        max_iter=200, max_depth=5, learning_rate=0.04,
-        min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
+        max_iter=200, 
+        max_depth=5, 
+        learning_rate=0.04,
+        min_samples_leaf=3, 
+        random_state=42,
     )
     gb.fit(Xtr, y_train)
 
     ensemble = VotingClassifier(
         estimators=[("xgb", xgb), ("rf", rf), ("gb", gb)],
-        voting="soft", weights=[3, 2, 1],
+        voting="soft", 
+        weights=[3, 2, 1],
     )
     ensemble.fit(Xtr, y_train)
+
 
     # 4-Fold Block Walk-Forward Cross-Validation
     wf_scores = []
