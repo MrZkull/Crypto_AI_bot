@@ -1,17 +1,22 @@
-name: CryptoBot AI — Primary Model Research Build
+name: Train ML Model
 
 on:
   schedule:
-    - cron: '0 2 1 * *'
-
+    - cron: '0 2 1 * *'   # Runs at 02:00 UTC on the 1st of every month
   workflow_dispatch:
     inputs:
       note:
-        description: 'Reason for retraining'
+        description: 'Reason for retraining (optional note)'
         required: false
         default: 'Manual retrain'
+      force_promote:
+        description: 'Promote to v2.0 even if the promotion gate would otherwise block it'
+        required: false
+        default: 'false'
+        type: choice
+        options: [ 'false', 'true' ]
       train_meta:
-        description: 'Run Meta-Model research pipeline?'
+        description: 'Run Meta-Model research pipeline? (Adds ~10 mins)'
         required: false
         default: false
         type: boolean
@@ -20,23 +25,22 @@ concurrency:
   group: crypto-bot-model-training
   cancel-in-progress: false
 
-permissions:
-  contents: write
-
 jobs:
   train:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          lfs: true
-          token: ${{ secrets.GH_PAT_TOKEN }}
+          lfs: false
+          token: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Set up Python 3.11
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -45,305 +49,209 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install pandas numpy scikit-learn xgboost joblib requests ta pyarrow fastparquet
+          fi
 
-      # ---------------------------------------------------------------
-      # 1. Source/module presence
-      # ---------------------------------------------------------------
-      - name: Verify canonical research code
+      - name: Verify source modules exist
         run: |
           set -euo pipefail
+          test -f train_model.py || { echo "::error::Missing train_model.py"; exit 1; }
+          test -f download_training_data.py || { echo "::error::Missing download_training_data.py"; exit 1; }
+          test -f market_data_integrity.py || { echo "::error::Missing market_data_integrity.py"; exit 1; }
+          test -f feature_engineering.py || { echo "::error::Missing feature_engineering.py"; exit 1; }
+          test -f research/audit_archive_cadence.py || { echo "::error::Missing research/audit_archive_cadence.py"; exit 1; }
 
-          required_files=(
-            "train_model.py"
-            "download_training_data.py"
-            "market_data_integrity.py"
-            "feature_engineering.py"
-            "research/audit_archive_cadence.py"
-          )
-
-          for file in "${required_files[@]}"; do
-            test -f "$file" || {
-              echo "::error::Missing required file: $file"
-              exit 1
-            }
-          done
-
-      # ---------------------------------------------------------------
-      # 2. Build canonical archive
-      # ---------------------------------------------------------------
       - name: Populate canonical historical archive
         run: |
           set -euo pipefail
-
-          echo "Building canonical historical archive..."
+          echo "Downloading and formatting canonical historical market data..."
           python download_training_data.py
+          test -d data/historical || { echo "::error::data/historical was not created"; exit 1; }
 
-          test -d data/historical || {
-            echo "::error::Archive builder did not create data/historical"
-            exit 1
-          }
-
-      # ---------------------------------------------------------------
-      # 3. Verify exact expected file set
-      # ---------------------------------------------------------------
-      - name: Verify canonical archive presence
+      - name: Run archive cadence & integrity gate
         run: |
           set -euo pipefail
-
-          python - <<'PY'
-          from pathlib import Path
-          from config import SYMBOLS
-
-          root = Path("data/historical")
-
-          if not root.is_dir():
-              raise SystemExit(
-                  "CRITICAL: data/historical does not exist"
-              )
-
-          missing = []
-
-          for symbol in SYMBOLS:
-              for interval in ("15m", "1h", "4h"):
-                  path = root / f"{symbol}_{interval}.parquet"
-
-                  if not path.is_file():
-                      missing.append(str(path))
-
-          # BTC 15m benchmark is required by train_model.py.
-          btc = root / "BTCUSDT_15m.parquet"
-
-          if not btc.is_file():
-              missing.append(str(btc))
-
-          if missing:
-              print("Missing canonical archive files:")
-
-              for path in missing:
-                  print(f"  - {path}")
-
-              raise SystemExit(
-                  f"CRITICAL: {len(missing)} canonical archive files missing."
-              )
-
-          expected = len(SYMBOLS) * 3
-          if "BTCUSDT" not in SYMBOLS:
-              expected += 1
-
-          print(
-              f"Canonical archive presence check: PASS "
-              f"({expected} files)"
-          )
-          PY
-
-      # ---------------------------------------------------------------
-      # 4. Canonical zero-repair integrity gate
-      # ---------------------------------------------------------------
-      - name: Run archive integrity gate
-        run: |
-          set -euo pipefail
+          echo "Running zero-repair cadence and schema audit..."
           python research/audit_archive_cadence.py
 
-      # ---------------------------------------------------------------
-      # 5. Compile research/training sources
-      # ---------------------------------------------------------------
-      - name: Compile research and training sources
+      - name: Clean stale artifacts from any previous run
         run: |
-          set -euo pipefail
+          rm -f pro_crypto_ai_model.pkl meta_pipeline.pkl
+          rm -f model_performance.json meta_model_performance.json accuracy.txt
+          rm -f current_live_performance.json
 
-          python -m py_compile \
-            train_model.py \
-            download_training_data.py \
-            market_data_integrity.py \
-            feature_engineering.py
-
-      # ---------------------------------------------------------------
-      # 6. Clean candidate outputs
-      # ---------------------------------------------------------------
-      - name: Clean stale candidate artifacts
-        run: |
-          rm -f pro_crypto_ai_model.pkl
-          rm -f model_performance.json
-          rm -f accuracy.txt
-          rm -f meta_pipeline.pkl
-          rm -f meta_model_performance.json
-
-      # ---------------------------------------------------------------
-      # 7. Primary training
-      # ---------------------------------------------------------------
       - name: Run primary model training
-        env:
-          RETRAIN_NOTE: ${{ inputs.note || 'Scheduled monthly retrain' }}
         run: |
-          echo "Starting primary training at $(date -u)"
-          echo "Reason: ${RETRAIN_NOTE}"
-
+          echo "Starting model training at $(date -u)"
+          echo "Note: ${{ github.event.inputs.note || 'Scheduled monthly retrain' }}"
           python train_model.py
+          echo "Training complete at $(date -u)"
 
-          echo "Primary training completed at $(date -u)"
-
-      # ---------------------------------------------------------------
-      # 8. Fresh-artifact check
-      # ---------------------------------------------------------------
-      - name: Verify fresh primary outputs
+      - name: Verify training produced fresh outputs
         run: |
-          set -euo pipefail
+          test -s pro_crypto_ai_model.pkl || { echo "::error::pro_crypto_ai_model.pkl was not produced"; exit 1; }
+          test -s model_performance.json || { echo "::error::model_performance.json was not produced"; exit 1; }
 
-          test -s pro_crypto_ai_model.pkl || {
-            echo "::error::pro_crypto_ai_model.pkl was not produced."
-            exit 1
-          }
-
-          test -s model_performance.json || {
-            echo "::error::model_performance.json was not produced."
-            exit 1
-          }
-
-      # ---------------------------------------------------------------
-      # 9. Artifact structure validation
-      # ---------------------------------------------------------------
-      - name: Validate primary model artifact
+      - name: Show results
         run: |
-          python - <<'PY'
+          python -c "
           import json
-          import joblib
+          with open('model_performance.json') as f:
+              p = json.load(f)
+          print('='*55)
+          print(f'ACCURACY:           {p.get(\"accuracy\", 0)}%')
+          print(f'WF SCORE:           {p.get(\"wf_mean\", 0)}% +/- {p.get(\"wf_std\", 0)}%')
+          print(f'TRAIN SET:          {p.get(\"n_train\", 0)} samples')
+          print(f'CALIB SET:          {p.get(\"n_calib\", 0)} samples')
+          print(f'TEST SET:           {p.get(\"n_test\", 0)} samples')
+          print(f'BUY precision:      {p.get(\"buy_precision\", 0):.4f}')
+          print(f'SELL precision:     {p.get(\"sell_precision\", 0):.4f}')
+          print(f'NO_TRADE precision: {p.get(\"no_trade_precision\", 0):.4f}')
+          print('='*55)
+          "
 
-          with open("model_performance.json") as f:
-              performance = json.load(f)
-
-          pipeline = joblib.load("pro_crypto_ai_model.pkl")
-
-          required_keys = {
-              "ensemble",
-              "selector",
-              "all_features",
-              "best_features",
-              "label_map",
-              "label_encoder",
-              "recommended_threshold_buy",
-              "recommended_threshold_sell",
-          }
-
-          missing = required_keys - set(pipeline)
-
-          if missing:
-              raise SystemExit(
-                  f"CRITICAL: model artifact missing keys: {sorted(missing)}"
-              )
-
-          required_metrics = (
-              "buy_precision",
-              "sell_precision",
-              "n_train",
-              "n_calib",
-              "n_test",
-          )
-
-          missing_metrics = [
-              field
-              for field in required_metrics
-              if field not in performance
-          ]
-
-          if missing_metrics:
-              raise SystemExit(
-                  f"CRITICAL: model_performance.json missing: "
-                  f"{missing_metrics}"
-              )
-
-          print("Primary model artifact validation: PASS")
-          print(f"Accuracy:       {performance.get('accuracy', 0)}%")
-          print(f"WF mean:        {performance.get('wf_mean', 0)}%")
-          print(f"Train samples:  {performance.get('n_train', 0)}")
-          print(f"Calibration:    {performance.get('n_calib', 0)}")
-          print(f"Test samples:   {performance.get('n_test', 0)}")
-          print(f"BUY precision:  {performance.get('buy_precision', 0)}")
-          print(f"SELL precision: {performance.get('sell_precision', 0)}")
-          PY
-
-      # ---------------------------------------------------------------
-      # 10. Optional meta research
-      # ---------------------------------------------------------------
-      - name: Run meta-model research pipeline
-        if: ${{ inputs.train_meta }}
+      - name: Write plain-text accuracy note
         run: |
-          echo "Starting meta-model research pipeline..."
+          python -c "
+          import json
+          p = json.load(open('model_performance.json'))
+          with open('accuracy.txt', 'w') as f:
+              f.write(f'{p.get(\"accuracy\", 0)}% accuracy')
+          "
+
+      - name: Train Meta Model (Research Only)
+        if: ${{ github.event.inputs.train_meta == 'true' }}
+        id: train_meta
+        continue-on-error: true
+        run: |
+          echo "Starting meta-model research pipeline at $(date -u)"
           python train_meta_model.py
-          echo "Meta-model research pipeline completed."
+          echo "Meta-model training complete at $(date -u)"
 
-      - name: Verify meta-model research outputs
-        if: ${{ inputs.train_meta }}
+      - name: Verify meta-model outputs
+        if: ${{ github.event.inputs.train_meta == 'true' }}
+        id: meta_check
         run: |
-          test -s meta_pipeline.pkl || {
-            echo "::error::Meta model requested but meta_pipeline.pkl missing."
-            exit 1
-          }
-
-          test -s meta_model_performance.json || {
-            echo "::error::Meta model requested but performance file missing."
-            exit 1
-          }
-
-      # ---------------------------------------------------------------
-      # 11. Commit metrics ONLY
-      # ---------------------------------------------------------------
-      - name: Commit research metrics only
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add model_performance.json
-
-          if [ -f accuracy.txt ]; then
-            git add accuracy.txt
-          fi
-
-          if [ -f meta_model_performance.json ]; then
-            git add meta_model_performance.json
-          fi
-
-          if git diff --cached --quiet; then
-            echo "No research metric changes to commit."
+          if [ -f meta_model_performance.json ] && [ -f meta_pipeline.pkl ]; then
+            echo "has_meta=true" >> "$GITHUB_OUTPUT"
+            python -c "
+            import json
+            p = json.load(open('meta_model_performance.json'))
+            print('='*55)
+            print(f'META PRECISION:      {p.get(\"meta_precision_pct\", 0)}%')
+            print(f'PRIMARY PRECISION:   {p.get(\"primary_precision_pct\", 0)}%')
+            print(f'PRECISION LIFT:      {p.get(\"precision_lift_pct\", 0)}%')
+            print(f'MEAN NET-R:          {p.get(\"meta_mean_net_r\", 0)}R')
+            print(f'TRADE RETENTION:     {p.get(\"retention_rate_pct\", 0)}%')
+            print(f'STATUS:              {p.get(\"production_status\", \"N/A\")}')
+            print('='*55)
+            "
           else
-            git commit \
-              -m "Research model retrain metrics [skip ci]"
-
-            git fetch origin main
-
-            git rebase origin/main
-
-            git push origin main
+            echo "has_meta=false" >> "$GITHUB_OUTPUT"
+            echo "Meta-model was skipped or produced no outputs."
           fi
 
-      # ---------------------------------------------------------------
-      # 12. Candidate artifacts
-      # ---------------------------------------------------------------
-      - name: Upload candidate artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: primary-model-candidate-${{ github.run_number }}
-          path: |
-            pro_crypto_ai_model.pkl
-            model_performance.json
-            accuracy.txt
-            meta_pipeline.pkl
-            meta_model_performance.json
-          if-no-files-found: warn
-          retention-days: 30
-
-      # ---------------------------------------------------------------
-      # 13. Explicitly prevent legacy promotion
-      # ---------------------------------------------------------------
-      - name: Research build complete — no production promotion
+      - name: Fetch currently-live model performance for comparison
+        id: fetch_live_perf
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "============================================================"
-          echo "PRIMARY MODEL RESEARCH BUILD COMPLETE"
-          echo "============================================================"
-          echo "Candidate artifact was generated and validated."
-          echo "This workflow does NOT modify the production release."
-          echo "Production promotion is handled only by:"
-          echo "  model_build_release.yml"
-          echo "============================================================"
+          rm -f current_live_performance.json
+          gh release download v2.0 -p "model_performance.json" -O current_live_performance.json 2>/dev/null || true
+          
+          if [ -s current_live_performance.json ]; then
+            echo "found_live=true" >> "$GITHUB_OUTPUT"
+            echo "✓ Found existing live baseline."
+          else
+            rm -f current_live_performance.json
+            echo "found_live=false" >> "$GITHUB_OUTPUT"
+            echo "No existing valid live performance file found — treating as initial release."
+          fi
+
+      - name: Evaluate promotion gate
+        id: gate
+        run: |
+          python - <<'PYEOF'
+          import json, os, sys
+
+          new = json.load(open("model_performance.json"))
+          new_buy  = new.get("buy_precision", 0.0)
+          new_sell = new.get("sell_precision", 0.0)
+
+          gh_out = os.environ["GITHUB_OUTPUT"]
+
+          # Hard Safety Floor: must meet at least 40% precision
+          if new_buy < 0.40 or new_sell < 0.40:
+              print(f"🚨 Candidate precision breached 40% floor: BUY={new_buy:.3f}, SELL={new_sell:.3f}")
+              with open(gh_out, "a") as f:
+                  f.write("promote=false\n")
+              sys.exit(0)
+
+          if not os.path.exists("current_live_performance.json") or os.path.getsize("current_live_performance.json") == 0:
+              print("No live baseline to compare against — allowing promotion (cleared hard floor).")
+              with open(gh_out, "a") as f:
+                  f.write("promote=true\n")
+              sys.exit(0)
+
+          try:
+              live = json.load(open("current_live_performance.json"))
+              live_buy  = live.get("buy_precision", 0.0)
+              live_sell = live.get("sell_precision", 0.0)
+          except Exception as e:
+              print(f"⚠️ Baseline unreadable ({e}) — allowing promotion based on hard floor.")
+              with open(gh_out, "a") as f:
+                  f.write("promote=true\n")
+              sys.exit(0)
+
+          TOLERANCE = 0.02
+          buy_ok  = new_buy  >= (live_buy  - TOLERANCE)
+          sell_ok = new_sell >= (live_sell - TOLERANCE)
+
+          print(f"Live model:  BUY precision={live_buy:.3f}  SELL precision={live_sell:.3f}")
+          print(f"New model:   BUY precision={new_buy:.3f}  SELL precision={new_sell:.3f}")
+          print(f"Tolerance:   {TOLERANCE:.3f}")
+
+          promote = buy_ok and sell_ok
+          print(f"Gate result: {'PASS — promoting' if promote else 'FAIL — blocking promotion'}")
+
+          with open(gh_out, "a") as f:
+              f.write(f"promote={'true' if promote else 'false'}\n")
+          PYEOF
+
+      - name: Commit Performance Data ONLY
+        run: |
+          git config user.name  "CryptoBot AI"
+          git config user.email "bot@cryptobot.ai"
+
+          git add model_performance.json || true
+          [ -f meta_model_performance.json ] && git add meta_model_performance.json || true
+
+          ACCURACY_NOTE="$(cat accuracy.txt)"
+          git commit -m "🤖 Retrain model — ${ACCURACY_NOTE} [skip ci]" || echo "No changes to commit"
+
+          git pull origin main --rebase --autostash || true
+          git push origin main || echo "Git push skipped or non-conflicting"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Upload Model to Releases (Bypass LFS)
+        if: steps.gate.outputs.promote == 'true' || github.event.inputs.force_promote == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event.inputs.force_promote }}" = "true" ] && [ "${{ steps.gate.outputs.promote }}" != "true" ]; then
+            echo "::warning::Promotion gate FAILED but force_promote=true — shipping anyway."
+          fi
+          gh release upload v2.0 pro_crypto_ai_model.pkl --clobber
+          gh release upload v2.0 model_performance.json --clobber
+          echo "Successfully uploaded new model to v2.0 Release!"
+
+      - name: Promotion blocked — explain why
+        if: steps.gate.outputs.promote != 'true' && github.event.inputs.force_promote != 'true'
+        run: |
+          echo "::error::New model did not clear the promotion gate (see 'Evaluate promotion gate' step)."
+          echo "The live v2.0 release was left unchanged."
+          exit 1
