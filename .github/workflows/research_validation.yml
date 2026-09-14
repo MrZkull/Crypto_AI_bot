@@ -1,0 +1,101 @@
+name: CryptoBot AI — Research Validation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '*.py'
+      - 'research/**'
+      - 'tests/**'
+      - '.github/workflows/research_validation.yml'
+      - 'requirements.txt'
+      - 'data/historical/**'
+  workflow_dispatch:
+
+concurrency:
+  group: crypto-bot-research-validation
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python sources
+        run: |
+          python -m py_compile             config.py             feature_engineering.py             market_data_integrity.py             deribit_client.py             trade_executor.py             train_model.py             train_meta_model.py             prediction_auditor.py             failure_taxonomy.py             smart_scheduler.py             dashboard.py
+
+      - name: Run market-data integrity regression tests
+        run: |
+          if [ -f tests/test_market_data_integrity.py ]; then
+            python -m unittest discover -s tests -p 'test_*.py' -v
+          else
+            echo "CRITICAL: tests/test_market_data_integrity.py is missing."
+            exit 1
+          fi
+
+      - name: Run Deribit client regression tests
+        run: |
+          if [ -f test_deribit_client.py ]; then
+            python -m unittest test_deribit_client.py -v
+          elif [ -f tests/test_deribit_client.py ]; then
+            python -m unittest tests/test_deribit_client.py -v
+          else
+            echo "CRITICAL: Deribit client regression tests are missing."
+            exit 1
+          fi
+
+      - name: Run canonical archive audit
+        run: |
+          test -f research/audit_archive_cadence.py
+          python research/audit_archive_cadence.py
+
+      - name: Verify critical integrity symbols
+        run: |
+          python - <<'PY'
+          from market_data_integrity import interval_ms, sanitize_closed_candles, merge_completed_htf
+          from train_model import make_targets, temporal_symbol_split
+          from train_meta_model import evaluate_gate_10
+          print("Critical research integrity imports: PASS")
+          print("15m:", interval_ms("15m"))
+          print("1h :", interval_ms("1h"))
+          print("4h :", interval_ms("4h"))
+          PY
+
+      - name: Upload validation summary
+        if: always()
+        run: |
+          {
+            echo "Commit: $GITHUB_SHA"
+            echo "Run: $GITHUB_RUN_ID"
+            echo "Research validation completed."
+          } > research_validation_summary.txt
+
+      - name: Store validation summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-validation-${{ github.run_number }}
+          path: research_validation_summary.txt
+          retention-days: 14
