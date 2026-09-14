@@ -1,7 +1,7 @@
 # trade_executor.py — V4.4: Canonical Execution Engine, Native stop_market,
 # In-Memory Pipeline Caching, Dust-Inclusive Headroom, & Authoritative Verification
 
-import os, json, time, logging, requests, joblib, base64, math
+import os, json, time, logging, requests, joblib, base64, math, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -114,7 +114,6 @@ def get_symbol_overrides(symbol: str) -> dict:
     return overrides.get(symbol, {}) if isinstance(overrides, dict) else {}
 
 def get_pipelines():
-    """Caches primary and meta-model pipelines in memory at startup."""
     global _CACHED_PRIMARY_MODEL, _CACHED_META_MODEL
     if _CACHED_PRIMARY_MODEL is None and Path(MODEL_FILE).exists():
         try:
@@ -133,7 +132,6 @@ def get_pipelines():
     return _CACHED_PRIMARY_MODEL, _CACHED_META_MODEL
 
 def _evaluate_meta_shadow(row: pd.Series, primary_side: str, primary_conf: float, meta_pipeline: dict = None) -> dict:
-    """Evaluates meta-model in non-blocking shadow mode with dynamic positive-class resolution."""
     if meta_pipeline is None:
         return {"meta_status": "UNAVAILABLE", "meta_prob": None, "meta_verdict": None, "would_trade_with_meta": None, "meta_threshold": None}
 
@@ -183,7 +181,7 @@ def compute_ensemble_disagreement(pipeline, x_selected_row: np.ndarray) -> dict:
         if not named:
             raise ValueError("named_estimators_ is empty — unexpected VotingClassifier state")
         probas = np.array([est.predict_proba(x_selected_row.reshape(1, -1))[0]
-                            for _, est in named.items()])
+                           for _, est in named.items()])
         disagreement = float(np.mean(np.std(probas, axis=0)))
         return {"ensemble_disagreement": round(disagreement, 4),
                 "high_disagreement": disagreement > HIGH_DISAGREEMENT_THRESHOLD}
@@ -504,7 +502,6 @@ def _get_daily_trade_count() -> int:
     return sum(1 for h in hist if h.get("opened_at", "")[:10] == today and h.get("close_reason") != "Ghost — PnL unrecoverable")
 
 def _check_funding_rate(deribit: DeribitClient, symbol: str, signal: str) -> float:
-    """Fail-closed funding rate gate. Missing data yields 0.0 multiplier."""
     try:
         rate = deribit.get_funding_rate(symbol)
         if rate is None or not math.isfinite(rate):
@@ -559,7 +556,6 @@ def _place_tp_with_fallback(deribit: DeribitClient, symbol: str, side: str, qty:
             log.warning(f"  {label} {symbol}: actual position {actual_pos} < min lot {min_lot} — skip")
             return ""
 
-        # ── 1. ADOPT EXISTING RESTING ORDER (Prevent Duplicate 11030) ──
         open_orders = deribit.get_open_orders(symbol)
         target_side = side.lower()
         tick = deribit.get_tick_size(symbol, price=price)
@@ -579,7 +575,6 @@ def _place_tp_with_fallback(deribit: DeribitClient, symbol: str, side: str, qty:
                         return oid
                 existing_reduce_qty += o_qty
 
-        # ── 2. CLAMP TO REMAINING UNRESERVED CAPACITY ──
         unreserved_pos = max(0.0, actual_pos - existing_reduce_qty)
         if unreserved_pos < min_lot:
             log.warning(f"  {label} {symbol}: unreserved capacity ({unreserved_pos:.4f}) < min lot ({min_lot}) — skip")
@@ -1027,7 +1022,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
 
     min_lot = deribit.get_min_trade_amount(symbol)
 
-    # ── DUST GUARD: Sub-lot remnants (< min_lot) will NOT block valid setups ──
     try:
         real_pos = abs(deribit.get_position_size(symbol))
     except Exception as e:
@@ -1040,7 +1034,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     elif real_pos > 0:
         log.info(f"  ℹ️ {symbol}: sub-lot residual dust ({real_pos} < {min_lot}) detected — bypassing position guard")
 
-    # ── PORTFOLIO RISK HEADROOM (Including Residual Dust) ──
     existing_risk_usd = sum(float(t.get("risk_usd", 0.0)) for t in trades.values() if not t.get("closed", False))
     if 0 < real_pos < min_lot:
         existing_risk_usd += (real_pos * atr * effective_stop_mult)
@@ -1237,7 +1230,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         tp2  = recomputed_tp2
         actual_risk_usd = round(abs(actual_entry - stop) * total_q, 2)
 
-        # ── POST-FILL POSITION SIZING (Partial-Fill Safe) ──
         sl_qty = total_q
         try:
             actual_pos_size = abs(deribit.get_position_size(symbol))
@@ -1251,7 +1243,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         except Exception as pos_e:
             log.debug(f"  Position size check: {pos_e}")
 
-        # ── NATIVE STOP_MARKET PLACEMENT & VERIFICATION ──
         sl_placed = False
         try:
             sl_res = deribit.place_stop_loss(symbol, sl_side, sl_qty, stop_price=stop)
@@ -1271,7 +1262,6 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 log.critical(f"  🚨🚨 {symbol}: Emergency flatten failed: {fe}")
             return False
 
-        # Place Take-Profit Brackets
         order_plan = [("TP1", qty_tp1, tp1, "tp1")]
         if qty_tp2 > 0:
             order_plan.append(("TP2", qty_tp2, tp2, "tp2"))
@@ -1946,7 +1936,6 @@ def _run_execution_scan_locked():
     max_open_trades = int(getattr(config, "MAX_OPEN_TRADES", 8))
     max_same_dir    = int(getattr(config, "MAX_SAME_DIRECTION", 4))
 
-    # ── CLAMP: Floor model thresholds against config.MIN_CONFIDENCE ──
     config_floor = float(getattr(config, "MIN_CONFIDENCE", 52.0))
     rec_buy  = max(config_floor, float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.40))) * 100.0)
     rec_sell = max(config_floor, float(pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.45))) * 100.0)
@@ -1987,7 +1976,6 @@ def _run_execution_scan_locked():
         if abs(size) <= 0.0001:
             continue
 
-        # ── SCENARIO E2: ADOPT EXISTING EXCHANGE STOP LOSS TO PREVENT DUPLICATES ──
         if sym in tracked_symbols and not trades[sym].get("closed", False):
             open_orders = deribit.get_open_orders(sym)
             existing_stop = None
@@ -2067,6 +2055,15 @@ def _run_execution_scan_locked():
 
     save_balance(deribit)
     log.info(f"\n{'═'*56}\nDONE — {found} signal(s) | ${balance:.2f}\n{'═'*56}")
+
+    # ──────────────────────────────────────────────────────────────
+    # Trigger Prospective Candidate Scanner (Asynchronous)
+    # ──────────────────────────────────────────────────────────────
+    try:
+        if Path("candidate_model.pkl").exists() and Path("candidate_manifest.json").exists():
+            subprocess.Popen([sys.executable, "candidate_scanner.py"])
+    except Exception as e:
+        log.warning(f"Failed to trigger prospective candidate scanner: {e}")
 
     save_json(SCAN_STATUS_FILE, {
         "phase": "completed", 
