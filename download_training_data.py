@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-download_training_data.py — Canonical Historical Parquet Downloader
+download_training_data.py — Canonical Historical Parquet Downloader (Zero-Repair Enforcement)
 
 Invariants:
-1. Bounded backward pagination (prevents infinite loop 429 timeouts in CI)
-2. Guarantees BTCUSDT_15m benchmark generation
-3. Enforces canonical inclusive timestamps: close_time = open_time + interval_ms - 1
-4. Strict OHLCV candle physics validation
-5. Outputs to data/historical/{SYMBOL}_{15m,1h,4h}.parquet
+1. Bounded backward pagination (prevents 429 timeouts and memory exhaustion).
+2. Guarantees BTCUSDT_15m benchmark generation alongside all configured SYMBOLS.
+3. Zero-repair timestamp invariant: exchange close_time must strictly equal open_time + interval_ms - 1.
+4. Fail-closed candle physics: non-positive prices, negative volumes, or malformed bounds abort the build.
+5. Cadence verification: missing interior bars cause immediate process termination.
 """
 
-import os
 import sys
 import time
 from pathlib import Path
@@ -55,6 +54,7 @@ def _fetch_klines_batch(session: requests.Session, symbol: str, interval: str, e
     if end_time_ms is not None:
         params["endTime"] = end_time_ms
 
+    last_err = None
     for attempt in range(RETRY_COUNT):
         for endpoint in BINANCE_ENDPOINTS:
             try:
@@ -63,10 +63,13 @@ def _fetch_klines_batch(session: requests.Session, symbol: str, interval: str, e
                     data = r.json()
                     if isinstance(data, list):
                         return data
-            except Exception:
-                pass
+                elif r.status_code == 429:
+                    time.sleep(5.0 * (attempt + 1))
+            except Exception as e:
+                last_err = e
         time.sleep(1.0 * (attempt + 1))
-    return []
+
+    raise RuntimeError(f"Failed fetching {symbol} {interval} batch (endTime={end_time_ms}): {last_err}")
 
 
 def _raw_to_frame(raw: list, interval: str) -> pd.DataFrame:
@@ -79,30 +82,50 @@ def _raw_to_frame(raw: list, interval: str) -> pd.DataFrame:
 
     for k in raw:
         if len(k) < 7:
-            continue
-        try:
-            o_time = int(k[0])
-            c_time = int(k[6])
-            
-            # Canonical standard: verify or map to inclusive ms
-            computed_c_time = o_time + expected_duration
-            if abs(c_time - computed_c_time) > 1:
-                c_time = computed_c_time
+            raise ValueError(f"Malformed kline payload: bar length {len(k)} < 7")
 
-            taker_vol = float(k[9]) if len(k) > 9 else float(k[5]) * 0.5
+        o_time = int(k[0])
+        c_time = int(k[6])
 
-            rows.append({
-                "open_time": o_time,
-                "close_time": c_time,
-                "open": float(k[1]),
-                "high": float(k[2]),
-                "low": float(k[3]),
-                "close": float(k[4]),
-                "volume": float(k[5]),
-                "taker_buy_base_vol": taker_vol,
-            })
-        except (ValueError, TypeError, IndexError):
-            continue
+        # Zero-repair invariant: exchange timestamp must strictly match inclusive standard
+        expected_c_time = o_time + expected_duration
+        if c_time != expected_c_time:
+            raise ValueError(
+                f"FATAL: Timestamp convention mismatch on {interval} at open={o_time}. "
+                f"Exchange close_time={c_time} != expected={expected_c_time} (diff={c_time - expected_c_time}ms). "
+                f"Silent modification prohibited by Zero-Repair Policy."
+            )
+
+        open_p  = float(k[1])
+        high_p  = float(k[2])
+        low_p   = float(k[3])
+        close_p = float(k[4])
+        volume  = float(k[5])
+        taker_vol = float(k[9]) if len(k) > 9 else volume * 0.5
+
+        # Fail-closed physical candle physics
+        if not (np.isfinite(open_p) and np.isfinite(high_p) and np.isfinite(low_p) and np.isfinite(close_p) and np.isfinite(volume)):
+            raise ValueError(f"FATAL: Non-finite OHLCV value at open_time={o_time}")
+
+        if open_p <= 0 or high_p <= 0 or low_p <= 0 or close_p <= 0:
+            raise ValueError(f"FATAL: Non-positive price at open_time={o_time}")
+
+        if volume < 0:
+            raise ValueError(f"FATAL: Negative volume at open_time={o_time}")
+
+        if high_p < max(open_p, close_p) or low_p > min(open_p, close_p):
+            raise ValueError(f"FATAL: Structural candle violation at open_time={o_time}: H={high_p}, L={low_p}, O={open_p}, C={close_p}")
+
+        rows.append({
+            "open_time": o_time,
+            "close_time": c_time,
+            "open": open_p,
+            "high": high_p,
+            "low": low_p,
+            "close": close_p,
+            "volume": volume,
+            "taker_buy_base_vol": taker_vol,
+        })
 
     return pd.DataFrame(rows, columns=REQUIRED_COLUMNS)
 
@@ -111,8 +134,8 @@ def fetch_symbol_history(session: requests.Session, symbol: str, interval: str, 
     batches = []
     cadence = interval_ms(interval)
     now_ms = int(time.time() * 1000)
-    
-    # Anchor to the start of current candle to exclude forming bars
+
+    # Point-in-time boundary: strictly exclude currently-forming candle
     current_open = (now_ms // cadence) * cadence
     end_time_ms = current_open - 1
     total_fetched = 0
@@ -137,14 +160,23 @@ def fetch_symbol_history(session: requests.Session, symbol: str, interval: str, 
         time.sleep(BATCH_SLEEP_SECONDS)
 
     if not batches:
-        return pd.DataFrame(columns=REQUIRED_COLUMNS)
+        raise ValueError(f"Zero valid kline batches fetched for {symbol} {interval}")
 
     combined = pd.concat(batches, ignore_index=True)
     combined = combined.drop_duplicates(subset=["open_time"]).sort_values("open_time").reset_index(drop=True)
 
-    # Sanitize closed bars
+    # Verify cadence continuity
+    diffs = combined["open_time"].diff().dropna()
+    gaps = diffs[diffs != cadence]
+    if not gaps.empty:
+        raise ValueError(f"FATAL: Cadence continuity failure for {symbol} {interval}: {len(gaps)} gaps detected.")
+
     clean_rows = sanitize_closed_candles(combined, interval_ms_value=cadence, observation_time_ms=now_ms)
     clean_df = pd.DataFrame(clean_rows)
+
+    if len(clean_df) != len(combined):
+        raise ValueError(f"FATAL: Sanitizer dropped {len(combined) - len(clean_df)} bars. Zero-repair violation.")
+
     return clean_df.reset_index(drop=True)
 
 
@@ -153,7 +185,7 @@ def build_canonical_archive():
     session = requests.Session()
     session.headers.update({"User-Agent": "CryptoBot-AI/Canonical-Archive-Downloader"})
 
-    # Ensure benchmark BTC is downloaded
+    # Invariant: Guarantee BTC benchmark archive is populated for relative-strength features
     download_targets = list(dict.fromkeys(list(SYMBOLS) + ["BTCUSDT"]))
     total_tasks = len(download_targets) * len(INTERVALS)
     completed = 0
@@ -164,31 +196,18 @@ def build_canonical_archive():
     print(f"Target Universe: {len(download_targets)} symbols | Intervals: {INTERVALS}")
     print(f"Target Directory: {HISTORICAL_DIR}\n")
 
-    failures = 0
     for symbol in download_targets:
         for interval in INTERVALS:
             completed += 1
             out_file = HISTORICAL_DIR / f"{symbol}_{interval}.parquet"
-            print(f"[{completed}/{total_tasks}] {symbol:<10} | {interval:<3} ...", end=" ", flush=True)
+            print(f"[{completed:>2}/{total_tasks}] {symbol:<10} | {interval:<3} ...", end=" ", flush=True)
 
-            try:
-                df = fetch_symbol_history(session, symbol, interval, target_candles=TARGET_CANDLES)
-                if df.empty or len(df) < 100:
-                    print(f"❌ FAILED (Insufficient candles: {len(df)})")
-                    failures += 1
-                    continue
-
-                df.to_parquet(out_file, index=False)
-                print(f"✓ Wrote {len(df):>6,} candles")
-            except Exception as e:
-                print(f"❌ ERROR: {e}")
-                failures += 1
+            df = fetch_symbol_history(session, symbol, interval, target_candles=TARGET_CANDLES)
+            df.to_parquet(out_file, index=False)
+            print(f"✓ {len(df):>6,} candles")
 
     print("-" * 65)
-    if failures > 0:
-        print(f"🚨 Archive creation completed with {failures} failures.")
-        sys.exit(1)
-    print("✅ Canonical historical archive successfully populated.")
+    print("✅ Canonical historical archive successfully populated with zero modifications.")
 
 
 if __name__ == "__main__":
