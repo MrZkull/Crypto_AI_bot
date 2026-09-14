@@ -215,14 +215,19 @@ def evaluate_gate_10(
             )
         df["meta_prob"] = test_proba_arr
 
-    if "is_primary_eligible" in df.columns:
+    is_production_mode = realized_returns_by_id is not None
+    if is_production_mode:
+        if "is_primary_eligible" not in df.columns:
+            raise ValueError(
+                "CRITICAL: Production Gate 10 requires is_primary_eligible, "
+                "representing the full live primary-entry policy."
+            )
         df["primary_selected"] = df["is_primary_eligible"].astype(bool)
     else:
         df["primary_selected"] = df["primary_conf"] >= primary_threshold
 
     df["meta_selected"] = df["primary_selected"] & (df["meta_prob"] >= meta_threshold)
 
-    is_production_mode = realized_returns_by_id is not None
     eval_mode = "PRODUCTION_REALIZED_RETURNS" if is_production_mode else "RESEARCH_SYNTHETIC_PAYOFF"
 
     if is_production_mode:
@@ -344,6 +349,7 @@ def evaluate_gate_10(
     production_candidate_eligible = is_production_mode and (ci_lower > 0.0)
     return {
         "production_candidate_eligible": production_candidate_eligible,
+        "passed_production_gate": production_candidate_eligible,
         "passed_research_gate": True,
         "evaluation_mode": eval_mode,
         "bootstrap_method": "24H_CALENDAR_CLUSTER_CONSERVATIVE" if is_production_mode else "IID_RESEARCH",
@@ -437,6 +443,10 @@ def train_meta_model():
             best_score, best_thresh = score, thresh
 
     primary_baseline_threshold = float(primary_pipeline.get("recommended_threshold", 0.45))
+    # No realized execution-return map is available in this training job.
+    # Therefore Gate 10 is intentionally RESEARCH_ONLY here and cannot promote
+    # the meta-model to production. A production Gate 10 run must supply
+    # pred_id-keyed realized returns plus the full live primary eligibility mask.
     gate10_result = evaluate_gate_10(
         primary_test_pred=primary_test_pred,
         test_proba=test_proba,
