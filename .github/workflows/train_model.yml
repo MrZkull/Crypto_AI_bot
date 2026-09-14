@@ -45,9 +45,8 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
-          else
-            pip install pandas numpy scikit-learn xgboost joblib requests ta pyarrow fastparquet
           fi
+          pip install pyarrow fastparquet
 
       - name: Verify source modules exist
         run: |
