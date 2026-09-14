@@ -2061,15 +2061,6 @@ def _run_execution_scan_locked():
     save_balance(deribit)
     log.info(f"\n{'═'*56}\nDONE — {found} signal(s) | ${balance:.2f}\n{'═'*56}")
 
-    # ──────────────────────────────────────────────────────────────
-    # Trigger Prospective Candidate Scanner (Asynchronous)
-    # ──────────────────────────────────────────────────────────────
-    try:
-        if Path("candidate_model.pkl").exists() and Path("candidate_manifest.json").exists():
-            subprocess.Popen([sys.executable, "candidate_scanner.py"])
-    except Exception as e:
-        log.warning(f"Failed to trigger prospective candidate scanner: {e}")
-
     save_json(SCAN_STATUS_FILE, {
         "phase": "completed", 
         "started_at": scan_started_at, 
