@@ -33,13 +33,20 @@ def interval_ms(interval: str) -> int:
     return _INTERVAL_MS[interval]
 
 
-def sanitize_closed_candles(raw, interval_ms_value=None, observation_time_ms=None):
+def sanitize_closed_candles(
+    raw,
+    interval_ms_value=None,
+    candle_duration_ms=None,
+    observation_time_ms=None
+):
     """
     Sanitizes raw candle lists or DataFrames.
     Rejects forming candles (close_time > observation_time_ms) and physically impossible bars.
     """
     if raw is None:
         return []
+
+    duration = candle_duration_ms or interval_ms_value or 15 * 60 * 1000
 
     rows = raw.to_dict("records") if isinstance(raw, pd.DataFrame) else raw
     if isinstance(rows, dict):
@@ -52,12 +59,12 @@ def sanitize_closed_candles(raw, interval_ms_value=None, observation_time_ms=Non
         try:
             if isinstance(r, dict):
                 o = int(r["open_time"])
-                c = int(r["close_time"])
+                c = int(r.get("close_time", o + duration - 1))
                 vals = {k: float(r[k]) for k in ("open", "high", "low", "close", "volume")}
                 extra = {k: r[k] for k in r if k not in vals and k not in ("open_time", "close_time")}
             else:
                 o = int(r[0])
-                c = int(r[6])
+                c = int(r[6]) if len(r) > 6 else int(o + duration - 1)
                 vals = {
                     "open": float(r[1]),
                     "high": float(r[2]),
@@ -101,7 +108,6 @@ def sanitize_closed_candles(raw, interval_ms_value=None, observation_time_ms=Non
 
     out.sort(key=lambda x: x["open_time"])
     return out
-
 
 def sanitize_ohlcv_frame(df: pd.DataFrame, interval_ms_value=None, observation_time_ms=None) -> pd.DataFrame:
     rows = sanitize_closed_candles(df, interval_ms_value=interval_ms_value, observation_time_ms=observation_time_ms)
