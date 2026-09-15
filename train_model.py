@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# train_model.py — Canonical Parquet Rebuild Engine, EV Friction & Immutable Candidate Freezing
+# train_model.py — Canonical Parquet Rebuild Engine, Leakage Diagnostics & Provenance Freezing
 
 import os
 import sys
@@ -23,7 +23,6 @@ from xgboost import XGBClassifier
 
 # ── Scikit-Learn 1.6+ Compatibility Patch for XGBoost in VotingClassifier ──
 XGBClassifier._estimator_type = "classifier"
-
 try:
     from sklearn.utils._tags import ClassifierTags
     def _xgb_sklearn_tags(self):
@@ -38,7 +37,6 @@ try:
     XGBClassifier.__sklearn_tags__ = _xgb_sklearn_tags
 except (ImportError, AttributeError):
     pass
-    
 
 from feature_engineering import add_indicators, ALL_FEATURES, ImportanceSelector
 from market_data_integrity import sanitize_closed_candles, merge_completed_htf
@@ -88,7 +86,6 @@ NEW_FEATURES = [
     "btc_beta_20",
     "btc_rel_strength",
 ]
-# Canonical deduplication preserving column order
 FULL_FEATURES = list(dict.fromkeys(ALL_FEATURES + NEW_FEATURES))
 
 
@@ -327,6 +324,69 @@ def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int
     return X_train.iloc[keep].reset_index(drop=True), y_train[keep]
 
 
+# ── Data Integrity & Anti-Leakage Audit Suite ─────────────────────────
+
+def audit_anti_leakage(train_df: pd.DataFrame, calib_df: pd.DataFrame, test_df: pd.DataFrame, 
+                       features: list[str], y_train: np.ndarray) -> None:
+    log.info(f"\n{'='*80}")
+    log.info("ANTI-LEAKAGE & CAUSAL PROVENANCE AUDIT")
+    log.info(f"{'='*80}")
+
+    # 1. Temporal Monotonicity & Embargo Gap Check
+    t_train_max = train_df["open_time"].max()
+    t_calib_min = calib_df["open_time"].min()
+    t_calib_max = calib_df["open_time"].max()
+    t_test_min  = test_df["open_time"].min()
+
+    gap_train_calib_h = (t_calib_min - t_train_max) / (3600 * 1000)
+    gap_calib_test_h  = (t_test_min - t_calib_max) / (3600 * 1000)
+
+    log.info(f"[1] Temporal Split Isolation:")
+    log.info(f"    Train End:      {datetime.fromtimestamp(t_train_max/1000, tz=timezone.utc).isoformat()}")
+    log.info(f"    Calib Start:    {datetime.fromtimestamp(t_calib_min/1000, tz=timezone.utc).isoformat()} (Gap: {gap_train_calib_h:.1f}h)")
+    log.info(f"    Calib End:      {datetime.fromtimestamp(t_calib_max/1000, tz=timezone.utc).isoformat()}")
+    log.info(f"    Test Start:     {datetime.fromtimestamp(t_test_min/1000, tz=timezone.utc).isoformat()} (Gap: {gap_calib_test_h:.1f}h)")
+
+    if t_train_max >= t_calib_min or t_calib_max >= t_test_min:
+        raise ValueError("CRITICAL LEAKAGE: Chronological split inversion or zero embargo detected!")
+    log.info("    ✓ PASS: Strict chronological sequence confirmed across all partitions.")
+
+    # 2. Point-in-Time HTF Causality Verification
+    violations_1h = (train_df["htf1h_source_close_time"] > train_df["open_time"]).sum()
+    violations_4h = (train_df["htf4h_source_close_time"] > train_df["open_time"]).sum()
+
+    log.info(f"[2] HTF Lookahead Verification:")
+    log.info(f"    1h Lookahead Violations: {violations_1h}")
+    log.info(f"    4h Lookahead Violations: {violations_4h}")
+    if violations_1h > 0 or violations_4h > 0:
+        raise ValueError("CRITICAL LEAKAGE: Higher-timeframe source close exceeds entry candle open time!")
+    log.info("    ✓ PASS: All higher-timeframe indicators closed strictly prior to 15m entry.")
+
+    # 3. Anomaly & Suspicious Correlation Scan
+    log.info(f"[3] Feature-Target Anomaly Scan (Leakage Threshold > 0.60):")
+    high_corr_detected = False
+    corrs = []
+    for f in features:
+        if f in train_df.columns:
+            s = pd.to_numeric(train_df[f], errors="coerce").fillna(0.0)
+            corr = float(np.abs(np.corrcoef(s.values[:len(y_train)], y_train)[0, 1]))
+            if np.isnan(corr): corr = 0.0
+            corrs.append((f, corr))
+            if corr > 0.60:
+                log.warning(f"    🚨 SUSPICIOUS LEAK: Feature '{f}' correlation with target = {corr:.4f}")
+                high_corr_detected = True
+
+    top_corrs = sorted(corrs, key=lambda x: x[1], reverse=True)[:5]
+    log.info(f"    Top Feature Correlations with Target:")
+    for name, c in top_corrs:
+        log.info(f"      - {name:<22}: {c:.4f}")
+
+    if high_corr_detected:
+        raise ValueError("CRITICAL LEAKAGE: Highly correlated feature detected. Possible future leakage.")
+    log.info("    ✓ PASS: No single feature displays unnatural predictive power.")
+    log.info(f"{'='*80}\n")
+
+
 def train(ds: pd.DataFrame) -> float:
     # 1. Enforce MAX_ACTIVE_CANDIDATES = 1
     if CANDIDATE_MANIFEST.exists():
@@ -370,15 +430,18 @@ def train(ds: pd.DataFrame) -> float:
     X_test = test_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_test = le.transform(test_df["target"]) if len(test_df) > 0 else np.array([])
 
-    log.info(
-        f"Chronological Split (embargo={EMBARGO_BARS} bars): "
-        f"train={len(X_train_raw):,}  calib={len(X_calib):,}  test={len(X_test):,}"
-    )
+    # Execute Anti-Leakage Audit
+    audit_anti_leakage(train_df, calib_df, test_df, FULL_FEATURES, y_train_raw)
 
     log.info("Running feature importance scan...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train_raw, y_train_raw)
     top_idx = np.argsort(scanner.feature_importances_)[::-1]
+
+    # Verify no single feature dominates unreasonably (> 35% total importance)
+    top_imp = scanner.feature_importances_[top_idx[0]]
+    if top_imp > 0.35:
+        log.warning(f"⚠️ Warning: Feature '{FULL_FEATURES[top_idx[0]]}' carries {top_imp*100:.1f}% of total importance.")
 
     essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"]
     selected  = [f for f in essential if f in FULL_FEATURES]
@@ -401,47 +464,32 @@ def train(ds: pd.DataFrame) -> float:
     sw_asym[y_train == buy_idx]  = 2.0
     sw_asym[y_train == sell_idx] = 2.0
 
-        # ── Robust Classifier Initialization for Voting Ensemble ──
     xgb = XGBClassifier(
-        n_estimators=300, 
-        max_depth=6, 
-        learning_rate=0.03,
-        subsample=0.85, 
-        colsample_bytree=0.85, 
-        min_child_weight=3,
-        gamma=0.05, 
-        random_state=42, 
-        n_jobs=-1
+        n_estimators=300, max_depth=6, learning_rate=0.03,
+        subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
+        gamma=0.05, eval_metric="mlogloss", random_state=42, n_jobs=-1,
     )
     xgb.fit(Xtr, y_train, sample_weight=sw_asym)
 
     rf = RandomForestClassifier(
-        n_estimators=300, 
-        max_depth=12, 
-        min_samples_leaf=3,
-        max_features="sqrt", 
-        random_state=42, 
-        n_jobs=-1,
+        n_estimators=300, max_depth=12, min_samples_leaf=3,
+        max_features="sqrt", random_state=42, n_jobs=-1,
         class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
     )
     rf.fit(Xtr, y_train)
 
     gb = HistGradientBoostingClassifier(
-        max_iter=200, 
-        max_depth=5, 
-        learning_rate=0.04,
-        min_samples_leaf=3, 
-        random_state=42,
+        max_iter=200, max_depth=5, learning_rate=0.04,
+        min_samples_leaf=3, random_state=42,
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
     )
     gb.fit(Xtr, y_train)
 
     ensemble = VotingClassifier(
         estimators=[("xgb", xgb), ("rf", rf), ("gb", gb)],
-        voting="soft", 
-        weights=[3, 2, 1],
+        voting="soft", weights=[3, 2, 1],
     )
     ensemble.fit(Xtr, y_train)
-
 
     # 4-Fold Block Walk-Forward Cross-Validation
     wf_scores = []
@@ -461,7 +509,7 @@ def train(ds: pd.DataFrame) -> float:
 
     wf_mean = np.mean(wf_scores) if wf_scores else 0.0
     wf_std  = np.std(wf_scores) if wf_scores else 0.0
-    log.info(f"Walk-forward Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
+    log.info(f"Walk-forward Cross-Validation Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
 
     calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
     calibrated_ensemble.fit(Xcal, y_calib)
@@ -473,23 +521,38 @@ def train(ds: pd.DataFrame) -> float:
 
     best_thresh_buy, best_score_buy   = MIN_BUY_THRESHOLD_FLOOR, 0.0
     best_thresh_sell, best_score_sell = MIN_SELL_THRESHOLD_FLOOR, 0.0
-
     friction_r = 0.12
+
+    # ── Detailed Calibration Threshold Sweep Diagnostics ──
+    log.info(f"\n{'='*95}")
+    log.info(f"CALIBRATION THRESHOLD SWEEP (Friction={friction_r}R | Target={ATR_TARGET1_MULT}R | Stop={ATR_STOP_MULT}R)")
+    log.info(f"{'='*95}")
+    log.info(
+        f"{'Thresh':<7} | {'BUY N':<6} {'BUY Prec':<9} {'BUY Rec':<8} {'BUY EV':<8} {'Score':<7} | "
+        f"{'SELL N':<7} {'SELL Prec':<10} {'SELL Rec':<9} {'SELL EV':<8} {'Score':<7}"
+    )
+    log.info(f"{'-'*95}")
+
     for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
         yp = [np.argmax(p) if np.argmax(p) != nt_idx and p[np.argmax(p)] >= thresh else nt_idx for p in calib_probas]
         yp = np.array(yp)
         bm, sm = (yp == buy_idx), (yp == sell_idx)
 
-        pb = (y_calib[bm] == buy_idx).mean()  if bm.sum() > 0 else 0
-        ps = (y_calib[sm] == sell_idx).mean() if sm.sum() > 0 else 0
-        rb = (yp[y_calib == buy_idx] == buy_idx).mean()   if calib_buy_n > 0 else 0
-        rs = (yp[y_calib == sell_idx] == sell_idx).mean() if calib_sell_n > 0 else 0
+        pb = float((y_calib[bm] == buy_idx).mean())  if bm.sum() > 0 else 0.0
+        ps = float((y_calib[sm] == sell_idx).mean()) if sm.sum() > 0 else 0.0
+        rb = float((yp[y_calib == buy_idx] == buy_idx).mean())   if calib_buy_n > 0 else 0.0
+        rs = float((yp[y_calib == sell_idx] == sell_idx).mean()) if calib_sell_n > 0 else 0.0
 
-        buy_ev  = pb * ATR_TARGET1_MULT - (1 - pb) * ATR_STOP_MULT - friction_r
-        sell_ev = ps * ATR_TARGET1_MULT - (1 - ps) * ATR_STOP_MULT - friction_r
+        buy_ev  = pb * ATR_TARGET1_MULT - (1.0 - pb) * ATR_STOP_MULT - friction_r
+        sell_ev = ps * ATR_TARGET1_MULT - (1.0 - ps) * ATR_STOP_MULT - friction_r
 
         buy_score  = buy_ev * rb * np.sqrt(max(bm.sum(), 1))  if buy_ev > 0 else 0.0
         sell_score = sell_ev * rs * np.sqrt(max(sm.sum(), 1)) if sell_ev > 0 else 0.0
+
+        log.info(
+            f"{thresh:<7.2f} | {bm.sum():<6} {pb*100:>7.1f}%  {rb*100:>6.1f}%  {buy_ev:>+6.2f}R {buy_score:>7.2f} | "
+            f"{sm.sum():<7} {ps*100:>8.1f}%  {rs*100:>7.1f}%  {sell_ev:>+6.2f}R {sell_score:>7.2f}"
+        )
 
         if thresh >= MIN_BUY_THRESHOLD_FLOOR and buy_score > best_score_buy and bm.sum() > 15:
             best_score_buy, best_thresh_buy = buy_score, thresh
@@ -498,6 +561,10 @@ def train(ds: pd.DataFrame) -> float:
 
     best_thresh_buy  = max(MIN_BUY_THRESHOLD_FLOOR, best_thresh_buy)
     best_thresh_sell = max(MIN_SELL_THRESHOLD_FLOOR, best_thresh_sell)
+
+    log.info(f"{'-'*95}")
+    log.info(f"✅ Selected Optimal Thresholds -> BUY: {best_thresh_buy:.2f} (Score: {best_score_buy:.2f}) | SELL: {best_thresh_sell:.2f} (Score: {best_score_sell:.2f})")
+    log.info(f"{'='*95}\n")
 
     probas = ensemble.predict_proba(Xte)
     y_pred_tuned = []
@@ -512,7 +579,10 @@ def train(ds: pd.DataFrame) -> float:
     y_pred_tuned = np.array(y_pred_tuned)
 
     acc = accuracy_score(y_test, y_pred_tuned)
+    train_acc = accuracy_score(y_train, ensemble.predict(Xtr))
     report = classification_report(y_test, y_pred_tuned, target_names=classes, output_dict=True, zero_division=0)
+
+    log.info(f"Generalization Check: In-Sample (Train)={train_acc*100:.1f}% | Out-of-Sample (Test)={acc*100:.1f}%")
 
     now_utc = datetime.now(timezone.utc)
     pipeline = {
@@ -567,6 +637,7 @@ def train(ds: pd.DataFrame) -> float:
         "candidate_id":               candidate_id,
         "accuracy":                   round(acc * 100, 1),
         "test_accuracy":              f"{round(acc * 100, 1)}%",
+        "train_accuracy":             f"{round(train_acc * 100, 1)}%",
         "wf_mean":                    round(wf_mean * 100, 1),
         "wf_std":                     round(wf_std * 100, 1),
         "n_train":                    int(len(X_train_raw)),
