@@ -4,7 +4,7 @@ download_training_data.py — Canonical Historical Parquet Downloader (Zero-Repa
 
 Invariants:
 1. Bounded backward pagination (prevents 429 timeouts and memory exhaustion).
-2. Guarantees BTCUSDT_15m benchmark generation alongside all configured SYMBOLS.
+2. Guarantees BTCUSDT benchmark generation alongside all configured SYMBOLS.
 3. Zero-repair timestamp invariant: exchange close_time must strictly equal open_time + interval_ms - 1.
 4. Fail-closed candle physics: non-positive prices, negative volumes, or malformed bounds abort the build.
 5. Cadence verification: missing interior bars cause immediate process termination.
@@ -49,53 +49,37 @@ REQUIRED_COLUMNS = [
 ]
 
 
-def fetch_klines(symbol: str, interval: str, limit: int = 150) -> pd.DataFrame:
-    """Fetches public candles strictly from Binance spot endpoints (no US IP block on Vision)."""
-    if native_get_data is not None:
-        try:
-            df_native = native_get_data(symbol, interval, limit=limit)
-            if df_native is not None and not df_native.empty and len(df_native) >= 20:
-                return df_native.sort_values("open_time").reset_index(drop=True)
-        except Exception:
-            pass
-
-    endpoints = [
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
-    ]
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json",
+def _fetch_klines_batch(
+    session: requests.Session,
+    symbol: str,
+    interval: str,
+    end_time_ms: int = None,
+    limit: int = REQUEST_LIMIT
+) -> list:
+    """Fetches a single batch of up to 1,000 spot klines with endpoint failover."""
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit
     }
+    if end_time_ms is not None:
+        params["endTime"] = int(end_time_ms)
 
-    for url in endpoints:
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                if resp.status == 200:
-                    raw = json.loads(resp.read().decode())
-                    rows = [
-                        {
-                            "open_time": int(k[0]),
-                            "open": float(k[1]),
-                            "high": float(k[2]),
-                            "low": float(k[3]),
-                            "close": float(k[4]),
-                            "volume": float(k[5]),
-                            "close_time": int(k[6]),
-                            "taker_buy_base_vol": float(k[9]) if len(k) > 9 else 0.0,
-                        }
-                        for k in raw
-                    ]
-                    df = pd.DataFrame(rows)
-                    if not df.empty:
-                        return df.sort_values("open_time").reset_index(drop=True)
-        except Exception:
-            continue
+    for attempt in range(RETRY_COUNT):
+        for endpoint in BINANCE_ENDPOINTS:
+            try:
+                resp = session.get(endpoint, params=params, timeout=REQUEST_TIMEOUT)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        return data
+                elif resp.status_code in (429, 418):
+                    time.sleep(1.0 * (attempt + 1))
+            except Exception:
+                continue
+        time.sleep(BATCH_SLEEP_SECONDS * (attempt + 1))
 
-    log.warning(f"Failed fetching {interval} candles for {symbol} across spot endpoints")
-    return pd.DataFrame()
+    return []
 
 
 def _raw_to_frame(raw: list, interval: str) -> pd.DataFrame:
@@ -122,11 +106,11 @@ def _raw_to_frame(raw: list, interval: str) -> pd.DataFrame:
                 f"Silent modification prohibited by Zero-Repair Policy."
             )
 
-        open_p  = float(k[1])
-        high_p  = float(k[2])
-        low_p   = float(k[3])
-        close_p = float(k[4])
-        volume  = float(k[5])
+        open_p    = float(k[1])
+        high_p    = float(k[2])
+        low_p     = float(k[3])
+        close_p   = float(k[4])
+        volume    = float(k[5])
         taker_vol = float(k[9]) if len(k) > 9 else volume * 0.5
 
         # Fail-closed physical candle physics
@@ -191,13 +175,21 @@ def fetch_symbol_history(session: requests.Session, symbol: str, interval: str, 
     combined = pd.concat(batches, ignore_index=True)
     combined = combined.drop_duplicates(subset=["open_time"]).sort_values("open_time").reset_index(drop=True)
 
+    # Cap to exact target count while keeping the most recent history
+    if len(combined) > target_candles:
+        combined = combined.iloc[-target_candles:].reset_index(drop=True)
+
     # Verify cadence continuity
     diffs = combined["open_time"].diff().dropna()
     gaps = diffs[diffs != cadence]
     if not gaps.empty:
         raise ValueError(f"FATAL: Cadence continuity failure for {symbol} {interval}: {len(gaps)} gaps detected.")
 
-    clean_rows = sanitize_closed_candles(combined, interval_ms_value=cadence, observation_time_ms=now_ms)
+    try:
+        clean_rows = sanitize_closed_candles(combined, interval_ms_value=cadence, observation_time_ms=now_ms)
+    except TypeError:
+        clean_rows = sanitize_closed_candles(combined, candle_duration_ms=cadence, observation_time_ms=now_ms)
+
     clean_df = pd.DataFrame(clean_rows)
 
     if len(clean_df) != len(combined):
@@ -209,9 +201,11 @@ def fetch_symbol_history(session: requests.Session, symbol: str, interval: str, 
 def build_canonical_archive():
     HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
-    session.headers.update({"User-Agent": "CryptoBot-AI/Canonical-Archive-Downloader"})
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    })
 
-    # Invariant: Guarantee BTC benchmark archive is populated for relative-strength features
     download_targets = list(dict.fromkeys(list(SYMBOLS) + ["BTCUSDT"]))
     total_tasks = len(download_targets) * len(INTERVALS)
     completed = 0
