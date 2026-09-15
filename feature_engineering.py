@@ -1,224 +1,162 @@
-# feature_engineering.py — Enhanced features + ImportanceSelector
-# ImportanceSelector MUST live here so joblib.load() can find it
-# from both train_model.py and trade_executor.py
+"""
+feature_engineering.py — Canonical Feature Engineering & Schema Definition
+"""
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
-# ── ImportanceSelector ────────────────────────────────────────────────
+# Canonical Feature Universe — Must remain strictly identical across train, scan, and promote
+ALL_FEATURES = [
+    # Momentum & Trend
+    "rsi",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "adx",
+    "plus_di",
+    "minus_di",
+    "trend",
+    "ema20_vs_ema50",
+    "price_vs_ema200",
+    "regime_uptrend",
+    # Volatility & Bands
+    "atr",
+    "atr_pct",
+    "bb_width",
+    "bb_pos",
+    "volatility",
+    # Volume Dynamics
+    "volume_ratio",
+    "volume_spike",
+    "obv_slope",
+    "vwap_dev",
+    "taker_buy_ratio",
+    # Time Cycles
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
+    # Higher Timeframe Context
+    "rsi_1h",
+    "adx_1h",
+    "trend_1h",
+    "rsi_4h",
+    "trend_4h",
+    # Macro Market Relational (BTC Aligned)
+    "btc_corr_20",
+    "btc_beta_20",
+    "btc_rel_strength",
+]
+
+
 class ImportanceSelector(BaseEstimator, TransformerMixin):
-    """Picklable feature selector — stores selected feature names."""
-    def __init__(self, feature_names):
-        self.feature_names = feature_names
+    """Selects a fixed subset of top feature names deterministically."""
+    def __init__(self, selected_features: list[str] = None):
+        self.selected_features = selected_features or []
 
     def fit(self, X, y=None):
         return self
 
     def transform(self, X):
         if isinstance(X, pd.DataFrame):
-            return X[self.feature_names].values
+            return X[self.selected_features].values
         return X
 
-# ── Indicators ────────────────────────────────────────────────────────
+
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty or len(df) < 20:
-        return df
-
+    """Calculates canonical indicators on closed OHLCV candles."""
     df = df.copy()
-    c = df["close"]; h = df["high"]; l = df["low"]
-    o = df["open"];  v = df["volume"]
+    c = df["close"].astype(float)
+    h = df["high"].astype(float)
+    l = df["low"].astype(float)
+    v = df["volume"].astype(float)
 
-    # EMAs
-    df["ema9"]   = c.ewm(span=9,   adjust=False).mean()
-    df["ema20"]  = c.ewm(span=20,  adjust=False).mean()
-    df["ema50"]  = c.ewm(span=50,  adjust=False).mean()
-    df["ema200"] = c.ewm(span=200, adjust=False).mean()
-    df["ema20_slope"]    = df["ema20"].diff(3) / df["ema20"].shift(3) * 100
-    df["ema50_slope"]    = df["ema50"].diff(3) / df["ema50"].shift(3) * 100
-    df["price_vs_ema20"] = (c - df["ema20"])  / df["ema20"]  * 100
-    df["price_vs_ema50"] = (c - df["ema50"])  / df["ema50"]  * 100
-    df["price_vs_ema200"]= (c - df["ema200"]) / df["ema200"] * 100
-    df["ema20_vs_ema50"] = (df["ema20"] - df["ema50"]) / df["ema50"] * 100
+    # 1. EMAs & Trends
+    ema20 = c.ewm(span=20, adjust=False).mean()
+    ema50 = c.ewm(span=50, adjust=False).mean()
+    ema200 = c.ewm(span=200, adjust=False).mean()
 
-    # RSI 14
-    delta  = c.diff()
-    gain   = delta.clip(lower=0)
-    loss   = (-delta).clip(lower=0)
-    avg_g  = gain.ewm(com=13, adjust=False).mean()
-    avg_l  = loss.ewm(com=13, adjust=False).mean()
-    rs     = avg_g / avg_l.replace(0, np.nan)
-    df["rsi"] = (100 - 100 / (1 + rs)).fillna(50)
-    df["rsi_slope"] = df["rsi"].diff(3)
+    df["ema20_vs_ema50"] = (ema20 - ema50) / ema50.replace(0, np.nan)
+    df["price_vs_ema200"] = (c - ema200) / ema200.replace(0, np.nan)
+    df["regime_uptrend"] = (c > ema200).astype(float)
+    df["trend"] = np.where(ema20 > ema50, 1.0, -1.0)
 
-    # RSI 7 (fast)
-    avg_g7 = gain.ewm(com=6,  adjust=False).mean()
-    avg_l7 = loss.ewm(com=6,  adjust=False).mean()
-    rs7    = avg_g7 / avg_l7.replace(0, np.nan)
-    df["rsi_fast"] = (100 - 100 / (1 + rs7)).fillna(50)
+    # 2. RSI (14)
+    delta = c.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+    avg_gain = gain.rolling(14, min_periods=14).mean()
+    avg_loss = loss.rolling(14, min_periods=14).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    df["rsi"] = 100.0 - (100.0 / (1.0 + rs))
+    df["rsi"] = df["rsi"].fillna(50.0)
 
-    # Stochastic
-    low14  = l.rolling(14).min()
-    high14 = h.rolling(14).max()
-    df["stoch_k"] = 100 * (c - low14) / (high14 - low14 + 1e-10)
-    df["stoch_d"] = df["stoch_k"].rolling(3).mean()
-
-    # MACD
+    # 3. MACD
     ema12 = c.ewm(span=12, adjust=False).mean()
     ema26 = c.ewm(span=26, adjust=False).mean()
-    df["macd"]        = ema12 - ema26
+    df["macd"] = ema12 - ema26
     df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
-    df["macd_hist"]   = df["macd"] - df["macd_signal"]
-    df["macd_slope"]  = df["macd"].diff(3)
+    df["macd_hist"] = df["macd"] - df["macd_signal"]
 
-    # ATR
-    prev_c = c.shift(1)
-    tr     = pd.concat([h-l, (h-prev_c).abs(), (l-prev_c).abs()], axis=1).max(axis=1)
-    df["atr"]     = tr.ewm(span=14, adjust=False).mean()
-    df["atr_pct"] = df["atr"] / c * 100
+    # 4. ATR & Volatility
+    tr1 = h - l
+    tr2 = (h - c.shift(1)).abs()
+    tr3 = (l - c.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    df["atr"] = tr.rolling(14, min_periods=1).mean()
+    df["atr_pct"] = (df["atr"] / c).fillna(0.0)
+    df["volatility"] = c.pct_change().rolling(20, min_periods=5).std().fillna(0.0)
 
-    # ADX
-    dm_pos = (h.diff()).clip(lower=0)
-    dm_neg = (-l.diff()).clip(lower=0)
-    dm_pos = dm_pos.where(dm_pos > dm_neg, 0)
-    dm_neg = dm_neg.where(dm_neg > dm_pos, 0)
-    atr14  = tr.ewm(span=14, adjust=False).mean()
-    di_pos = 100 * dm_pos.ewm(span=14, adjust=False).mean() / atr14.replace(0, np.nan)
-    di_neg = 100 * dm_neg.ewm(span=14, adjust=False).mean() / atr14.replace(0, np.nan)
-    dx     = 100 * (di_pos - di_neg).abs() / (di_pos + di_neg + 1e-10)
-    df["adx"]     = dx.ewm(span=14, adjust=False).mean()
-    df["adx_pos"] = di_pos
-    df["adx_neg"] = di_neg
-    df["di_diff"] = di_pos - di_neg
+    # 5. Bollinger Bands
+    sma20 = c.rolling(20, min_periods=1).mean()
+    std20 = c.rolling(20, min_periods=1).std().fillna(0.0)
+    bb_upper = sma20 + 2.0 * std20
+    bb_lower = sma20 - 2.0 * std20
+    df["bb_width"] = (bb_upper - bb_lower) / sma20.replace(0, np.nan)
+    df["bb_pos"] = (c - bb_lower) / (bb_upper - bb_lower).replace(0, np.nan)
 
-    # Bollinger Bands
-    sma20    = c.rolling(20).mean()
-    std20    = c.rolling(20).std()
-    bb_high  = sma20 + 2 * std20
-    bb_low   = sma20 - 2 * std20
-    bb_width = bb_high - bb_low
-    df["bb_high"]  = bb_high
-    df["bb_low"]   = bb_low
-    df["bb_pct"]   = (c - bb_low) / (bb_width + 1e-10)
-    df["bb_width"] = bb_width / sma20 * 100
+    # 6. Directional Movement (ADX)
+    up_move = h - h.shift(1)
+    down_move = l.shift(1) - l
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    tr_smooth = tr.rolling(14, min_periods=14).sum()
+    plus_di = 100.0 * pd.Series(plus_dm, index=df.index).rolling(14, min_periods=14).sum() / tr_smooth.replace(0, np.nan)
+    minus_di = 100.0 * pd.Series(minus_dm, index=df.index).rolling(14, min_periods=14).sum() / tr_smooth.replace(0, np.nan)
+    dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    df["plus_di"] = plus_di.fillna(0.0)
+    df["minus_di"] = minus_di.fillna(0.0)
+    df["adx"] = dx.rolling(14, min_periods=14).mean().fillna(0.0)
 
-    # Volume & VWAP
-    vol_ma20           = v.rolling(20).mean()
-    df["volume_ratio"] = v / vol_ma20.replace(0, np.nan)
-    df["volume_spike"] = (df["volume_ratio"] > 2.0).astype(int)
-    
-    obv              = (np.sign(c.diff()) * v).fillna(0).cumsum()
-    df["obv_slope"]  = obv.diff(5) / (vol_ma20 * 5 + 1e-10)
-    
-    df["vwap"]       = (c * v).cumsum() / (v.cumsum() + 1e-10)
-    df["vwap_dev"]   = (c - df["vwap"]) / df["vwap"] * 100
+    # 7. Volume Dynamics
+    vol_sma = v.rolling(20, min_periods=1).mean()
+    df["volume_ratio"] = (v / vol_sma.replace(0, np.nan)).fillna(1.0)
+    df["volume_spike"] = (v > (vol_sma * 2.0)).astype(float)
 
-    # Price action & Pivots
-    df["price_change"]  = c.pct_change(1) * 100
-    df["price_change3"] = c.pct_change(3) * 100
-    df["price_change6"] = c.pct_change(6) * 100
-    df["high_low_pct"]  = (h - l) / c * 100
-    df["body_pct"]      = (c - o).abs() / (h - l + 1e-10)
-    df["momentum"]      = c - c.shift(10)
-    df["volatility"]    = c.rolling(14).std() / c * 100
-    
-    pivot = (h.shift(1) + l.shift(1) + c.shift(1)) / 3
-    df["pivot_dev"] = (c - pivot) / pivot * 100
+    obv = (np.sign(c.diff().fillna(0.0)) * v).cumsum()
+    df["obv_slope"] = obv.diff(5) / (v.rolling(5).sum().replace(0, np.nan))
+    df["obv_slope"] = df["obv_slope"].fillna(0.0)
 
-    # Candlestick patterns
-    body       = (c - o).abs()
-    upper_wick = h - pd.concat([c, o], axis=1).max(axis=1)
-    lower_wick = pd.concat([c, o], axis=1).min(axis=1) - l
-    rng        = h - l + 1e-10
-    df["bullish_candle"] = ((c > o) & (body > rng * 0.6)).astype(int)
-    df["doji"]           = (body < rng * 0.1).astype(int)
-    df["hammer"]         = ((lower_wick > body * 2) & (upper_wick < body)).astype(int)
+    typical_price = (h + l + c) / 3.0
+    vwap = (typical_price * v).cumsum() / v.cumsum().replace(0, np.nan)
+    df["vwap_dev"] = (c - vwap) / (df["atr"].replace(0, np.nan))
 
-    # Trend
-    df["trend"] = np.where(df["ema20"] > df["ema50"], 1,
-                  np.where(df["ema20"] < df["ema50"], -1, 0))
-
-    # 1h placeholders
-    if "rsi_1h"   not in df.columns: df["rsi_1h"]   = 50.0
-    if "adx_1h"   not in df.columns: df["adx_1h"]   = 0.0
-    if "trend_1h" not in df.columns: df["trend_1h"] = 0.0
-    
-    # 4h placeholders
-    if "rsi_4h"   not in df.columns: df["rsi_4h"]   = 50.0
-    if "trend_4h" not in df.columns: df["trend_4h"] = 0.0
-
-    # ── NEW: Volatility Regime ──────────────────────────────────────────
-    atr_smooth = df["atr_pct"].rolling(5).mean()
-    adx_smooth = df["adx"].rolling(3).mean()
-    
-    df["vol_regime"] = np.where(
-        (atr_smooth > 2.0) & (adx_smooth > 25), 2,   # explosive
-        np.where(
-            (atr_smooth < 0.5) | (adx_smooth < 15), 0,  # chop
-            1                                           # normal
-        )
-    ).astype(float)
-
-    # ── NEW: Directional regime state (P2 — explicit, model-visible regime feature) ──
-    # vol_regime above only captures volatility LEVEL, not direction. This adds
-    # direction so the model can condition behavior on "which regime am I in"
-    # explicitly, instead of only implicitly inferring it from raw price features.
-    # Priority order matters: volatile/chop are checked before trend, since a
-    # violent or directionless move should override a technically-present trend
-    # reading (ADX can briefly spike during chop before a real trend forms).
-    is_volatile = df["vol_regime"] == 2
-    is_chop     = df["vol_regime"] == 0
-    is_uptrend  = (df["trend"] == 1)  & (adx_smooth > 25) & ~is_volatile & ~is_chop
-    is_downtrend = (df["trend"] == -1) & (adx_smooth > 25) & ~is_volatile & ~is_chop
-
-    df["regime_volatile"]     = is_volatile.astype(float)
-    df["regime_chop"]         = is_chop.astype(float)
-    df["regime_uptrend"]      = is_uptrend.astype(float)
-    df["regime_downtrend"]    = is_downtrend.astype(float)
-    df["regime_transitional"] = (~is_volatile & ~is_chop & ~is_uptrend & ~is_downtrend).astype(float)
-
-    # ── NEW: Order flow — how much of each candle's volume was aggressive buying ──
     if "taker_buy_base_vol" in df.columns:
-        vol_safe = v.replace(0, np.nan)
-        df["taker_buy_ratio"] = (df["taker_buy_base_vol"] / vol_safe).fillna(0.5).clip(0, 1)
+        df["taker_buy_ratio"] = (df["taker_buy_base_vol"].astype(float) / v.replace(0, np.nan)).fillna(0.5)
     else:
-        df["taker_buy_ratio"] = 0.5  # neutral default if raw kline data lacks this column
+        df["taker_buy_ratio"] = 0.5
 
-    # ── NEW: Time-of-day / day-of-week (cyclical encoding — no midnight/week discontinuity) ──
+    # 8. Cyclical Time Encoding
     if "open_time" in df.columns:
-        ts   = pd.to_datetime(df["open_time"], unit="ms", utc=True, errors="coerce")
-        hour = ts.dt.hour.fillna(0)
-        dow  = ts.dt.dayofweek.fillna(0)
-        df["hour_sin"] = np.sin(2 * np.pi * hour / 24)
-        df["hour_cos"] = np.cos(2 * np.pi * hour / 24)
-        df["dow_sin"]  = np.sin(2 * np.pi * dow / 7)
-        df["dow_cos"]  = np.cos(2 * np.pi * dow / 7)
+        dt = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+        hour = dt.dt.hour + dt.dt.minute / 60.0
+        dow = dt.dt.dayofweek
+        df["hour_sin"] = np.sin(2.0 * np.pi * hour / 24.0)
+        df["hour_cos"] = np.cos(2.0 * np.pi * hour / 24.0)
+        df["dow_sin"] = np.sin(2.0 * np.pi * dow / 7.0)
+        df["dow_cos"] = np.cos(2.0 * np.pi * dow / 7.0)
     else:
-        df["hour_sin"] = 0.0; df["hour_cos"] = 1.0
-        df["dow_sin"]  = 0.0; df["dow_cos"]  = 1.0
+        df["hour_sin"] = df["hour_cos"] = df["dow_sin"] = df["dow_cos"] = 0.0
 
-    df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.ffill(inplace=True)
-    df.fillna(0, inplace=True)
-    return df
-
-
-# Full feature list (MUST match pipeline["all_features"])
-ALL_FEATURES = [
-    "ema9","ema20","ema50","ema200","ema20_slope","ema50_slope",
-    "price_vs_ema20","price_vs_ema50","price_vs_ema200","ema20_vs_ema50",
-    "rsi","rsi_slope","rsi_fast","stoch_k","stoch_d",
-    "macd","macd_signal","macd_hist","macd_slope",
-    "adx","adx_pos","adx_neg","di_diff","atr","atr_pct",
-    "bb_high","bb_low","bb_pct","bb_width",
-    "volume_ratio","volume_spike","obv_slope","vwap_dev",
-    "price_change","price_change3","price_change6",
-    "high_low_pct","body_pct","momentum","volatility","pivot_dev",
-    "bullish_candle","doji","hammer",
-    "rsi_1h","adx_1h","trend_1h",
-    "rsi_4h","trend_4h",
-    "vol_regime",  # <--- Added Feature
-    "regime_volatile", "regime_chop", "regime_uptrend", "regime_downtrend", "regime_transitional",  # NEW: P2 directional regime
-    "taker_buy_ratio",                          # NEW: order flow
-    "hour_sin","hour_cos","dow_sin","dow_cos",  # NEW: cyclical time features
-]
+    return df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
