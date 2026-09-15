@@ -40,15 +40,11 @@ def require(condition: bool, message: str) -> None:
 
 
 def evaluate_thesis_outcome(reason: str) -> int:
-    """Classifies terminal exit reason into positive (1) or negative (0) thesis."""
     r = str(reason).upper()
-    if "TP" in r or "TAKE_PROFIT" in r:
-        return 1
-    return 0
+    return 1 if ("TP" in r or "TAKE_PROFIT" in r) else 0
 
 
 def ensure_candidate_model_present():
-    """Downloads candidate binary from release if not locally present."""
     if not MODEL_FILE.exists():
         log.info("candidate_model.pkl not found locally. Attempting download from GitHub release 'candidate-latest'...")
         try:
@@ -103,16 +99,16 @@ def reconstruct_and_verify_ledger(manifest: dict) -> list[dict]:
 
         elif e["event"] == "STATE_CHANGE":
             require(pid in trades, f"Orphaned state change for {pid}")
-            current_state = trades[pid]["state"]
-            require(e["new_state"] in VALID_TRANSITIONS.get(current_state, []),
-                    f"Illegal transition {current_state} -> {e['new_state']} in {pid}")
+            curr = trades[pid]["state"]
+            require(e["new_state"] in VALID_TRANSITIONS.get(curr, []),
+                    f"Illegal transition {curr} -> {e['new_state']} in {pid}")
             trades[pid]["state"] = e["new_state"]
 
         elif e["event"] == "PARTIAL_TP1_FILLED":
             require(pid in trades, f"Orphaned TP1 fill for {pid}")
-            current_state = trades[pid]["state"]
-            require("PARTIAL_TP1" in VALID_TRANSITIONS.get(current_state, []),
-                    f"Illegal TP1 fill from state {current_state} in {pid}")
+            curr = trades[pid]["state"]
+            require("PARTIAL_TP1" in VALID_TRANSITIONS.get(curr, []),
+                    f"Illegal TP1 fill from state {curr} in {pid}")
             trades[pid]["state"] = "PARTIAL_TP1"
             trades[pid]["tp1_fee_usd"] = trades[pid].get("tp1_fee_usd", 0.0) + float(e.get("tp1_fee", 0.0))
 
@@ -188,7 +184,7 @@ def promote():
     require(gate_result.get("passed", False), f"GATE 10 FAILED: {gate_result.get('reason')}")
     require(gate_result.get("production_eligible", False), "Gate 10 passed for research, but NOT eligible for live production.")
 
-    # 3. Atomic File Promotion
+    # 3. Atomic Cutover & Upload to Release v2.0
     staged = Path("staged_model.pkl")
     shutil.copy(MODEL_FILE, staged)
     require(get_file_hash(staged) == manifest["model_sha256"], "Staging corruption detected.")
@@ -210,7 +206,6 @@ def promote():
     with open(MANIFEST_FILE, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    # 4. Upload Promoted Binary to GitHub Production Release (v2.0)
     log.info("Uploading promoted model to GitHub release 'v2.0'...")
     try:
         subprocess.run(
@@ -219,7 +214,7 @@ def promote():
         )
         log.info("✓ Successfully published promoted binary to production release 'v2.0'.")
     except Exception as e:
-        log.warning(f"Could not automatically upload to GitHub release: {e}. Please upload pro_crypto_ai_model.pkl manually.")
+        log.warning(f"Could not automatically upload to GitHub release: {e}.")
 
     log.info("🚀 SUCCESS: Candidate explicitly verified and promoted to live production model!")
 
