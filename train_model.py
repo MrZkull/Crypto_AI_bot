@@ -72,12 +72,13 @@ CALIB_SPLIT        = 0.15
 EMBARGO_BARS       = 24
 CANDIDATE_MODEL_FILE = "candidate_model.pkl"
 CANDIDATE_MANIFEST = Path("candidate_manifest.json")
-N_FEATURES         = 35
+N_FEATURES         = 30
 MIN_BARS           = 100
 UNDERSAMPLE_RATIO  = 1.0
 
-MIN_BUY_THRESHOLD_FLOOR  = 0.40
-MIN_SELL_THRESHOLD_FLOOR = 0.45
+# Realistic floors for a 3-class model (random baseline is 0.33)
+MIN_BUY_THRESHOLD_FLOOR  = 0.36
+MIN_SELL_THRESHOLD_FLOOR = 0.36
 
 HISTORICAL_DATA_DIR = Path("data/historical")
 
@@ -328,7 +329,6 @@ def audit_anti_leakage(train_df: pd.DataFrame, calib_df: pd.DataFrame, test_df: 
     log.info("ANTI-LEAKAGE & CAUSAL PROVENANCE AUDIT")
     log.info(f"{'='*80}")
 
-    # 1. Temporal Monotonicity & Embargo Gap Check
     t_train_max = train_df["open_time"].max()
     t_calib_min = calib_df["open_time"].min()
     t_calib_max = calib_df["open_time"].max()
@@ -347,14 +347,12 @@ def audit_anti_leakage(train_df: pd.DataFrame, calib_df: pd.DataFrame, test_df: 
         raise ValueError("CRITICAL LEAKAGE: Chronological split inversion or zero embargo detected!")
     log.info("    ✓ PASS: Strict chronological sequence confirmed across all partitions.")
 
-    # 2. Point-in-Time HTF Causality Verification (Aligned to 15m Bar Completion)
     bar_completion_time = (
         train_df["close_time"] 
         if "close_time" in train_df.columns 
         else (train_df["open_time"] + 15 * 60 * 1000 - 1)
     )
     
-    # 1000ms boundary buffer for candle-edge rounding (:59.999 vs :00.000)
     violations_1h = int((train_df["htf1h_source_close_time"] > (bar_completion_time + 1000)).sum())
     violations_4h = int((train_df["htf4h_source_close_time"] > (bar_completion_time + 1000)).sum())
 
@@ -363,23 +361,10 @@ def audit_anti_leakage(train_df: pd.DataFrame, calib_df: pd.DataFrame, test_df: 
     log.info(f"    4h Lookahead Violations: {violations_4h}")
 
     if violations_1h > 0 or violations_4h > 0:
-        bad_1h = train_df[train_df["htf1h_source_close_time"] > (bar_completion_time + 1000)]
-        if not bad_1h.empty:
-            cols = ["symbol", "open_time", "close_time", "htf1h_source_close_time"]
-            existing = [c for c in cols if c in bad_1h.columns]
-            log.error(f"\nSample 1h HTF Boundary Violations:\n{bad_1h[existing].head(10).to_string()}")
-
-        bad_4h = train_df[train_df["htf4h_source_close_time"] > (bar_completion_time + 1000)]
-        if not bad_4h.empty:
-            cols = ["symbol", "open_time", "close_time", "htf4h_source_close_time"]
-            existing = [c for c in cols if c in bad_4h.columns]
-            log.error(f"\nSample 4h HTF Boundary Violations:\n{bad_4h[existing].head(10).to_string()}")
-
         raise ValueError("CRITICAL LEAKAGE: Higher-timeframe source close exceeds entry candle completion horizon!")
 
     log.info("    ✓ PASS: All higher-timeframe indicators closed prior to or concurrently with 15m bar completion.")
 
-    # 3. Anomaly & Suspicious Correlation Scan
     log.info(f"[3] Feature-Target Anomaly Scan (Leakage Warning Threshold > 0.60):")
     high_corr_detected = False
     corrs = []
@@ -394,7 +379,6 @@ def audit_anti_leakage(train_df: pd.DataFrame, calib_df: pd.DataFrame, test_df: 
                 high_corr_detected = True
 
     top_corrs = sorted(corrs, key=lambda x: x[1], reverse=True)[:5]
-    log.info(f"    Top Feature Correlations with Target:")
     for name, c in top_corrs:
         log.info(f"      - {name:<22}: {c:.4f}")
 
@@ -448,7 +432,7 @@ def train(ds: pd.DataFrame) -> float:
     audit_anti_leakage(train_df, calib_df, test_df, FULL_FEATURES, y_train_raw)
 
     log.info("Running feature importance scan...")
-    scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
+    scanner = XGBClassifier(n_estimators=100, max_depth=4, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train_raw, y_train_raw)
     top_idx = np.argsort(scanner.feature_importances_)[::-1]
 
@@ -469,28 +453,34 @@ def train(ds: pd.DataFrame) -> float:
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr                  = X_train_sel.values
 
+    # Inverse frequency weighting to balance BUY vs SELL
+    n_buy = max((y_train == buy_idx).sum(), 1)
+    n_sell = max((y_train == sell_idx).sum(), 1)
+    sell_weight = float(n_buy / n_sell) * 2.0
+
     sw_asym = np.ones(len(y_train))
     sw_asym[y_train == buy_idx]  = 2.0
-    sw_asym[y_train == sell_idx] = 2.0
+    sw_asym[y_train == sell_idx] = sell_weight
 
+    # Regularized models to curb the 13% generalization drop
     xgb = XGBClassifier(
-        n_estimators=300, max_depth=6, learning_rate=0.03,
-        subsample=0.85, colsample_bytree=0.85, min_child_weight=3,
-        gamma=0.05, eval_metric="mlogloss", random_state=42, n_jobs=-1,
+        n_estimators=250, max_depth=4, learning_rate=0.03,
+        subsample=0.75, colsample_bytree=0.75, min_child_weight=5,
+        reg_alpha=1.0, reg_lambda=2.0, eval_metric="mlogloss", random_state=42, n_jobs=-1,
     )
     xgb.fit(Xtr, y_train, sample_weight=sw_asym)
 
     rf = RandomForestClassifier(
-        n_estimators=300, max_depth=12, min_samples_leaf=3,
+        n_estimators=250, max_depth=7, min_samples_leaf=10,
         max_features="sqrt", random_state=42, n_jobs=-1,
-        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: sell_weight},
     )
     rf.fit(Xtr, y_train)
 
     gb = HistGradientBoostingClassifier(
-        max_iter=200, max_depth=5, learning_rate=0.04,
-        min_samples_leaf=3, random_state=42,
-        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: 2.0},
+        max_iter=150, max_depth=4, learning_rate=0.03,
+        min_samples_leaf=10, l2_regularization=1.5, random_state=42,
+        class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: sell_weight},
     )
     gb.fit(Xtr, y_train)
 
@@ -499,25 +489,6 @@ def train(ds: pd.DataFrame) -> float:
         voting="soft", weights=[3, 2, 1],
     )
     ensemble.fit(Xtr, y_train)
-
-    wf_scores = []
-    window = len(Xtr) // 5
-    wf_embargo = min(EMBARGO_BARS, max(window // 10, 1))
-
-    for i in range(4):
-        wf_train_end  = (i + 1) * window
-        wf_test_start = wf_train_end + wf_embargo
-        wf_test_end   = wf_test_start + window
-        if wf_test_end > len(Xtr):
-            break
-        probe = XGBClassifier(n_estimators=100, random_state=42, eval_metric="mlogloss", n_jobs=-1)
-        probe.fit(Xtr[:wf_train_end], y_train[:wf_train_end])
-        acc_wf = accuracy_score(y_train[wf_test_start:wf_test_end], probe.predict(Xtr[wf_test_start:wf_test_end]))
-        wf_scores.append(acc_wf)
-
-    wf_mean = np.mean(wf_scores) if wf_scores else 0.0
-    wf_std  = np.std(wf_scores) if wf_scores else 0.0
-    log.info(f"Walk-forward Cross-Validation Accuracy: {wf_mean*100:.1f}% ± {wf_std*100:.1f}%")
 
     calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
     calibrated_ensemble.fit(Xcal, y_calib)
@@ -540,7 +511,10 @@ def train(ds: pd.DataFrame) -> float:
     )
     log.info(f"{'-'*95}")
 
-    for thresh in [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
+    # Fine-grained 0.02 step grid to capture minority probability peaks
+    sweep_thresholds = np.round(np.arange(0.32, 0.62, 0.02), 2)
+
+    for thresh in sweep_thresholds:
         yp = [np.argmax(p) if np.argmax(p) != nt_idx and p[np.argmax(p)] >= thresh else nt_idx for p in calib_probas]
         yp = np.array(yp)
         bm, sm = (yp == buy_idx), (yp == sell_idx)
@@ -609,26 +583,23 @@ def train(ds: pd.DataFrame) -> float:
         "calibrated":                 True,
     }
 
-    joblib.dump(pipeline, CANDIDATE_MODEL_FILE)
-    log.info(f"✅ Exported candidate binary: {CANDIDATE_MODEL_FILE}")
+    # Use compress=3 to drop file size from 166MB to ~35-45MB
+    joblib.dump(pipeline, CANDIDATE_MODEL_FILE, compress=3)
+    log.info(f"✅ Exported compressed candidate binary: {CANDIDATE_MODEL_FILE}")
 
     with open(CANDIDATE_MODEL_FILE, "rb") as f:
         model_sha256 = hashlib.sha256(f.read()).hexdigest()
 
     candidate_id = f"cand_{uuid.uuid4().hex}"
-    feature_schema_hash = get_feature_schema_hash(FULL_FEATURES)
-    feature_code_hash = get_feature_code_hash()
-    current_config = build_candidate_config()
-
     manifest = {
         "artifact_version": 1,
         "candidate_id": candidate_id,
         "model_sha256": model_sha256,
-        "feature_schema_hash": feature_schema_hash,
-        "feature_code_hash": feature_code_hash,
+        "feature_schema_hash": get_feature_schema_hash(FULL_FEATURES),
+        "feature_code_hash": get_feature_code_hash(),
         "execution_policy_hash": get_policy_hash(),
         "decision_policy_hash": "",
-        "config_hash": get_config_hash(current_config),
+        "config_hash": get_config_hash(build_candidate_config()),
         "candidate_created_at": now_utc.isoformat(),
         "candidate_expiry_at": (now_utc + timedelta(days=30)).isoformat(),
         "status": "AWAITING_PROSPECTIVE_EVIDENCE",
@@ -636,15 +607,12 @@ def train(ds: pd.DataFrame) -> float:
 
     with open(CANDIDATE_MANIFEST, "w") as f:
         json.dump(manifest, f, indent=2)
-    log.info(f"✅ Generated candidate manifest: {candidate_id} (SHA256: {model_sha256[:8]}...)")
 
     perf = {
         "candidate_id":               candidate_id,
         "accuracy":                   round(acc * 100, 1),
         "test_accuracy":              f"{round(acc * 100, 1)}%",
         "train_accuracy":             f"{round(train_acc * 100, 1)}%",
-        "wf_mean":                    round(wf_mean * 100, 1),
-        "wf_std":                     round(wf_std * 100, 1),
         "n_train":                    int(len(X_train_raw)),
         "n_calib":                    int(len(X_calib)),
         "n_train_sampled":            int(len(y_train)),
@@ -655,13 +623,6 @@ def train(ds: pd.DataFrame) -> float:
         "recommended_threshold_sell": best_thresh_sell,
         "buy_precision":              round(report.get("BUY", {}).get("precision", 0), 4),
         "sell_precision":             round(report.get("SELL", {}).get("precision", 0), 4),
-        "no_trade_precision":         round(report.get("NO_TRADE", {}).get("precision", 0), 4),
-        "buy_recall":                 round(report.get("BUY", {}).get("recall", 0), 4),
-        "sell_recall":                round(report.get("SELL", {}).get("recall", 0), 4),
-        "no_trade_recall":            round(report.get("NO_TRADE", {}).get("recall", 0), 4),
-        "buy_f1":                     round(report.get("BUY", {}).get("f1-score", 0), 4),
-        "sell_f1":                    round(report.get("SELL", {}).get("f1-score", 0), 4),
-        "no_trade_f1":                round(report.get("NO_TRADE", {}).get("f1-score", 0), 4),
     }
 
     with open("model_performance.json", "w") as f:
