@@ -2,7 +2,7 @@ name: CryptoBot AI — Candidate Shadow Scanner
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Runs every 15 minutes, isolated from live execution
+    - cron: '*/15 * * * *'  # Runs every 15 minutes
   workflow_dispatch:
 
 concurrency:
@@ -13,9 +13,14 @@ jobs:
   scan-candidate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -27,7 +32,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install filelock pyarrow fastparquet
+          pip install filelock pyarrow fastparquet xgboost scikit-learn
+
+      - name: Fetch Active Candidate Models from GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view candidate-latest >/dev/null 2>&1; then
+            echo "Fetching candidate model artifacts from candidate-latest release..."
+            gh release download candidate-latest \
+              --pattern "candidate_*.pkl" \
+              --pattern "candidate_manifest.json" \
+              --clobber || true
+          else
+            echo "No candidate-latest release found."
+          fi
 
       - name: Run Candidate Scanner
         run: |
@@ -42,6 +62,7 @@ jobs:
         run: |
           git config user.name "CryptoBot AI Shadow"
           git config user.email "bot-shadow@cryptobot.ai"
+
           git add candidate_events.jsonl candidate_state.json || true
           if git diff --cached --quiet; then
             echo "No candidate state updates to commit."
@@ -52,4 +73,3 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
-
