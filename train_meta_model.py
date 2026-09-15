@@ -112,13 +112,35 @@ def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.Data
     X = ds[af].replace([np.inf, -np.inf], np.nan).fillna(0)
     Xs = primary_pipeline["selector"].transform(X)
 
-    preds = primary_pipeline["ensemble"].predict(Xs)
     probas = primary_pipeline["ensemble"].predict_proba(Xs)
-    label_map = primary_pipeline["label_map"]
+    
+    # Manual pairwise logic bypassing default argmax
+    inv_map = {v: k for k, v in primary_pipeline["label_map"].items()}
+    buy_idx = inv_map.get("BUY", 0)
+    sell_idx = inv_map.get("SELL", 2)
+    nt_idx = inv_map.get("NO_TRADE", 1)
+    
+    thresh_buy = primary_pipeline.get("recommended_threshold_buy", 0.36)
+    thresh_sell = primary_pipeline.get("recommended_threshold_sell", 0.36)
+
+    primary_sides = []
+    primary_confs = []
+    
+    for p in probas:
+        pb, ps = p[buy_idx], p[sell_idx]
+        if pb >= thresh_buy and pb > ps:
+            primary_sides.append("BUY")
+            primary_confs.append(pb)
+        elif ps >= thresh_sell and ps > pb:
+            primary_sides.append("SELL")
+            primary_confs.append(ps)
+        else:
+            primary_sides.append("NO_TRADE")
+            primary_confs.append(p[nt_idx])
 
     ds = ds.copy()
-    ds["primary_side"] = [label_map[int(p)] for p in preds]
-    ds["primary_conf"] = probas.max(axis=1)
+    ds["primary_side"] = primary_sides
+    ds["primary_conf"] = primary_confs
     if "pred_id" not in ds.columns:
         ds["pred_id"] = [f"{row['symbol']}_{int(row['open_time'])}" for _, row in ds.iterrows()]
     return ds
@@ -136,11 +158,15 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
 
     primary_train = primary_train.loc[:, ~primary_train.columns.duplicated()].copy()
     af = list(dict.fromkeys(primary_pipeline["all_features"]))
-    label_map = {int(k): v for k, v in primary_pipeline["label_map"].items()}
-    target_to_int = {v: k for k, v in label_map.items()}
-    no_trade_idx = target_to_int.get("NO_TRADE")
-    if no_trade_idx is None:
-        raise ValueError("Primary pipeline label map is missing NO_TRADE")
+    
+    inv_map = {v: k for k, v in primary_pipeline["label_map"].items()}
+    target_to_int = inv_map
+    buy_idx = inv_map.get("BUY", 0)
+    sell_idx = inv_map.get("SELL", 2)
+    nt_idx = inv_map.get("NO_TRADE", 1)
+    
+    thresh_buy = primary_pipeline.get("recommended_threshold_buy", 0.36)
+    thresh_sell = primary_pipeline.get("recommended_threshold_sell", 0.36)
 
     production_ensemble = primary_pipeline["ensemble"]
     base_estimator = getattr(production_ensemble, "estimator", None)
@@ -176,13 +202,13 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
                 if f not in tr.columns: tr[f] = 0.0
                 if f not in va.columns: va[f] = 0.0
 
-            fold_features = _fold_selected_features(tr, af, min(N_FEATURES, len(af)), target_to_int, no_trade_idx)
+            fold_features = _fold_selected_features(tr, af, min(N_FEATURES, len(af)), target_to_int, nt_idx)
             Xtr = tr[fold_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
             Xva = va[fold_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
-            ytr = tr["target"].map(target_to_int).fillna(no_trade_idx).astype(int).values
+            ytr = tr["target"].map(target_to_int).fillna(nt_idx).astype(int).values
 
-            keep_signal = np.where(ytr != no_trade_idx)[0]
-            keep_nt = np.where(ytr == no_trade_idx)[0]
+            keep_signal = np.where(ytr != nt_idx)[0]
+            keep_nt = np.where(ytr == nt_idx)[0]
             target_nt = min(len(keep_nt), len(keep_signal))
             if target_nt == 0 or len(keep_signal) == 0:
                 continue
@@ -193,11 +219,25 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
 
             est = clone(base_estimator)
             est.fit(Xtr[keep], ytr[keep])
-            pred = est.predict(Xva)
+            
+            # Manual pairwise logic bypassing default argmax for OOF
             proba = est.predict_proba(Xva)
+            primary_sides = []
+            primary_confs = []
+            for p in proba:
+                pb, ps = p[buy_idx], p[sell_idx]
+                if pb >= thresh_buy and pb > ps:
+                    primary_sides.append("BUY")
+                    primary_confs.append(pb)
+                elif ps >= thresh_sell and ps > pb:
+                    primary_sides.append("SELL")
+                    primary_confs.append(ps)
+                else:
+                    primary_sides.append("NO_TRADE")
+                    primary_confs.append(p[nt_idx])
 
-            va["primary_side"] = [label_map[int(x)] for x in pred]
-            va["primary_conf"] = proba.max(axis=1)
+            va["primary_side"] = primary_sides
+            va["primary_conf"] = primary_confs
             va["pred_id"] = [f"{row['symbol']}_{int(row['open_time'])}" for _, row in va.iterrows()]
             parts.append(va)
 
@@ -216,7 +256,6 @@ def audit_meta_anti_leakage(meta_train: pd.DataFrame, primary_calib_pred: pd.Dat
     log.info("META-MODEL ANTI-LEAKAGE & OOF PURITY AUDIT")
     log.info(f"{'='*85}")
 
-    # 1. Partition Verification & Embargo Isolation
     t_train_max = meta_train["open_time"].max()
     t_calib_min = primary_calib_pred["open_time"].min()
     t_calib_max = primary_calib_pred["open_time"].max()
@@ -235,7 +274,6 @@ def audit_meta_anti_leakage(meta_train: pd.DataFrame, primary_calib_pred: pd.Dat
         raise ValueError("CRITICAL LEAKAGE: Meta-training chronological split inversion or zero embargo!")
     log.info("    ✓ PASS: Meta training, calibration, and test splits are strictly ordered.")
 
-    # 2. Target Isolation Scan
     forbidden_features = {"target", "meta_label", "future_close", "barrier_hit"}
     intersection = forbidden_features.intersection(set(meta_features))
     log.info(f"[2] Forbidden Feature Contamination Scan:")
@@ -243,7 +281,6 @@ def audit_meta_anti_leakage(meta_train: pd.DataFrame, primary_calib_pred: pd.Dat
         raise ValueError(f"CRITICAL LEAKAGE: Forbidden target labels in meta-feature set: {intersection}")
     log.info("    ✓ PASS: Zero target label contamination detected in meta-feature space.")
 
-    # 3. Meta-Target Correlation Scan (Exclude meta_primary_conf from ceiling)
     log.info(f"[3] Meta-Feature Correlation Scan (Leak Ceiling > 0.50):")
     y_train = meta_train["meta_label"].values
     high_corr = False
@@ -325,13 +362,15 @@ def train_meta_model():
     y_test = primary_test_pred["meta_label"].values
 
     log.info("Training Meta-Model Ensemble (XGBoost + Random Forest)...")
+    
+    # Increased regularization to collapse the Meta-Model overfitting (-0.51R out-of-sample)
     meta_xgb = XGBClassifier(
-        n_estimators=250, max_depth=4, learning_rate=0.03, subsample=0.80,
-        colsample_bytree=0.80, min_child_weight=4, reg_alpha=0.5, reg_lambda=1.5,
+        n_estimators=200, max_depth=3, learning_rate=0.02, subsample=0.70,
+        colsample_bytree=0.70, min_child_weight=8, reg_alpha=2.0, reg_lambda=5.0,
         random_state=42, n_jobs=-1
     )
     meta_rf = RandomForestClassifier(
-        n_estimators=250, max_depth=6, min_samples_leaf=8, random_state=42, n_jobs=-1
+        n_estimators=200, max_depth=5, min_samples_leaf=15, max_features="sqrt", random_state=42, n_jobs=-1
     )
     meta_ensemble = VotingClassifier(
         estimators=[("xgb", meta_xgb), ("rf", meta_rf)], voting="soft", weights=[2, 1]
@@ -349,7 +388,6 @@ def train_meta_model():
     calib_proba = calibrated_meta.predict_proba(X_calib)[:, pos_idx]
     test_proba  = calibrated_meta.predict_proba(X_test)[:, pos_idx]
 
-    # Asymmetric Directional Threshold Alignment
     thresh_buy = float(primary_pipeline.get("recommended_threshold_buy", primary_pipeline.get("recommended_threshold", 0.36)))
     thresh_sell = float(primary_pipeline.get("recommended_threshold_sell", primary_pipeline.get("recommended_threshold", 0.36)))
     friction_r = 0.12
@@ -365,7 +403,6 @@ def train_meta_model():
 
     base_prec = float(y_calib[calib_primary_selected].mean() * 100) if calib_primary_selected.sum() > 0 else 0.0
 
-    # ── Detailed Meta-Model Threshold Calibration Sweep Diagnostics ──
     best_thresh, best_score = 0.50, 0.0
 
     log.info(f"\n{'='*95}")
@@ -377,7 +414,7 @@ def train_meta_model():
     )
     log.info(f"{'-'*95}")
 
-    for thresh in [0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
+    for thresh in [0.45, 0.48, 0.50, 0.52, 0.55, 0.58, 0.60, 0.65]:
         mask = (calib_proba >= thresh) & calib_primary_selected
         n_trades = int(mask.sum())
         if n_trades < 10:
@@ -402,7 +439,6 @@ def train_meta_model():
     log.info(f"✅ Selected Optimal Meta Threshold: {best_thresh:.2f} (Score: {best_score:.2f})")
     log.info(f"{'='*95}\n")
 
-    # ── Synthetic Barrier Gate 10 Validation ──
     synth_df = pd.DataFrame({
         "pred_id": primary_test_pred["pred_id"],
         "open_time": primary_test_pred["open_time"],
@@ -427,14 +463,12 @@ def train_meta_model():
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Compress candidate binary for lightweight storage
     joblib.dump(meta_pipeline, META_MODEL_FILE, compress=3)
     log.info(f"✅ Saved compressed meta-model pipeline: {META_MODEL_FILE}")
 
     with open("meta_model_performance.json", "w") as f:
         json.dump(gate10_result, f, indent=2)
 
-    # ── Cryptographic Provenance Manifest Update ──
     meta_sha256 = get_file_hash(META_MODEL_FILE)
     try:
         if CANDIDATE_MANIFEST.exists():
