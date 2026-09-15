@@ -18,7 +18,6 @@ from xgboost import XGBClassifier
 
 # ── Scikit-Learn 1.6+ Compatibility Patch for XGBoost in VotingClassifier ──
 XGBClassifier._estimator_type = "classifier"
-
 try:
     from sklearn.utils._tags import ClassifierTags
     def _xgb_sklearn_tags(self):
@@ -33,7 +32,6 @@ try:
     XGBClassifier.__sklearn_tags__ = _xgb_sklearn_tags
 except (ImportError, AttributeError):
     pass
-
 
 from train_model import (
     build_dataset_from_local_parquet, FULL_FEATURES, EMBARGO_BARS,
@@ -72,12 +70,17 @@ def augment_meta_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _fold_selected_features(tr: pd.DataFrame, af: list, n_features: int, target_to_int: dict, no_trade_idx: int) -> list:
-    x = tr[af].replace([np.inf, -np.inf], np.nan).fillna(0)
+    tr = tr.loc[:, ~tr.columns.duplicated()].copy()
+    af_clean = list(dict.fromkeys([f for f in af if f in tr.columns]))
+
+    x = tr[af_clean].replace([np.inf, -np.inf], np.nan).fillna(0)
     y = tr["target"].map(target_to_int).fillna(no_trade_idx).astype(int).values
+
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(x, y)
-    ranked = [af[i] for i in np.argsort(scanner.feature_importances_)[::-1]]
-    essential = [f for f in ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"] if f in af]
+
+    ranked = [af_clean[i] for i in np.argsort(scanner.feature_importances_)[::-1]]
+    essential = [f for f in ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"] if f in af_clean]
     selected = essential[:]
     for f in ranked:
         if f not in selected:
@@ -88,16 +91,18 @@ def _fold_selected_features(tr: pd.DataFrame, af: list, n_features: int, target_
 
 
 def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.DataFrame:
-    af = primary_pipeline["all_features"]
+    ds = ds.loc[:, ~ds.columns.duplicated()].copy()
+    af = list(dict.fromkeys(primary_pipeline["all_features"]))
+
     for f in af:
         if f not in ds.columns:
             ds[f] = 0.0
 
-    X  = ds[af].replace([np.inf, -np.inf], np.nan).fillna(0)
+    X = ds[af].replace([np.inf, -np.inf], np.nan).fillna(0)
     Xs = primary_pipeline["selector"].transform(X)
 
-    preds     = primary_pipeline["ensemble"].predict(Xs)
-    probas    = primary_pipeline["ensemble"].predict_proba(Xs)
+    preds = primary_pipeline["ensemble"].predict(Xs)
+    probas = primary_pipeline["ensemble"].predict_proba(Xs)
     label_map = primary_pipeline["label_map"]
 
     ds = ds.copy()
@@ -118,7 +123,8 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
     if primary_train.empty:
         return primary_train.copy()
 
-    af = primary_pipeline["all_features"]
+    primary_train = primary_train.loc[:, ~primary_train.columns.duplicated()].copy()
+    af = list(dict.fromkeys(primary_pipeline["all_features"]))
     label_map = {int(k): v for k, v in primary_pipeline["label_map"].items()}
     target_to_int = {v: k for k, v in label_map.items()}
     no_trade_idx = target_to_int.get("NO_TRADE")
@@ -151,6 +157,9 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
             va = grp.iloc[val_start:val_end].copy()
             if len(tr) < 50:
                 continue
+
+            tr = tr.loc[:, ~tr.columns.duplicated()].copy()
+            va = va.loc[:, ~va.columns.duplicated()].copy()
 
             for f in af:
                 if f not in tr.columns: tr[f] = 0.0
@@ -194,6 +203,7 @@ def train_meta_model():
     log.info("Loading primary candidate artifact...")
     primary_pipeline = joblib.load(CANDIDATE_MODEL_FILE)
     ds = build_dataset_from_local_parquet()
+    ds = ds.loc[:, ~ds.columns.duplicated()].copy()
 
     primary_train, primary_calib, primary_test = temporal_symbol_split(
         ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS
@@ -221,6 +231,10 @@ def train_meta_model():
             if f not in part.columns:
                 part[f] = 0.0
 
+    meta_train = meta_train.loc[:, ~meta_train.columns.duplicated()].copy()
+    primary_calib_pred = primary_calib_pred.loc[:, ~primary_calib_pred.columns.duplicated()].copy()
+    primary_test_pred = primary_test_pred.loc[:, ~primary_test_pred.columns.duplicated()].copy()
+
     X_train_full = meta_train[meta_feature_universe].replace([np.inf, -np.inf], np.nan).fillna(0).values
     y_train = meta_train["meta_label"].values
 
@@ -240,7 +254,7 @@ def train_meta_model():
     X_test = primary_test_pred[meta_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
     y_test = primary_test_pred["meta_label"].values
 
-    meta_xgb = XGBClassifier(n_estimators=300, max_depth=5, learning_rate=0.03, subsample=0.85, colsample_bytree=0.85, min_child_weight=3, eval_metric="logloss", random_state=42, n_jobs=-1)
+    meta_xgb = XGBClassifier(n_estimators=300, max_depth=5, learning_rate=0.03, subsample=0.85, colsample_bytree=0.85, min_child_weight=3, random_state=42, n_jobs=-1)
     meta_rf = RandomForestClassifier(n_estimators=300, max_depth=10, min_samples_leaf=5, random_state=42, n_jobs=-1)
     meta_ensemble = VotingClassifier(estimators=[("xgb", meta_xgb), ("rf", meta_rf)], voting="soft", weights=[2, 1])
     meta_ensemble.fit(X_train, y_train)
@@ -268,9 +282,6 @@ def train_meta_model():
     primary_baseline_threshold = float(primary_pipeline.get("recommended_threshold", 0.45))
     friction_r = 0.12
 
-    # ──────────────────────────────────────────────────────────────
-    # 1. Evaluate strictly in Synthetic Barrier Mode using gate10.py
-    # ──────────────────────────────────────────────────────────────
     synth_df = pd.DataFrame({
         "pred_id": primary_test_pred["pred_id"],
         "evidence_type": "SYNTHETIC_BARRIER",
@@ -294,14 +305,12 @@ def train_meta_model():
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
     
-    # 2. Dump exclusively to candidate artifact
     joblib.dump(meta_pipeline, META_MODEL_FILE)
     log.info(f"✅ Saved meta-model pipeline: {META_MODEL_FILE}")
 
     with open("meta_model_performance.json", "w") as f:
         json.dump(gate10_result, f, indent=2)
 
-    # 3. Append cryptographic identity into Candidate Manifest
     meta_sha256 = get_file_hash(META_MODEL_FILE)
     try:
         with open("candidate_manifest.json", "r") as f:
@@ -320,3 +329,4 @@ if __name__ == "__main__":
     t0 = time.time()
     train_meta_model()
     log.info(f"Meta-model training complete in {(time.time()-t0)/60:.1f} min")
+    
