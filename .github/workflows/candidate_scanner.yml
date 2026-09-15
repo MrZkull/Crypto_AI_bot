@@ -49,7 +49,14 @@ jobs:
             echo "No candidate-latest release found."
           fi
 
-      - name: Run Candidate Scanner
+      - name: Monitor Existing Candidate Positions
+        run: |
+          set -euo pipefail
+          if [ -f candidate_manifest.json ] && [ -f candidate_state.json ]; then
+            python candidate_market_monitor.py
+          fi
+
+      - name: Scan New Candidate Setups
         run: |
           set -euo pipefail
           if [ -f candidate_model.pkl ] && [ -f candidate_manifest.json ]; then
@@ -67,7 +74,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No candidate state updates to commit."
           else
-            git commit -m "chore(shadow): record candidate setup events [skip ci]"
+            git commit -m "chore(shadow): update candidate setups and outcomes [skip ci]"
             git pull origin main --rebase --autostash || true
             git push origin main || echo "Push skipped."
           fi
