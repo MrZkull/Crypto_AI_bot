@@ -21,6 +21,25 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.frozen import FrozenEstimator
 from xgboost import XGBClassifier
 
+# ── Scikit-Learn 1.6+ Compatibility Patch for XGBoost in VotingClassifier ──
+XGBClassifier._estimator_type = "classifier"
+
+try:
+    from sklearn.utils._tags import ClassifierTags
+    def _xgb_sklearn_tags(self):
+        try:
+            tags = super(XGBClassifier, self).__sklearn_tags__()
+        except Exception:
+            from sklearn.utils._tags import Tags
+            tags = Tags()
+        tags.estimator_type = "classifier"
+        tags.classifier_tags = ClassifierTags()
+        return tags
+    XGBClassifier.__sklearn_tags__ = _xgb_sklearn_tags
+except (ImportError, AttributeError):
+    pass
+    
+
 from feature_engineering import add_indicators, ALL_FEATURES, ImportanceSelector
 from market_data_integrity import sanitize_closed_candles, merge_completed_htf
 from execution_policy import (
