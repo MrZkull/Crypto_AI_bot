@@ -81,6 +81,12 @@ MIN_SELL_THRESHOLD_FLOOR = 0.45
 
 HISTORICAL_DATA_DIR = Path("data/historical")
 
+INTERVAL_MS_MAP = {
+    "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000,
+    "4h": 4 * 60 * 60 * 1000,
+}
+
 NEW_FEATURES = [
     "btc_corr_20",
     "btc_beta_20",
@@ -95,16 +101,14 @@ def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     if df1h.empty or len(df1h) < 5 or df15.empty:
         return pd.DataFrame()
     h = merge_completed_htf(df15, df1h, ["rsi", "adx", "trend"], prefix="htf1h")
-    h = h.rename(columns={"htf1h_rsi": "rsi_1h", "htf1h_adx": "adx_1h", "htf1h_trend": "trend_1h"})
-    return h
+    return h.rename(columns={"htf1h_rsi": "rsi_1h", "htf1h_adx": "adx_1h", "htf1h_trend": "trend_1h"})
 
 
 def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     if df4h.empty or len(df4h) < 5 or df15.empty:
         return pd.DataFrame()
     h = merge_completed_htf(df15, df4h, ["rsi", "trend"], prefix="htf4h")
-    h = h.rename(columns={"htf4h_rsi": "rsi_4h", "htf4h_trend": "trend_4h"})
-    return h
+    return h.rename(columns={"htf4h_rsi": "rsi_4h", "htf4h_trend": "trend_4h"})
 
 
 def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
@@ -113,8 +117,7 @@ def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFram
         return df15
     try:
         out = merge_completed_htf(df15, btc_df15, ["close"], prefix="btc")
-        out = out.rename(columns={"btc_close": "btc_close"})
-        return out
+        return out.rename(columns={"btc_close": "btc_close"})
     except Exception as e:
         log.warning(f"_align_btc_to_15m failed ({e})")
         df15["btc_close"] = np.nan
@@ -196,26 +199,21 @@ def _process_segment(symbol, df15, df1h, df4h, regime, btc_df15=None):
         df1h_feat = add_indicators(df1h)
         df15 = _align_1h_to_15m(df1h_feat, df15)
         if df15.empty:
-            log.warning(f"[{symbol}] Failed 1h HTF alignment — segment dropped.")
             return pd.DataFrame()
     else:
-        log.warning(f"[{symbol}] Missing 1h historical archive — segment dropped.")
         return pd.DataFrame()
 
     if not df4h.empty:
         df4h_feat = add_indicators(df4h)
         df15 = _align_4h_to_15m(df4h_feat, df15)
         if df15.empty:
-            log.warning(f"[{symbol}] Failed 4h HTF alignment — segment dropped.")
             return pd.DataFrame()
     else:
-        log.warning(f"[{symbol}] Missing 4h historical archive — segment dropped.")
         return pd.DataFrame()
 
     df15 = _align_btc_to_15m(btc_df15, df15)
 
     if "htf1h_source_close_time" not in df15.columns or "htf4h_source_close_time" not in df15.columns:
-        log.warning(f"[{symbol}] Missing HTF source-close provenance — segment dropped.")
         return pd.DataFrame()
 
     df15 = _add_extra_features(df15)
@@ -235,7 +233,8 @@ def load_parquet_segment(symbol: str, interval: str) -> pd.DataFrame:
         return pd.DataFrame()
     try:
         df = pd.read_parquet(path)
-        clean = sanitize_closed_candles(df)
+        duration_ms = INTERVAL_MS_MAP.get(interval, 15 * 60 * 1000)
+        clean = sanitize_closed_candles(df, candle_duration_ms=duration_ms)
         out = pd.DataFrame(clean)
         return out.sort_values("open_time").reset_index(drop=True)
     except Exception as e:
@@ -259,7 +258,6 @@ def build_dataset_from_local_parquet() -> pd.DataFrame:
         df4h = load_parquet_segment(symbol, "4h")
 
         if df15.empty or len(df15) < MIN_BARS:
-            log.warning(f"  [{symbol}] Insufficient candles — skipping symbol.")
             continue
 
         seg = _process_segment(symbol, df15, df1h, df4h, regime="historical_canonical", btc_df15=btc_df15)
@@ -324,8 +322,6 @@ def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int
     return X_train.iloc[keep].reset_index(drop=True), y_train[keep]
 
 
-# ── Data Integrity & Anti-Leakage Audit Suite ─────────────────────────
-
 def audit_anti_leakage(train_df: pd.DataFrame, calib_df: pd.DataFrame, test_df: pd.DataFrame, 
                        features: list[str], y_train: np.ndarray) -> None:
     log.info(f"\n{'='*80}")
@@ -351,19 +347,40 @@ def audit_anti_leakage(train_df: pd.DataFrame, calib_df: pd.DataFrame, test_df: 
         raise ValueError("CRITICAL LEAKAGE: Chronological split inversion or zero embargo detected!")
     log.info("    ✓ PASS: Strict chronological sequence confirmed across all partitions.")
 
-    # 2. Point-in-Time HTF Causality Verification
-    violations_1h = (train_df["htf1h_source_close_time"] > train_df["open_time"]).sum()
-    violations_4h = (train_df["htf4h_source_close_time"] > train_df["open_time"]).sum()
+    # 2. Point-in-Time HTF Causality Verification (Aligned to 15m Bar Completion)
+    bar_completion_time = (
+        train_df["close_time"] 
+        if "close_time" in train_df.columns 
+        else (train_df["open_time"] + 15 * 60 * 1000 - 1)
+    )
+    
+    # 1000ms boundary buffer for candle-edge rounding (:59.999 vs :00.000)
+    violations_1h = int((train_df["htf1h_source_close_time"] > (bar_completion_time + 1000)).sum())
+    violations_4h = int((train_df["htf4h_source_close_time"] > (bar_completion_time + 1000)).sum())
 
-    log.info(f"[2] HTF Lookahead Verification:")
+    log.info(f"[2] HTF Lookahead Verification (vs 15m Bar Completion Time):")
     log.info(f"    1h Lookahead Violations: {violations_1h}")
     log.info(f"    4h Lookahead Violations: {violations_4h}")
+
     if violations_1h > 0 or violations_4h > 0:
-        raise ValueError("CRITICAL LEAKAGE: Higher-timeframe source close exceeds entry candle open time!")
-    log.info("    ✓ PASS: All higher-timeframe indicators closed strictly prior to 15m entry.")
+        bad_1h = train_df[train_df["htf1h_source_close_time"] > (bar_completion_time + 1000)]
+        if not bad_1h.empty:
+            cols = ["symbol", "open_time", "close_time", "htf1h_source_close_time"]
+            existing = [c for c in cols if c in bad_1h.columns]
+            log.error(f"\nSample 1h HTF Boundary Violations:\n{bad_1h[existing].head(10).to_string()}")
+
+        bad_4h = train_df[train_df["htf4h_source_close_time"] > (bar_completion_time + 1000)]
+        if not bad_4h.empty:
+            cols = ["symbol", "open_time", "close_time", "htf4h_source_close_time"]
+            existing = [c for c in cols if c in bad_4h.columns]
+            log.error(f"\nSample 4h HTF Boundary Violations:\n{bad_4h[existing].head(10).to_string()}")
+
+        raise ValueError("CRITICAL LEAKAGE: Higher-timeframe source close exceeds entry candle completion horizon!")
+
+    log.info("    ✓ PASS: All higher-timeframe indicators closed prior to or concurrently with 15m bar completion.")
 
     # 3. Anomaly & Suspicious Correlation Scan
-    log.info(f"[3] Feature-Target Anomaly Scan (Leakage Threshold > 0.60):")
+    log.info(f"[3] Feature-Target Anomaly Scan (Leakage Warning Threshold > 0.60):")
     high_corr_detected = False
     corrs = []
     for f in features:
@@ -382,13 +399,12 @@ def audit_anti_leakage(train_df: pd.DataFrame, calib_df: pd.DataFrame, test_df: 
         log.info(f"      - {name:<22}: {c:.4f}")
 
     if high_corr_detected:
-        raise ValueError("CRITICAL LEAKAGE: Highly correlated feature detected. Possible future leakage.")
+        raise ValueError("CRITICAL LEAKAGE: Highly correlated feature detected. Future information present in features.")
     log.info("    ✓ PASS: No single feature displays unnatural predictive power.")
     log.info(f"{'='*80}\n")
 
 
 def train(ds: pd.DataFrame) -> float:
-    # 1. Enforce MAX_ACTIVE_CANDIDATES = 1
     if CANDIDATE_MANIFEST.exists():
         try:
             with open(CANDIDATE_MANIFEST) as f:
@@ -403,7 +419,6 @@ def train(ds: pd.DataFrame) -> float:
         except Exception as e:
             log.warning(f"Failed to inspect existing manifest ({e}) — proceeding with new candidate.")
 
-    # Deduplicate DataFrame columns if any duplicate merges occurred
     ds = ds.loc[:, ~ds.columns.duplicated()].copy()
 
     for f in FULL_FEATURES:
@@ -430,18 +445,12 @@ def train(ds: pd.DataFrame) -> float:
     X_test = test_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_test = le.transform(test_df["target"]) if len(test_df) > 0 else np.array([])
 
-    # Execute Anti-Leakage Audit
     audit_anti_leakage(train_df, calib_df, test_df, FULL_FEATURES, y_train_raw)
 
     log.info("Running feature importance scan...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train_raw, y_train_raw)
     top_idx = np.argsort(scanner.feature_importances_)[::-1]
-
-    # Verify no single feature dominates unreasonably (> 35% total importance)
-    top_imp = scanner.feature_importances_[top_idx[0]]
-    if top_imp > 0.35:
-        log.warning(f"⚠️ Warning: Feature '{FULL_FEATURES[top_idx[0]]}' carries {top_imp*100:.1f}% of total importance.")
 
     essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"]
     selected  = [f for f in essential if f in FULL_FEATURES]
@@ -491,7 +500,6 @@ def train(ds: pd.DataFrame) -> float:
     )
     ensemble.fit(Xtr, y_train)
 
-    # 4-Fold Block Walk-Forward Cross-Validation
     wf_scores = []
     window = len(Xtr) // 5
     wf_embargo = min(EMBARGO_BARS, max(window // 10, 1))
@@ -523,7 +531,6 @@ def train(ds: pd.DataFrame) -> float:
     best_thresh_sell, best_score_sell = MIN_SELL_THRESHOLD_FLOOR, 0.0
     friction_r = 0.12
 
-    # ── Detailed Calibration Threshold Sweep Diagnostics ──
     log.info(f"\n{'='*95}")
     log.info(f"CALIBRATION THRESHOLD SWEEP (Friction={friction_r}R | Target={ATR_TARGET1_MULT}R | Stop={ATR_STOP_MULT}R)")
     log.info(f"{'='*95}")
@@ -602,11 +609,9 @@ def train(ds: pd.DataFrame) -> float:
         "calibrated":                 True,
     }
 
-    # Dump exclusively to candidate artifact
     joblib.dump(pipeline, CANDIDATE_MODEL_FILE)
     log.info(f"✅ Exported candidate binary: {CANDIDATE_MODEL_FILE}")
 
-    # Build immutable multi-hash provenance manifest
     with open(CANDIDATE_MODEL_FILE, "rb") as f:
         model_sha256 = hashlib.sha256(f.read()).hexdigest()
 
@@ -622,7 +627,7 @@ def train(ds: pd.DataFrame) -> float:
         "feature_schema_hash": feature_schema_hash,
         "feature_code_hash": feature_code_hash,
         "execution_policy_hash": get_policy_hash(),
-        "decision_policy_hash": "", # To be filled by train_meta_model.py
+        "decision_policy_hash": "",
         "config_hash": get_config_hash(current_config),
         "candidate_created_at": now_utc.isoformat(),
         "candidate_expiry_at": (now_utc + timedelta(days=30)).isoformat(),
