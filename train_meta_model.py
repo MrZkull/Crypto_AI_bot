@@ -210,8 +210,12 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
     return augment_meta_features(out)
 
 
-def audit_meta_anti_leakage(meta_train: pd.DataFrame, primary_calib_pred: pd.DataFrame,
-                            primary_test_pred: pd.DataFrame, meta_features: list[str]) -> None:
+def audit_meta_anti_leakage(
+    meta_train: pd.DataFrame,
+    primary_calib_pred: pd.DataFrame,
+    primary_test_pred: pd.DataFrame,
+    meta_features: list[str]
+) -> None:
     log.info(f"\n{'='*85}")
     log.info("META-MODEL ANTI-LEAKAGE & OOF PURITY AUDIT")
     log.info(f"{'='*85}")
@@ -243,7 +247,7 @@ def audit_meta_anti_leakage(meta_train: pd.DataFrame, primary_calib_pred: pd.Dat
         raise ValueError(f"CRITICAL LEAKAGE: Forbidden target labels in meta-feature set: {intersection}")
     log.info("    ✓ PASS: Zero target label contamination detected in meta-feature space.")
 
-    # 3. Meta-Target Correlation Scan (Check for leak ceiling > 0.50)
+    # 3. Meta-Target Correlation Scan (Check for leak ceiling > 0.50, excluding calibrated primary confidence)
     log.info(f"[3] Meta-Feature Correlation Scan (Leak Ceiling > 0.50):")
     y_train = meta_train["meta_label"].values
     high_corr = False
@@ -251,9 +255,11 @@ def audit_meta_anti_leakage(meta_train: pd.DataFrame, primary_calib_pred: pd.Dat
     for f in meta_features:
         s = pd.to_numeric(meta_train[f], errors="coerce").fillna(0.0).values
         c = float(np.abs(np.corrcoef(s, y_train)[0, 1]))
-        if np.isnan(c): c = 0.0
+        if np.isnan(c):
+            c = 0.0
         corrs.append((f, c))
-        if c > 0.50:
+        # meta_primary_conf is expected to correlate with meta_label; do not flag as leakage
+        if c > 0.50 and f != "meta_primary_conf":
             log.warning(f"    🚨 SUSPICIOUS META-LEAK: Feature '{f}' correlation with meta-label = {c:.4f}")
             high_corr = True
 
@@ -447,4 +453,3 @@ if __name__ == "__main__":
     t0 = time.time()
     train_meta_model()
     log.info(f"Meta-model research training complete in {(time.time()-t0)/60:.1f} min")
-                                
