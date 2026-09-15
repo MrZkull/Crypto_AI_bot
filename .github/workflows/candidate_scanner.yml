@@ -2,7 +2,7 @@ name: CryptoBot AI — Candidate Shadow Scanner
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Runs every 15 minutes
+    - cron: '*/15 * * * *'  # Runs every 15 minutes, isolated from live execution
   workflow_dispatch:
 
 concurrency:
@@ -32,7 +32,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install filelock pyarrow fastparquet xgboost scikit-learn
+          pip install filelock pyarrow fastparquet xgboost scikit-learn numpy pandas
 
       - name: Fetch Active Candidate Models from GitHub Release
         env:
@@ -63,7 +63,7 @@ jobs:
           git config user.name "CryptoBot AI Shadow"
           git config user.email "bot-shadow@cryptobot.ai"
 
-          git add candidate_events.jsonl candidate_state.json || true
+          git add candidate_events.jsonl candidate_state.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No candidate state updates to commit."
           else
