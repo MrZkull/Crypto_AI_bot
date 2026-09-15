@@ -76,7 +76,7 @@ N_FEATURES         = 30
 MIN_BARS           = 100
 UNDERSAMPLE_RATIO  = 1.0
 
-# Realistic floors for a 3-class model (random baseline is 0.33)
+# Realistic floors for a 3-class model
 MIN_BUY_THRESHOLD_FLOOR  = 0.36
 MIN_SELL_THRESHOLD_FLOOR = 0.36
 
@@ -88,12 +88,8 @@ INTERVAL_MS_MAP = {
     "4h": 4 * 60 * 60 * 1000,
 }
 
-NEW_FEATURES = [
-    "btc_corr_20",
-    "btc_beta_20",
-    "btc_rel_strength",
-]
-FULL_FEATURES = list(dict.fromkeys(ALL_FEATURES + NEW_FEATURES))
+# Pull exact feature schema to prevent hash mismatch during promotion
+FULL_FEATURES = list(dict.fromkeys(ALL_FEATURES))
 
 
 # ── Strict HTF Alignment & Target Engineering ─────────────────────────
@@ -123,27 +119,6 @@ def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFram
         log.warning(f"_align_btc_to_15m failed ({e})")
         df15["btc_close"] = np.nan
         return df15
-
-
-def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    if "btc_close" in df.columns and df["btc_close"].notna().sum() > 30:
-        btc_ret = df["btc_close"].pct_change()
-        coin_ret = df["close"].pct_change()
-        roll_cov = coin_ret.rolling(20, min_periods=10).cov(btc_ret)
-        roll_var = btc_ret.rolling(20, min_periods=10).var()
-        df["btc_corr_20"] = coin_ret.rolling(20, min_periods=10).corr(btc_ret)
-        df["btc_beta_20"] = roll_cov / roll_var.replace(0, np.nan)
-        df["btc_rel_strength"] = (df["close"].pct_change(6) - df["btc_close"].pct_change(6)) * 100
-    else:
-        df["btc_corr_20"] = 0.0
-        df["btc_beta_20"] = 1.0
-        df["btc_rel_strength"] = 0.0
-
-    df["btc_corr_20"] = df["btc_corr_20"].fillna(0.0).clip(-1, 1)
-    df["btc_beta_20"] = df["btc_beta_20"].fillna(1.0).clip(-5, 5)
-    df["btc_rel_strength"] = df["btc_rel_strength"].fillna(0.0).clip(-50, 50)
-    return df
 
 
 def make_targets(df: pd.DataFrame) -> pd.Series:
@@ -217,7 +192,6 @@ def _process_segment(symbol, df15, df1h, df4h, regime, btc_df15=None):
     if "htf1h_source_close_time" not in df15.columns or "htf4h_source_close_time" not in df15.columns:
         return pd.DataFrame()
 
-    df15 = _add_extra_features(df15)
     df15["symbol"] = symbol
     df15["target"] = make_targets(df15)
     df15["regime"] = regime
@@ -515,7 +489,19 @@ def train(ds: pd.DataFrame) -> float:
     sweep_thresholds = np.round(np.arange(0.32, 0.62, 0.02), 2)
 
     for thresh in sweep_thresholds:
-        yp = [np.argmax(p) if np.argmax(p) != nt_idx and p[np.argmax(p)] >= thresh else nt_idx for p in calib_probas]
+        # EXACT MATCH TO LIVE SCANNER EVALUATION
+        yp = []
+        for p in calib_probas:
+            p_buy = p[buy_idx]
+            p_sell = p[sell_idx]
+            
+            if p_buy >= thresh and p_buy > p_sell:
+                yp.append(buy_idx)
+            elif p_sell >= thresh and p_sell > p_buy:
+                yp.append(sell_idx)
+            else:
+                yp.append(nt_idx)
+                
         yp = np.array(yp)
         bm, sm = (yp == buy_idx), (yp == sell_idx)
 
@@ -549,14 +535,18 @@ def train(ds: pd.DataFrame) -> float:
 
     probas = ensemble.predict_proba(Xte)
     y_pred_tuned = []
+    
+    # EXACT MATCH TO LIVE SCANNER EVALUATION
     for p in probas:
-        pred_c = np.argmax(p)
-        if pred_c == buy_idx and p[pred_c] >= best_thresh_buy:
+        p_buy = p[buy_idx]
+        p_sell = p[sell_idx]
+        if p_buy >= best_thresh_buy and p_buy > p_sell:
             y_pred_tuned.append(buy_idx)
-        elif pred_c == sell_idx and p[pred_c] >= best_thresh_sell:
+        elif p_sell >= best_thresh_sell and p_sell > p_buy:
             y_pred_tuned.append(sell_idx)
         else:
             y_pred_tuned.append(nt_idx)
+            
     y_pred_tuned = np.array(y_pred_tuned)
 
     acc = accuracy_score(y_test, y_pred_tuned)
@@ -583,7 +573,6 @@ def train(ds: pd.DataFrame) -> float:
         "calibrated":                 True,
     }
 
-    # Use compress=3 to drop file size from 166MB to ~35-45MB
     joblib.dump(pipeline, CANDIDATE_MODEL_FILE, compress=3)
     log.info(f"✅ Exported compressed candidate binary: {CANDIDATE_MODEL_FILE}")
 
