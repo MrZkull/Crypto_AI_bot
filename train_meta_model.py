@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-# train_meta_model.py — Research Pipeline: Unwrapped OOF Meta-Training & Canonical Candidate Appending
+# train_meta_model.py — Research Pipeline: Unwrapped OOF Meta-Training, Anti-Leakage Audits & Candidate Appending
 
+import os
+import sys
 import json
-import logging
 import time
+import logging
 import hashlib
+from pathlib import Path
 from datetime import datetime, timezone
+
 import numpy as np
 import pandas as pd
 import joblib
@@ -40,11 +44,18 @@ from train_model import (
 from gate10 import evaluate_gate_10
 from execution_policy import get_file_hash
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+try:
+    from config import ATR_STOP_MULT, ATR_TARGET1_MULT
+except ImportError:
+    ATR_STOP_MULT = 2.5
+    ATR_TARGET1_MULT = 3.5
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 CANDIDATE_MODEL_FILE = "candidate_model.pkl"
 META_MODEL_FILE = "candidate_meta_model.pkl"
+CANDIDATE_MANIFEST = Path("candidate_manifest.json")
 N_META_FEATURES = 25
 META_SYSTEM_FEATURES = [
     "meta_primary_conf",
@@ -199,8 +210,67 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
     return augment_meta_features(out)
 
 
+def audit_meta_anti_leakage(meta_train: pd.DataFrame, primary_calib_pred: pd.DataFrame,
+                            primary_test_pred: pd.DataFrame, meta_features: list[str]) -> None:
+    log.info(f"\n{'='*85}")
+    log.info("META-MODEL ANTI-LEAKAGE & OOF PURITY AUDIT")
+    log.info(f"{'='*85}")
+
+    # 1. Partition Verification & Embargo Isolation
+    t_train_max = meta_train["open_time"].max()
+    t_calib_min = primary_calib_pred["open_time"].min()
+    t_calib_max = primary_calib_pred["open_time"].max()
+    t_test_min  = primary_test_pred["open_time"].min()
+
+    gap_tc = (t_calib_min - t_train_max) / (3600 * 1000)
+    gap_ct = (t_test_min - t_calib_max) / (3600 * 1000)
+
+    log.info(f"[1] Meta Partition Chronology:")
+    log.info(f"    OOF Meta-Train End: {datetime.fromtimestamp(t_train_max/1000, tz=timezone.utc).isoformat()}")
+    log.info(f"    Calib Pred Start:   {datetime.fromtimestamp(t_calib_min/1000, tz=timezone.utc).isoformat()} (Embargo Gap: {gap_tc:.1f}h)")
+    log.info(f"    Calib Pred End:     {datetime.fromtimestamp(t_calib_max/1000, tz=timezone.utc).isoformat()}")
+    log.info(f"    Test Pred Start:    {datetime.fromtimestamp(t_test_min/1000, tz=timezone.utc).isoformat()} (Embargo Gap: {gap_ct:.1f}h)")
+
+    if t_train_max >= t_calib_min or t_calib_max >= t_test_min:
+        raise ValueError("CRITICAL LEAKAGE: Meta-training chronological split inversion or zero embargo!")
+    log.info("    ✓ PASS: Meta training, calibration, and test splits are strictly ordered.")
+
+    # 2. Target Isolation (Prove no future outcome in meta features)
+    forbidden_features = {"target", "meta_label", "future_close", "barrier_hit"}
+    intersection = forbidden_features.intersection(set(meta_features))
+    log.info(f"[2] Forbidden Feature Contamination Scan:")
+    if intersection:
+        raise ValueError(f"CRITICAL LEAKAGE: Forbidden target labels in meta-feature set: {intersection}")
+    log.info("    ✓ PASS: Zero target label contamination detected in meta-feature space.")
+
+    # 3. Meta-Target Correlation Scan (Check for leak ceiling > 0.50)
+    log.info(f"[3] Meta-Feature Correlation Scan (Leak Ceiling > 0.50):")
+    y_train = meta_train["meta_label"].values
+    high_corr = False
+    corrs = []
+    for f in meta_features:
+        s = pd.to_numeric(meta_train[f], errors="coerce").fillna(0.0).values
+        c = float(np.abs(np.corrcoef(s, y_train)[0, 1]))
+        if np.isnan(c): c = 0.0
+        corrs.append((f, c))
+        if c > 0.50:
+            log.warning(f"    🚨 SUSPICIOUS META-LEAK: Feature '{f}' correlation with meta-label = {c:.4f}")
+            high_corr = True
+
+    for name, c in sorted(corrs, key=lambda x: x[1], reverse=True)[:5]:
+        log.info(f"      - {name:<26}: {c:.4f}")
+
+    if high_corr:
+        raise ValueError("CRITICAL LEAKAGE: Meta-feature displays unnatural predictive correlation.")
+    log.info("    ✓ PASS: All meta-feature correlations fall within expected statistical bounds.")
+    log.info(f"{'='*85}\n")
+
+
 def train_meta_model():
     log.info("Loading primary candidate artifact...")
+    if not Path(CANDIDATE_MODEL_FILE).exists():
+        raise FileNotFoundError(f"Primary artifact {CANDIDATE_MODEL_FILE} not found. Run train_model.py first.")
+
     primary_pipeline = joblib.load(CANDIDATE_MODEL_FILE)
     ds = build_dataset_from_local_parquet()
     ds = ds.loc[:, ~ds.columns.duplicated()].copy()
@@ -213,10 +283,12 @@ def train_meta_model():
 
     log.info(f"PRIMARY ERAS: train={len(primary_train):,} calib={len(primary_calib):,} locked_test={len(primary_test):,}")
 
+    log.info("Generating Out-of-Fold (OOF) meta-training labels across primary train...")
     meta_train = build_oof_meta_training(primary_train, primary_pipeline)
     if len(meta_train) < 50 or meta_train["meta_label"].nunique() < 2:
         raise ValueError("Insufficient two-class OOF meta-training data")
 
+    log.info("Generating primary predictions for calibration and locked test sets...")
     primary_calib_pred = augment_meta_features(build_meta_labels(get_primary_predictions(primary_calib.copy(), primary_pipeline)))
     if len(primary_calib_pred) < 20 or primary_calib_pred["meta_label"].nunique() < 2:
         raise ValueError("Insufficient two-class primary calibration data")
@@ -238,6 +310,7 @@ def train_meta_model():
     X_train_full = meta_train[meta_feature_universe].replace([np.inf, -np.inf], np.nan).fillna(0).values
     y_train = meta_train["meta_label"].values
 
+    log.info("Selecting optimal meta-features...")
     scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="logloss")
     scanner.fit(X_train_full, y_train)
     top_idx = np.argsort(scanner.feature_importances_)[::-1][:N_META_FEATURES]
@@ -247,6 +320,9 @@ def train_meta_model():
             meta_features.append(f)
     meta_features = meta_features[:min(N_META_FEATURES + len(META_SYSTEM_FEATURES), len(meta_feature_universe))]
 
+    # Run Anti-Leakage Audit on Meta-Data
+    audit_meta_anti_leakage(meta_train, primary_calib_pred, primary_test_pred, meta_features)
+
     X_train = meta_train[meta_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
     X_calib = primary_calib_pred[meta_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
     y_calib = primary_calib_pred["meta_label"].values
@@ -254,9 +330,17 @@ def train_meta_model():
     X_test = primary_test_pred[meta_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
     y_test = primary_test_pred["meta_label"].values
 
-    meta_xgb = XGBClassifier(n_estimators=300, max_depth=5, learning_rate=0.03, subsample=0.85, colsample_bytree=0.85, min_child_weight=3, random_state=42, n_jobs=-1)
-    meta_rf = RandomForestClassifier(n_estimators=300, max_depth=10, min_samples_leaf=5, random_state=42, n_jobs=-1)
-    meta_ensemble = VotingClassifier(estimators=[("xgb", meta_xgb), ("rf", meta_rf)], voting="soft", weights=[2, 1])
+    log.info("Training Meta-Model Ensemble (XGBoost + Random Forest)...")
+    meta_xgb = XGBClassifier(
+        n_estimators=300, max_depth=5, learning_rate=0.03, subsample=0.85,
+        colsample_bytree=0.85, min_child_weight=3, random_state=42, n_jobs=-1
+    )
+    meta_rf = RandomForestClassifier(
+        n_estimators=300, max_depth=10, min_samples_leaf=5, random_state=42, n_jobs=-1
+    )
+    meta_ensemble = VotingClassifier(
+        estimators=[("xgb", meta_xgb), ("rf", meta_rf)], voting="soft", weights=[2, 1]
+    )
     meta_ensemble.fit(X_train, y_train)
 
     calibrated_meta = CalibratedClassifierCV(estimator=FrozenEstimator(meta_ensemble), method="isotonic")
@@ -270,20 +354,52 @@ def train_meta_model():
     calib_proba = calibrated_meta.predict_proba(X_calib)[:, pos_idx]
     test_proba  = calibrated_meta.predict_proba(X_test)[:, pos_idx]
 
+    primary_baseline_threshold = float(primary_pipeline.get("recommended_threshold", 0.45))
+    friction_r = 0.12
+    calib_primary_selected = primary_calib_pred["primary_conf"] >= primary_baseline_threshold
+    base_prec = float(y_calib[calib_primary_selected].mean() * 100) if calib_primary_selected.sum() > 0 else 0.0
+
+    # ── Detailed Meta-Model Threshold Calibration Sweep Diagnostics ──
     best_thresh, best_score = 0.50, 0.0
+
+    log.info(f"\n{'='*95}")
+    log.info(f"META-MODEL THRESHOLD CALIBRATION SWEEP (Primary Baseline Precision: {base_prec:.1f}%)")
+    log.info(f"{'='*95}")
+    log.info(
+        f"{'Thresh':<8} | {'Trades':<8} | {'Precision':<10} | {'Prec Lift':<10} | "
+        f"{'Retention':<10} | {'Theo EV_R':<10} | {'Score':<8}"
+    )
+    log.info(f"{'-'*95}")
+
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
-        mask = calib_proba >= thresh
-        if mask.sum() < 10:
+        mask = (calib_proba >= thresh) & calib_primary_selected
+        n_trades = int(mask.sum())
+        if n_trades < 10:
+            log.info(f"{thresh:<8.2f} | {n_trades:<8} | {'SKIPPED (<10 qualified trades)':<58}")
             continue
-        score = float(y_calib[mask].mean()) * np.sqrt(mask.sum())
+
+        prec = float(y_calib[mask].mean())
+        prec_lift = (prec * 100.0) - base_prec
+        retention = (n_trades / max(calib_primary_selected.sum(), 1)) * 100.0
+        ev_r = prec * ATR_TARGET1_MULT - (1.0 - prec) * ATR_STOP_MULT - friction_r
+        score = prec * np.sqrt(n_trades)
+
+        log.info(
+            f"{thresh:<8.2f} | {n_trades:<8} | {prec*100:>8.1f}%  | {prec_lift:>+8.1f}%  | "
+            f"{retention:>8.1f}%  | {ev_r:>+8.2f}R | {score:>8.2f}"
+        )
+
         if score > best_score:
             best_score, best_thresh = score, thresh
 
-    primary_baseline_threshold = float(primary_pipeline.get("recommended_threshold", 0.45))
-    friction_r = 0.12
+    log.info(f"{'-'*95}")
+    log.info(f"✅ Selected Optimal Meta Threshold: {best_thresh:.2f} (Score: {best_score:.2f})")
+    log.info(f"{'='*95}\n")
 
+    # ── Synthetic Barrier Gate 10 Validation ──
     synth_df = pd.DataFrame({
         "pred_id": primary_test_pred["pred_id"],
+        "open_time": primary_test_pred["open_time"],
         "evidence_type": "SYNTHETIC_BARRIER",
         "primary_selected": (primary_test_pred["primary_conf"] >= primary_baseline_threshold),
         "meta_selected": (primary_test_pred["primary_conf"] >= primary_baseline_threshold) & (test_proba >= best_thresh),
@@ -292,7 +408,7 @@ def train_meta_model():
     })
 
     gate10_result = evaluate_gate_10(synth_df)
-    log.info(f"Synthetic Research Gate 10 Result: {json.dumps(gate10_result, indent=2)}")
+    log.info(f"Synthetic Research Gate 10 Result:\n{json.dumps(gate10_result, indent=2)}")
 
     meta_pipeline = {
         "meta_ensemble": calibrated_meta,
@@ -304,23 +420,25 @@ def train_meta_model():
         "gate10_summary": gate10_result,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
-    
+
     joblib.dump(meta_pipeline, META_MODEL_FILE)
     log.info(f"✅ Saved meta-model pipeline: {META_MODEL_FILE}")
 
     with open("meta_model_performance.json", "w") as f:
         json.dump(gate10_result, f, indent=2)
 
+    # ── Cryptographic Provenance Manifest Update ──
     meta_sha256 = get_file_hash(META_MODEL_FILE)
     try:
-        with open("candidate_manifest.json", "r") as f:
-            manifest = json.load(f)
-            
-        manifest["decision_policy_hash"] = meta_sha256
-        
-        with open("candidate_manifest.json", "w") as f:
-            json.dump(manifest, f, indent=2)
-        log.info(f"✅ Appended Meta-Model SHA256 to Candidate Manifest.")
+        if CANDIDATE_MANIFEST.exists():
+            with open(CANDIDATE_MANIFEST, "r") as f:
+                manifest = json.load(f)
+
+            manifest["decision_policy_hash"] = meta_sha256
+
+            with open(CANDIDATE_MANIFEST, "w") as f:
+                json.dump(manifest, f, indent=2)
+            log.info(f"✅ Appended Meta-Model SHA256 ({meta_sha256[:8]}...) to Candidate Manifest.")
     except Exception as e:
         log.error(f"Failed to append hash to candidate manifest: {e}")
 
@@ -328,5 +446,5 @@ def train_meta_model():
 if __name__ == "__main__":
     t0 = time.time()
     train_meta_model()
-    log.info(f"Meta-model training complete in {(time.time()-t0)/60:.1f} min")
-    
+    log.info(f"Meta-model research training complete in {(time.time()-t0)/60:.1f} min")
+                                
