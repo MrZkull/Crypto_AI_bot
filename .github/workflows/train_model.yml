@@ -115,7 +115,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Upload Candidate Artifacts
+      - name: Publish Candidate Binaries to GitHub Pre-Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Ensure rolling pre-release 'candidate-latest' exists
+          gh release view candidate-latest >/dev/null 2>&1 || gh release create candidate-latest \
+            --title "Candidate Model (Shadow Evaluation)" \
+            --notes "Active prospective candidate awaiting empirical Gate 10 validation." \
+            --prerelease
+
+          # Upload candidate binaries to GitHub Release (bypasses Git 100MB file limit)
+          gh release upload candidate-latest \
+            candidate_model.pkl \
+            candidate_meta_model.pkl \
+            candidate_manifest.json \
+            --clobber
+          echo "✓ Successfully uploaded candidate binaries to release 'candidate-latest'."
+
+      - name: Upload Candidate Workflow Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: candidate-build-${{ github.run_number }}
@@ -130,5 +149,5 @@ jobs:
 
       - name: Log Immutable Candidate Status
         run: |
-          echo "✅ Candidate successfully frozen and awaits prospective execution."
-          echo "Run promote_candidate.py on your execution server to evaluate empirical Gate 10."
+          echo "✅ Candidate successfully frozen and uploaded to GitHub Pre-Release."
+          echo "The Candidate Shadow Scanner will now pull binaries from release 'candidate-latest'."
