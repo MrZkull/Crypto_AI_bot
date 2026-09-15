@@ -49,27 +49,53 @@ REQUIRED_COLUMNS = [
 ]
 
 
-def _fetch_klines_batch(session: requests.Session, symbol: str, interval: str, end_time_ms: int = None) -> list:
-    params = {"symbol": symbol, "interval": interval, "limit": REQUEST_LIMIT}
-    if end_time_ms is not None:
-        params["endTime"] = end_time_ms
+def fetch_klines(symbol: str, interval: str, limit: int = 150) -> pd.DataFrame:
+    """Fetches public candles strictly from Binance spot endpoints (no US IP block on Vision)."""
+    if native_get_data is not None:
+        try:
+            df_native = native_get_data(symbol, interval, limit=limit)
+            if df_native is not None and not df_native.empty and len(df_native) >= 20:
+                return df_native.sort_values("open_time").reset_index(drop=True)
+        except Exception:
+            pass
 
-    last_err = None
-    for attempt in range(RETRY_COUNT):
-        for endpoint in BINANCE_ENDPOINTS:
-            try:
-                r = session.get(endpoint, params=params, timeout=REQUEST_TIMEOUT)
-                if r.status_code == 200:
-                    data = r.json()
-                    if isinstance(data, list):
-                        return data
-                elif r.status_code == 429:
-                    time.sleep(5.0 * (attempt + 1))
-            except Exception as e:
-                last_err = e
-        time.sleep(1.0 * (attempt + 1))
+    endpoints = [
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
+    ]
 
-    raise RuntimeError(f"Failed fetching {symbol} {interval} batch (endTime={end_time_ms}): {last_err}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
+
+    for url in endpoints:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                if resp.status == 200:
+                    raw = json.loads(resp.read().decode())
+                    rows = [
+                        {
+                            "open_time": int(k[0]),
+                            "open": float(k[1]),
+                            "high": float(k[2]),
+                            "low": float(k[3]),
+                            "close": float(k[4]),
+                            "volume": float(k[5]),
+                            "close_time": int(k[6]),
+                            "taker_buy_base_vol": float(k[9]) if len(k) > 9 else 0.0,
+                        }
+                        for k in raw
+                    ]
+                    df = pd.DataFrame(rows)
+                    if not df.empty:
+                        return df.sort_values("open_time").reset_index(drop=True)
+        except Exception:
+            continue
+
+    log.warning(f"Failed fetching {interval} candles for {symbol} across spot endpoints")
+    return pd.DataFrame()
 
 
 def _raw_to_frame(raw: list, interval: str) -> pd.DataFrame:
