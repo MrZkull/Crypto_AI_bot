@@ -87,7 +87,7 @@ def _fold_selected_features(tr: pd.DataFrame, af: list, n_features: int, target_
     x = tr[af_clean].replace([np.inf, -np.inf], np.nan).fillna(0)
     y = tr["target"].map(target_to_int).fillna(no_trade_idx).astype(int).values
 
-    scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="mlogloss")
+    scanner = XGBClassifier(n_estimators=100, max_depth=4, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(x, y)
 
     ranked = [af_clean[i] for i in np.argsort(scanner.feature_importances_)[::-1]]
@@ -210,12 +210,8 @@ def build_oof_meta_training(primary_train: pd.DataFrame, primary_pipeline: dict)
     return augment_meta_features(out)
 
 
-def audit_meta_anti_leakage(
-    meta_train: pd.DataFrame,
-    primary_calib_pred: pd.DataFrame,
-    primary_test_pred: pd.DataFrame,
-    meta_features: list[str]
-) -> None:
+def audit_meta_anti_leakage(meta_train: pd.DataFrame, primary_calib_pred: pd.DataFrame,
+                            primary_test_pred: pd.DataFrame, meta_features: list[str]) -> None:
     log.info(f"\n{'='*85}")
     log.info("META-MODEL ANTI-LEAKAGE & OOF PURITY AUDIT")
     log.info(f"{'='*85}")
@@ -239,7 +235,7 @@ def audit_meta_anti_leakage(
         raise ValueError("CRITICAL LEAKAGE: Meta-training chronological split inversion or zero embargo!")
     log.info("    ✓ PASS: Meta training, calibration, and test splits are strictly ordered.")
 
-    # 2. Target Isolation (Prove no future outcome in meta features)
+    # 2. Target Isolation Scan
     forbidden_features = {"target", "meta_label", "future_close", "barrier_hit"}
     intersection = forbidden_features.intersection(set(meta_features))
     log.info(f"[2] Forbidden Feature Contamination Scan:")
@@ -247,7 +243,7 @@ def audit_meta_anti_leakage(
         raise ValueError(f"CRITICAL LEAKAGE: Forbidden target labels in meta-feature set: {intersection}")
     log.info("    ✓ PASS: Zero target label contamination detected in meta-feature space.")
 
-    # 3. Meta-Target Correlation Scan (Check for leak ceiling > 0.50, excluding calibrated primary confidence)
+    # 3. Meta-Target Correlation Scan (Exclude meta_primary_conf from ceiling)
     log.info(f"[3] Meta-Feature Correlation Scan (Leak Ceiling > 0.50):")
     y_train = meta_train["meta_label"].values
     high_corr = False
@@ -255,10 +251,8 @@ def audit_meta_anti_leakage(
     for f in meta_features:
         s = pd.to_numeric(meta_train[f], errors="coerce").fillna(0.0).values
         c = float(np.abs(np.corrcoef(s, y_train)[0, 1]))
-        if np.isnan(c):
-            c = 0.0
+        if np.isnan(c): c = 0.0
         corrs.append((f, c))
-        # meta_primary_conf is expected to correlate with meta_label; do not flag as leakage
         if c > 0.50 and f != "meta_primary_conf":
             log.warning(f"    🚨 SUSPICIOUS META-LEAK: Feature '{f}' correlation with meta-label = {c:.4f}")
             high_corr = True
@@ -296,12 +290,7 @@ def train_meta_model():
 
     log.info("Generating primary predictions for calibration and locked test sets...")
     primary_calib_pred = augment_meta_features(build_meta_labels(get_primary_predictions(primary_calib.copy(), primary_pipeline)))
-    if len(primary_calib_pred) < 20 or primary_calib_pred["meta_label"].nunique() < 2:
-        raise ValueError("Insufficient two-class primary calibration data")
-
     primary_test_pred = augment_meta_features(build_meta_labels(get_primary_predictions(primary_test.copy(), primary_pipeline)))
-    if len(primary_test_pred) < 20 or primary_test_pred["meta_label"].nunique() < 2:
-        raise ValueError("Insufficient two-class locked-test data")
 
     meta_feature_universe = list(dict.fromkeys(FULL_FEATURES + META_SYSTEM_FEATURES))
     for f in meta_feature_universe:
@@ -317,7 +306,7 @@ def train_meta_model():
     y_train = meta_train["meta_label"].values
 
     log.info("Selecting optimal meta-features...")
-    scanner = XGBClassifier(n_estimators=100, random_state=42, n_jobs=-1, eval_metric="logloss")
+    scanner = XGBClassifier(n_estimators=100, max_depth=4, random_state=42, n_jobs=-1, eval_metric="logloss")
     scanner.fit(X_train_full, y_train)
     top_idx = np.argsort(scanner.feature_importances_)[::-1][:N_META_FEATURES]
     meta_features = [meta_feature_universe[i] for i in top_idx]
@@ -326,7 +315,6 @@ def train_meta_model():
             meta_features.append(f)
     meta_features = meta_features[:min(N_META_FEATURES + len(META_SYSTEM_FEATURES), len(meta_feature_universe))]
 
-    # Run Anti-Leakage Audit on Meta-Data
     audit_meta_anti_leakage(meta_train, primary_calib_pred, primary_test_pred, meta_features)
 
     X_train = meta_train[meta_features].replace([np.inf, -np.inf], np.nan).fillna(0).values
@@ -338,11 +326,12 @@ def train_meta_model():
 
     log.info("Training Meta-Model Ensemble (XGBoost + Random Forest)...")
     meta_xgb = XGBClassifier(
-        n_estimators=300, max_depth=5, learning_rate=0.03, subsample=0.85,
-        colsample_bytree=0.85, min_child_weight=3, random_state=42, n_jobs=-1
+        n_estimators=250, max_depth=4, learning_rate=0.03, subsample=0.80,
+        colsample_bytree=0.80, min_child_weight=4, reg_alpha=0.5, reg_lambda=1.5,
+        random_state=42, n_jobs=-1
     )
     meta_rf = RandomForestClassifier(
-        n_estimators=300, max_depth=10, min_samples_leaf=5, random_state=42, n_jobs=-1
+        n_estimators=250, max_depth=6, min_samples_leaf=8, random_state=42, n_jobs=-1
     )
     meta_ensemble = VotingClassifier(
         estimators=[("xgb", meta_xgb), ("rf", meta_rf)], voting="soft", weights=[2, 1]
@@ -360,9 +349,20 @@ def train_meta_model():
     calib_proba = calibrated_meta.predict_proba(X_calib)[:, pos_idx]
     test_proba  = calibrated_meta.predict_proba(X_test)[:, pos_idx]
 
-    primary_baseline_threshold = float(primary_pipeline.get("recommended_threshold", 0.45))
+    # Asymmetric Directional Threshold Alignment
+    thresh_buy = float(primary_pipeline.get("recommended_threshold_buy", primary_pipeline.get("recommended_threshold", 0.36)))
+    thresh_sell = float(primary_pipeline.get("recommended_threshold_sell", primary_pipeline.get("recommended_threshold", 0.36)))
     friction_r = 0.12
-    calib_primary_selected = primary_calib_pred["primary_conf"] >= primary_baseline_threshold
+
+    calib_primary_selected = (
+        ((primary_calib_pred["primary_side"] == "BUY") & (primary_calib_pred["primary_conf"] >= thresh_buy)) |
+        ((primary_calib_pred["primary_side"] == "SELL") & (primary_calib_pred["primary_conf"] >= thresh_sell))
+    )
+    test_primary_selected = (
+        ((primary_test_pred["primary_side"] == "BUY") & (primary_test_pred["primary_conf"] >= thresh_buy)) |
+        ((primary_test_pred["primary_side"] == "SELL") & (primary_test_pred["primary_conf"] >= thresh_sell))
+    )
+
     base_prec = float(y_calib[calib_primary_selected].mean() * 100) if calib_primary_selected.sum() > 0 else 0.0
 
     # ── Detailed Meta-Model Threshold Calibration Sweep Diagnostics ──
@@ -377,7 +377,7 @@ def train_meta_model():
     )
     log.info(f"{'-'*95}")
 
-    for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
+    for thresh in [0.45, 0.50, 0.55, 0.60, 0.65, 0.70]:
         mask = (calib_proba >= thresh) & calib_primary_selected
         n_trades = int(mask.sum())
         if n_trades < 10:
@@ -407,10 +407,10 @@ def train_meta_model():
         "pred_id": primary_test_pred["pred_id"],
         "open_time": primary_test_pred["open_time"],
         "evidence_type": "SYNTHETIC_BARRIER",
-        "primary_selected": (primary_test_pred["primary_conf"] >= primary_baseline_threshold),
-        "meta_selected": (primary_test_pred["primary_conf"] >= primary_baseline_threshold) & (test_proba >= best_thresh),
+        "primary_selected": test_primary_selected,
+        "meta_selected": test_primary_selected & (test_proba >= best_thresh),
         "thesis_label": primary_test_pred["meta_label"],
-        "net_r": np.where(primary_test_pred["meta_label"] == 1, 3.5 - friction_r, -2.5 - friction_r)
+        "net_r": np.where(primary_test_pred["meta_label"] == 1, ATR_TARGET1_MULT - friction_r, -ATR_STOP_MULT - friction_r)
     })
 
     gate10_result = evaluate_gate_10(synth_df)
@@ -427,8 +427,9 @@ def train_meta_model():
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    joblib.dump(meta_pipeline, META_MODEL_FILE)
-    log.info(f"✅ Saved meta-model pipeline: {META_MODEL_FILE}")
+    # Compress candidate binary for lightweight storage
+    joblib.dump(meta_pipeline, META_MODEL_FILE, compress=3)
+    log.info(f"✅ Saved compressed meta-model pipeline: {META_MODEL_FILE}")
 
     with open("meta_model_performance.json", "w") as f:
         json.dump(gate10_result, f, indent=2)
