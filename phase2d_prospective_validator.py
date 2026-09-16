@@ -19,15 +19,12 @@ Key design:
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import math
-import os
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import joblib
 import numpy as np
@@ -45,6 +42,7 @@ SYMBOLS = [
 ]
 
 ENTRY_MS = 15 * 60 * 1000
+HOUR_MS = 60 * 60 * 1000
 LOOKAHEAD = 24
 BUY_TP_R = 3.5
 BUY_SL_R = 2.5
@@ -58,10 +56,19 @@ STATE_FILE = Path("research_outputs/phase2d_state.json")
 RESULTS_FILE = Path("research_outputs/phase2d_results.json")
 SNAPSHOT_FILE = Path("research_outputs/phase2d_latest_snapshot.json")
 
-LEGACY_FE_PATH = Path(os.getenv("PHASE2D_LEGACY_FE", "legacy_v20/feature_engineering.py"))
 REQUEST_TIMEOUT = 12
 CANDLE_LIMIT_15M = 300
-STATE_SCHEMA = 2
+CANDLE_LIMIT_1H = 300
+STATE_SCHEMA = 4
+
+LOCKED_CANDIDATE_SHA = (
+    "45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc"
+    "90b8b9b6d82fc3838c4308c2"
+)
+
+LOCKED_PRODUCTION_SHA = (
+    "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
+)
 
 
 def utc_now() -> str:
@@ -111,47 +118,28 @@ def load_model(path: Path):
     return model
 
 
-def load_legacy_feature_engineering():
-    if not LEGACY_FE_PATH.exists():
-        raise FileNotFoundError(f"Legacy v2.0 feature_engineering.py not found: {LEGACY_FE_PATH}")
-    spec = importlib.util.spec_from_file_location("phase2d_legacy_feature_engineering", LEGACY_FE_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Could not load legacy feature engineering module: {LEGACY_FE_PATH}")
-    root = str(LEGACY_FE_PATH.parent.resolve())
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    if not hasattr(module, "add_indicators"):
-        raise RuntimeError("Legacy v2.0 feature_engineering.py has no add_indicators()")
-    return module
-
-
 def _deribit_symbol(symbol: str) -> str:
     return f"{symbol.replace('USDT', '').upper()}_USDC-PERPETUAL"
 
 
-def fetch_deribit_15m(symbol: str, limit: int = CANDLE_LIMIT_15M) -> pd.DataFrame:
+def fetch_deribit(symbol: str, resolution: str = "15", limit: int = CANDLE_LIMIT_15M) -> pd.DataFrame:
+    if resolution not in {"15", "60"}:
+        raise ValueError(f"Unsupported resolution: {resolution}")
     now_ms = int(time.time() * 1000)
-    interval_ms = ENTRY_MS
-    start_ms = now_ms - interval_ms * (limit + 5)
+    interval_ms = ENTRY_MS if resolution == "15" else HOUR_MS
+    start_ms = now_ms - interval_ms * (limit + 20)
     url = "https://www.deribit.com/api/v2/public/get_tradingview_chart_data"
-    r = requests.get(
-        url,
-        params={
-            "instrument_name": _deribit_symbol(symbol),
-            "resolution": "15",
-            "start_timestamp": start_ms,
-            "end_timestamp": now_ms,
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
+    r = requests.get(url, params={
+        "instrument_name": _deribit_symbol(symbol),
+        "resolution": resolution,
+        "start_timestamp": start_ms,
+        "end_timestamp": now_ms,
+    }, timeout=REQUEST_TIMEOUT)
     r.raise_for_status()
     result = r.json().get("result", {})
     ticks = result.get("ticks", [])
     if not ticks:
         return pd.DataFrame()
-
     raw = pd.DataFrame({
         "open_time": ticks,
         "open": result.get("open", []),
@@ -160,20 +148,43 @@ def fetch_deribit_15m(symbol: str, limit: int = CANDLE_LIMIT_15M) -> pd.DataFram
         "close": result.get("close", []),
         "volume": result.get("volume", []),
     })
-    raw["taker_buy_base_vol"] = pd.to_numeric(raw["volume"], errors="coerce") * 0.5
-    for c in ["open", "high", "low", "close", "volume", "taker_buy_base_vol"]:
+    for c in ["open", "high", "low", "close", "volume"]:
         raw[c] = pd.to_numeric(raw[c], errors="coerce")
     raw["open_time"] = pd.to_numeric(raw["open_time"], errors="coerce")
     raw = raw.dropna().copy()
+    if raw.empty:
+        return raw
     raw["open_time"] = raw["open_time"].astype("int64")
     raw = raw.drop_duplicates("open_time").sort_values("open_time").reset_index(drop=True)
-
-    # Keep candles whose close time has passed. This preserves the latest fully
-    # closed candle and avoids the prior accidental two-candle lag.
-    raw = raw[raw["open_time"] + interval_ms <= now_ms]
+    raw["close_time"] = raw["open_time"] + interval_ms
+    raw = raw[raw["close_time"] <= now_ms]
+    raw["taker_buy_base_vol"] = raw["volume"] * 0.5
     return raw.tail(limit).reset_index(drop=True)
 
+def fetch_deribit_15m(symbol: str, limit: int = CANDLE_LIMIT_15M) -> pd.DataFrame:
+    return fetch_deribit(symbol, "15", limit)
 
+def fetch_deribit_1h(symbol: str, limit: int = CANDLE_LIMIT_1H) -> pd.DataFrame:
+    return fetch_deribit(symbol, "60", limit)
+
+def aggregate_1h_to_4h(df1h: pd.DataFrame) -> pd.DataFrame:
+    if df1h.empty:
+        return pd.DataFrame()
+    x = df1h.sort_values("open_time").copy()
+    x["bucket"] = x["open_time"] // (4 * HOUR_MS)
+    g = x.groupby("bucket", sort=True).agg(
+        open_time=("open_time", "min"),
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+        bars=("open_time", "count"),
+    ).reset_index(drop=True)
+    g = g[g["bars"] == 4].drop(columns=["bars"]).copy()
+    g["close_time"] = g["open_time"] + 4 * HOUR_MS
+    g["taker_buy_base_vol"] = g["volume"] * 0.5
+    return g.reset_index(drop=True)
 def current_row(raw15: pd.DataFrame, symbol: str) -> pd.Series:
     df = add_current_indicators(raw15.copy())
     if df.empty:
@@ -183,17 +194,75 @@ def current_row(raw15: pd.DataFrame, symbol: str) -> pd.Series:
     return row
 
 
-def legacy_row(raw15: pd.DataFrame, symbol: str, legacy_module) -> pd.Series:
-    df = legacy_module.add_indicators(raw15.copy())
-    if df is None or len(df) == 0:
-        raise RuntimeError(f"{symbol}: legacy v2.0 feature engineering returned no rows")
-    row = df.iloc[-1].copy()
-    row["symbol"] = symbol
-    return row
+def build_production_row(raw15: pd.DataFrame, symbol: str, btc15: pd.DataFrame) -> pd.Series:
+    if len(raw15) < 220:
+        raise RuntimeError(f"{symbol}: insufficient 15m history")
+    d = add_current_indicators(raw15.copy())
+    c = d["close"].astype(float)
+    e9 = c.ewm(span=9, adjust=False).mean()
+    e20 = c.ewm(span=20, adjust=False).mean()
+    e50 = c.ewm(span=50, adjust=False).mean()
+    e200 = c.ewm(span=200, adjust=False).mean()
+    d["ema9"], d["ema20"], d["ema50"], d["ema200"] = e9, e20, e50, e200
+    d["ema20_slope"] = e20 / e20.shift(5) - 1.0
+    d["ema50_slope"] = e50 / e50.shift(5) - 1.0
+    d["price_vs_ema50"] = c / e50.replace(0, np.nan) - 1.0
+    d["price_vs_ema200"] = c / e200.replace(0, np.nan) - 1.0
+    sma20 = c.rolling(20, min_periods=1).mean()
+    std20 = c.rolling(20, min_periods=1).std()
+    d["bb_high"] = sma20 + 2.0 * std20
+    d["bb_low"] = sma20 - 2.0 * std20
+    vol = c.pct_change().rolling(20, min_periods=5).std()
+    vol_med = vol.rolling(100, min_periods=20).median()
+    d["vol_regime"] = vol / vol_med.replace(0, np.nan)
+    d["regime_transitional"] = (d["trend"].rolling(4, min_periods=4).mean().abs() < 1.0).astype(float)
+
+    h1_raw = fetch_deribit_1h(symbol)
+    if len(h1_raw) < 80:
+        raise RuntimeError(f"{symbol}: insufficient 1h history")
+    h1 = add_current_indicators(h1_raw.copy())
+    h4_raw = aggregate_1h_to_4h(h1_raw)
+    if len(h4_raw) < 20:
+        raise RuntimeError(f"{symbol}: insufficient 4h history")
+    h4 = add_current_indicators(h4_raw.copy())
+
+    def asof_features(base, higher, cols, names):
+        left = base[["close_time"]].sort_values("close_time")
+        right = higher[["close_time"] + cols].sort_values("close_time").rename(columns=dict(zip(cols, names)))
+        out = pd.merge_asof(left, right, on="close_time", direction="backward")
+        return out[names].reset_index(drop=True)
+
+    h1a = asof_features(d, h1, ["rsi", "adx", "trend"], ["rsi_1h", "adx_1h", "trend_1h"])
+    h4a = asof_features(d, h4, ["rsi", "trend"], ["rsi_4h", "trend_4h"])
+    d = d.reset_index(drop=True)
+    d["rsi_1h"], d["adx_1h"], d["trend_1h"] = h1a["rsi_1h"], h1a["adx_1h"], h1a["trend_1h"]
+    d["rsi_4h"], d["trend_4h"] = h4a["rsi_4h"], h4a["trend_4h"]
+
+    dt = pd.to_datetime(d["open_time"], unit="ms", utc=True)
+    hour = dt.dt.hour + dt.dt.minute / 60.0
+    dow = dt.dt.dayofweek
+    d["hour_sin"] = np.sin(2.0 * np.pi * hour / 24.0)
+    d["hour_cos"] = np.cos(2.0 * np.pi * hour / 24.0)
+    d["dow_sin"] = np.sin(2.0 * np.pi * dow / 7.0)
+    d["dow_cos"] = np.cos(2.0 * np.pi * dow / 7.0)
+
+    d["regime_transitional"] = (d["trend_1h"] != d["trend_4h"]).astype(float)
+
+    if btc15.empty:
+        raise RuntimeError("BTC reference data unavailable")
+    btc = btc15[["open_time", "close"]].rename(columns={"close": "btc_close"}).sort_values("open_time")
+    d = pd.merge_asof(d.sort_values("open_time"), btc, on="open_time", direction="backward")
+    cr = d["close"].pct_change()
+    br = d["btc_close"].pct_change()
+    d["btc_corr_20"] = cr.rolling(20, min_periods=10).corr(br).clip(-1, 1)
+    d["btc_beta_20"] = (cr.rolling(20, min_periods=10).cov(br) / br.rolling(20, min_periods=10).var().replace(0, np.nan)).clip(-5, 5)
+
+    d = d.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return d.iloc[-1].copy()
 
 
 def score_model(model, row: pd.Series) -> dict:
-    active = [str(f) for f in model["all_features"]]
+    active = list(getattr(model["selector"], "selected_features", model["all_features"]))
     missing = [f for f in active if f not in row.index]
     if missing:
         raise RuntimeError(
@@ -339,29 +408,31 @@ def main() -> int:
     production_sha = model_sha256(PRODUCTION_MODEL)
     candidate = load_model(CANDIDATE_MODEL)
     production = load_model(PRODUCTION_MODEL)
-    legacy_fe = load_legacy_feature_engineering()
 
-    print(f"Phase 2D v2 | candidate sha={candidate_sha}")
-    print(f"Phase 2D v2 | production sha={production_sha}")
-    print(f"Phase 2D v2 | candidate features={len(candidate['all_features'])}")
-    print(f"Phase 2D v2 | production features={len(production['all_features'])}")
-    print(f"Phase 2D v2 | legacy FE={LEGACY_FE_PATH}")
+    print(f"Phase 2D | candidate sha={candidate_sha}")
+    print(f"Phase 2D | production sha={production_sha}")
+    print(f"Phase 2D | candidate declared features={len(candidate['all_features'])}")
+    print(f"Phase 2D | production declared features={len(production['all_features'])}")
 
     # Hard compatibility check before any research result is recorded.
+    btc15 = fetch_deribit_15m("BTCUSDT")
+    if len(btc15) < 80:
+        raise RuntimeError("BTCUSDT: insufficient completed 15m candles")
     probe = fetch_deribit_15m("ETHUSDT")
     if len(probe) < 80:
         raise RuntimeError("ETHUSDT: insufficient completed 15m candles")
     c_probe = current_row(probe, "ETHUSDT")
-    p_probe = legacy_row(probe, "ETHUSDT", legacy_fe)
-    c_missing = [f for f in candidate["all_features"] if f not in c_probe.index]
-    p_missing = [f for f in production["all_features"] if f not in p_probe.index]
-    print(f"Phase 2D v2 | candidate schema check missing={len(c_missing)}")
-    print(f"Phase 2D v2 | production legacy schema check missing={len(p_missing)}")
+    btc_probe = fetch_deribit_15m("BTCUSDT")
+    p_probe = build_production_row(probe, "ETHUSDT", btc_probe)
+    c_missing = [f for f in selector_features(candidate) if f not in c_probe.index]
+    p_missing = [f for f in selector_features(production) if f not in p_probe.index]
+    print(f"Phase 2D | candidate schema check missing={len(c_missing)}")
+    print(f"Phase 2D | production schema check missing={len(p_missing)}")
     if c_missing:
         raise RuntimeError(f"Candidate schema mismatch: {c_missing}")
     if p_missing:
-        print(f"Phase 2D v2 | production missing features: {p_missing[:25]}")
-        raise RuntimeError("Production model cannot be reproduced from the locked v2.0 feature engineering source.")
+        print(f"Phase 2D | production missing selected features: {p_missing[:25]}")
+        raise RuntimeError("Production selected feature schema cannot be reproduced.")
 
     state = load_compatible_state(candidate_sha, production_sha)
     models = {"candidate": candidate, "production": production}
@@ -374,7 +445,7 @@ def main() -> int:
             if len(raw15) < 80:
                 raise RuntimeError("insufficient completed 15m candles")
             c_row = current_row(raw15, symbol)
-            p_row = legacy_row(raw15, symbol, legacy_fe)
+            p_row = build_production_row(raw15, symbol, btc15)
             rows_by_model = {"candidate": c_row, "production": p_row}
             df15 = raw15
             current_rows[symbol] = df15
@@ -442,8 +513,11 @@ def main() -> int:
             "horizon_bars": LOOKAHEAD, "tp_r": BUY_TP_R, "sl_r": BUY_SL_R,
             "friction_r": FRICTION_R, "ambiguous_excluded_from_precision": True,
             "expired_net_r": -FRICTION_R, "candidate_feature_source": "current canonical",
-            "production_feature_source": "release v2.0 feature_engineering.py",
+            "production_feature_source": "legacy compatibility reconstruction from selected 35 features",
             "same_15m_market_stream": True,
+            "no_240m_deribit_request": True,
+            "four_hour_source": "completed 1h candles aggregated locally",
+            "promotion_ready": False,
         },
     }
     state["last_run"] = summary
