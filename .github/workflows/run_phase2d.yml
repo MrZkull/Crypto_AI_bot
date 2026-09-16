@@ -1,0 +1,92 @@
+name: CryptoBot AI — Phase 2D Prospective Validation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+
+concurrency:
+  group: cryptobot-phase2d
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prospective:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyarrow fastparquet
+
+      - name: Restore previous Phase 2D state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p research_outputs
+          RUN_ID=$(gh run list --workflow="run_phase2d.yml" --limit 10 --json databaseId,conclusion --jq '.[] | select(.conclusion == "success") | .databaseId' | head -n 1 || true)
+          if [ -n "$RUN_ID" ]; then
+            echo "Restoring state from Phase 2D run $RUN_ID"
+            gh run download "$RUN_ID" -n phase2d-state -D research_outputs || true
+          else
+            echo "No previous Phase 2D state found; starting fresh."
+          fi
+
+      - name: Download locked HTF-removal candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          gh run download 35139155066 -n htf-removal-candidate -D phase2d_candidate
+          cp phase2d_candidate/candidate_model.pkl ./candidate_model.pkl
+          test -s candidate_model.pkl
+          if [ -f phase2d_candidate/candidate_manifest.json ]; then cp phase2d_candidate/candidate_manifest.json ./candidate_manifest.json; fi
+
+      - name: Verify candidate identity
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          p = Path('candidate_model.pkl')
+          sha = hashlib.sha256(p.read_bytes()).hexdigest()
+          print('candidate_model.pkl SHA256:', sha)
+          m = Path('candidate_manifest.json')
+          if m.exists():
+              obj = json.loads(m.read_text())
+              print('candidate_id:', obj.get('candidate_id'))
+              print('candidate_status:', obj.get('status'))
+              if obj.get('model_sha256') and obj['model_sha256'] != sha:
+                  raise SystemExit('FATAL: candidate manifest SHA256 mismatch')
+          PY
+
+      - name: Run Phase 2D validator
+        run: python phase2d_prospective_validator.py
+
+      - name: Upload Phase 2D state
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2d-state
+          path: |
+            research_outputs/phase2d_state.json
+            research_outputs/phase2d_results.json
+            research_outputs/phase2d_latest_snapshot.json
+          if-no-files-found: error
+          retention-days: 90
