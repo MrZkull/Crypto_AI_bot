@@ -261,8 +261,22 @@ def build_production_row(raw15: pd.DataFrame, symbol: str, btc15: pd.DataFrame) 
     return d.iloc[-1].copy()
 
 
+def model_features(model) -> List[str]:
+    """Return the exact feature matrix expected by the trained ensemble."""
+    best = model.get("best_features")
+    if best:
+        return [str(x) for x in best]
+
+    selector = model.get("selector")
+    selected = getattr(selector, "selected_features", None)
+    if selected:
+        return [str(x) for x in selected]
+
+    return [str(x) for x in model["all_features"]]
+
+
 def score_model(model, row: pd.Series) -> dict:
-    active = list(getattr(model["selector"], "selected_features", model["all_features"]))
+    active = model_features(model)
     missing = [f for f in active if f not in row.index]
     if missing:
         raise RuntimeError(
@@ -272,9 +286,11 @@ def score_model(model, row: pd.Series) -> dict:
 
     X = pd.DataFrame([[row[f] for f in active]], columns=active)
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    Xs = model["selector"].transform(X)
-    prob = model["ensemble"].predict_proba(Xs)[0]
-    pred = int(model["ensemble"].predict(Xs)[0])
+
+    # The ensemble was trained directly on the selected/best feature matrix.
+    # Do not call selector.transform() here.
+    prob = model["ensemble"].predict_proba(X)[0]
+    pred = int(model["ensemble"].predict(X)[0])
 
     label_map = {int(k): v for k, v in model["label_map"].items()}
     buy_idx = next((k for k, v in label_map.items() if v == "BUY"), None)
@@ -424,8 +440,10 @@ def main() -> int:
     c_probe = current_row(probe, "ETHUSDT")
     btc_probe = fetch_deribit_15m("BTCUSDT")
     p_probe = build_production_row(probe, "ETHUSDT", btc_probe)
-    c_missing = [f for f in selector_features(candidate) if f not in c_probe.index]
-    p_missing = [f for f in selector_features(production) if f not in p_probe.index]
+    c_missing = [f for f in model_features(candidate) if f not in c_probe.index]
+    p_missing = [f for f in model_features(production) if f not in p_probe.index]
+    print(f"Phase 2D | candidate selected features={len(model_features(candidate))}")
+    print(f"Phase 2D | production selected features={len(model_features(production))}")
     print(f"Phase 2D | candidate schema check missing={len(c_missing)}")
     print(f"Phase 2D | production schema check missing={len(p_missing)}")
     if c_missing:
