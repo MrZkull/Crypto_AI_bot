@@ -1,0 +1,26 @@
+name: CryptoBot AI — Run Phase 2 Feature Ablation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ablation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pyarrow fastparquet
+
+      - name: Run Phase 2 Feature Ablation
+        run: python phase2_feature_ablation.py
