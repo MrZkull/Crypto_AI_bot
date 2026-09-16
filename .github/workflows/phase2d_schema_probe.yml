@@ -1,0 +1,65 @@
+name: Phase 2D — Production Schema Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download production model v2.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          gh release download \
+            v2.0 \
+            --repo "${{ github.repository }}" \
+            --pattern 'pro_crypto_ai_model.pkl' \
+            --dir . \
+            --clobber
+
+          test -s pro_crypto_ai_model.pkl
+
+          ls -lh pro_crypto_ai_model.pkl
+
+      - name: Download locked candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          gh run download \
+            35139155066 \
+            -n htf-removal-candidate \
+            -D candidate_artifact
+
+          cp \
+            candidate_artifact/candidate_model.pkl \
+            ./candidate_model.pkl
+
+          test -s candidate_model.pkl
+
+      - name: Inspect exact model schemas
+        run: |
+          python phase2d_schema_probe.py
