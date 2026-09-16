@@ -48,7 +48,10 @@ def fetch_binance_funding_strict(session: requests.Session, symbol: str, start_m
         for item in data:
             ft = int(item["fundingTime"])
             if ft <= end_ms:
-                records.append({"funding_time": ft, "fundingRate": float(item["fundingRate"])})
+                records.append({
+                    "funding_time": ft,
+                    "fundingRate": float(item["fundingRate"])
+                })
 
         if len(data) < 1000:
             break
@@ -59,7 +62,11 @@ def fetch_binance_funding_strict(session: requests.Session, symbol: str, start_m
     if not records:
         raise ValueError(f"FATAL: Zero funding records retrieved for {symbol}.")
 
-    df = pd.DataFrame(records).drop_duplicates(subset=["funding_time"]).sort_values("funding_time")
+    df = (
+        pd.DataFrame(records)
+        .drop_duplicates(subset=["funding_time"])
+        .sort_values("funding_time")
+    )
 
     if df["fundingRate"].std() == 0:
         raise ValueError(f"FATAL: Zero variance in funding rate for {symbol}.")
@@ -69,6 +76,7 @@ def fetch_binance_funding_strict(session: requests.Session, symbol: str, start_m
 
 def main():
     FUNDING_DIR.mkdir(parents=True, exist_ok=True)
+
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -77,39 +85,72 @@ def main():
 
     symbols = [s for s in SYMBOLS if s != "BTCUSDT"]
     total = len(symbols)
-    print(f"Fetching funding rates for {total} symbols into {FUNDING_DIR}...\n")
+
+    print(
+        f"Fetching funding rates for {total} symbols "
+        f"into {FUNDING_DIR}...\n"
+    )
 
     for idx, symbol in enumerate(symbols, 1):
+
         # Match time range of existing 15m candle data
         candle_file = HISTORICAL_DIR / f"{symbol}_15m.parquet"
+
         if not candle_file.exists():
-            print(f"[{idx:>2}/{total}] {symbol:<10} ... ✗ Missing {candle_file.name}")
+            print(
+                f"[{idx:>2}/{total}] {symbol:<10} ... "
+                f"✗ Missing {candle_file.name}"
+            )
             continue
 
         candle_df = pd.read_parquet(candle_file)
-        # Fetch funding history 24 hours before the first candle
-# so the earliest candle has a prior PIT funding observation.
-FUNDING_LOOKBACK_MS = 24 * 60 * 60 * 1000
 
-start_ms = max(
-    0,
-    int(candle_df["open_time"].min()) - FUNDING_LOOKBACK_MS,
-)
-end_ms = int(candle_df["close_time"].max())
+        # Fetch funding history 24 hours before the first candle
+        # so the earliest candle has a prior PIT funding observation.
+        FUNDING_LOOKBACK_MS = 24 * 60 * 60 * 1000
+
+        start_ms = max(
+            0,
+            int(candle_df["open_time"].min()) - FUNDING_LOOKBACK_MS,
+        )
+
+        end_ms = int(candle_df["close_time"].max())
 
         out_file = FUNDING_DIR / f"{symbol}_funding.parquet"
-        print(f"[{idx:>2}/{total}] {symbol:<10} ...", end=" ", flush=True)
+
+        print(
+            f"[{idx:>2}/{total}] {symbol:<10} ...",
+            end=" ",
+            flush=True
+        )
 
         try:
-            funding_df = fetch_binance_funding_strict(session, symbol, start_ms, end_ms)
-            funding_df.to_parquet(out_file, index=False)
+            funding_df = fetch_binance_funding_strict(
+                session,
+                symbol,
+                start_ms,
+                end_ms
+            )
+
+            funding_df.to_parquet(
+                out_file,
+                index=False
+            )
+
             fr_std = funding_df["fundingRate"].std()
-            print(f"✓ {len(funding_df):>4} events (σ={fr_std:.6f})")
+
+            print(
+                f"✓ {len(funding_df):>4} events "
+                f"(σ={fr_std:.6f})"
+            )
+
         except ValueError as e:
             print(f"\n❌ {e}")
             sys.exit(1)
 
-    print("\n✅ All funding parquet files successfully generated.")
+    print(
+        "\n✅ All funding parquet files successfully generated."
+    )
 
 
 if __name__ == "__main__":
