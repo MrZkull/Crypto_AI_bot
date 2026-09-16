@@ -6,12 +6,11 @@ Research-only. Never places orders and never modifies production.
 
 Key design:
   - Candidate uses the current canonical feature_engineering.py.
-  - Production uses the exact v2.0 release feature_engineering.py so the
-    legacy 63-feature production model is evaluated with its native schema.
+  - Production uses a locked compatibility reconstruction of the exact
+    best_features stored in the production model artifact.
   - Both models score the SAME completed 15m candle stream.
-  - No 4h API call is made. Phase 2D does not need HTF features for the
-    locked 25-feature candidate, and the legacy production model gets its
-    native 15m feature row from the v2.0 release code.
+  - No 4h API call is made. Four-hour context is built locally from
+    completed 1h candles.
   - Pending predictions are resolved after the same 24-bar barrier horizon.
   - State is persisted between scheduled runs and is reset only if the locked
     model identities or validator schema change.
@@ -111,7 +110,7 @@ def load_model(path: Path):
     model = joblib.load(path)
     if not isinstance(model, dict):
         raise RuntimeError(f"{path}: unexpected model type {type(model).__name__}")
-    required = {"all_features", "selector", "ensemble", "label_map"}
+    required = {"all_features", "best_features", "ensemble", "label_map"}
     missing = required - set(model)
     if missing:
         raise RuntimeError(f"{path}: missing model keys: {sorted(missing)}")
@@ -262,17 +261,16 @@ def build_production_row(raw15: pd.DataFrame, symbol: str, btc15: pd.DataFrame) 
 
 
 def model_features(model) -> List[str]:
-    """Return the exact feature matrix expected by the trained ensemble."""
+    """Return the exact feature set used to fit the trained ensemble."""
     best = model.get("best_features")
-    if best:
-        return [str(x) for x in best]
-
-    selector = model.get("selector")
-    selected = getattr(selector, "selected_features", None)
-    if selected:
-        return [str(x) for x in selected]
-
-    return [str(x) for x in model["all_features"]]
+    if not best:
+        raise RuntimeError(
+            "Model is missing best_features; refusing to infer the model schema."
+        )
+    features = [str(x) for x in best]
+    if len(features) != len(set(features)):
+        raise RuntimeError("Model best_features contains duplicate feature names.")
+    return features
 
 
 def score_model(model, row: pd.Series) -> dict:
@@ -287,8 +285,9 @@ def score_model(model, row: pd.Series) -> dict:
     X = pd.DataFrame([[row[f] for f in active]], columns=active)
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
-    # The ensemble was trained directly on the selected/best feature matrix.
-    # Do not call selector.transform() here.
+    # The ensemble was fitted directly on best_features.
+    # Do not call the serialized selector here; older pickles may not retain
+    # selected_features even though best_features is present in the model dict.
     prob = model["ensemble"].predict_proba(X)[0]
     pred = int(model["ensemble"].predict(X)[0])
 
@@ -422,6 +421,19 @@ def main() -> int:
 
     candidate_sha = model_sha256(CANDIDATE_MODEL)
     production_sha = model_sha256(PRODUCTION_MODEL)
+
+    if candidate_sha != LOCKED_CANDIDATE_SHA:
+        raise RuntimeError(
+            "Candidate SHA256 mismatch: "
+            f"expected {LOCKED_CANDIDATE_SHA}, got {candidate_sha}"
+        )
+
+    if production_sha != LOCKED_PRODUCTION_SHA:
+        raise RuntimeError(
+            "Production SHA256 mismatch: "
+            f"expected {LOCKED_PRODUCTION_SHA}, got {production_sha}"
+        )
+
     candidate = load_model(CANDIDATE_MODEL)
     production = load_model(PRODUCTION_MODEL)
 
@@ -440,10 +452,14 @@ def main() -> int:
     c_probe = current_row(probe, "ETHUSDT")
     btc_probe = fetch_deribit_15m("BTCUSDT")
     p_probe = build_production_row(probe, "ETHUSDT", btc_probe)
-    c_missing = [f for f in model_features(candidate) if f not in c_probe.index]
-    p_missing = [f for f in model_features(production) if f not in p_probe.index]
-    print(f"Phase 2D | candidate selected features={len(model_features(candidate))}")
-    print(f"Phase 2D | production selected features={len(model_features(production))}")
+    candidate_features = model_features(candidate)
+    production_features = model_features(production)
+
+    c_missing = [f for f in candidate_features if f not in c_probe.index]
+    p_missing = [f for f in production_features if f not in p_probe.index]
+
+    print(f"Phase 2D | candidate selected features: {len(candidate_features)}")
+    print(f"Phase 2D | production selected features: {len(production_features)}")
     print(f"Phase 2D | candidate schema check missing={len(c_missing)}")
     print(f"Phase 2D | production schema check missing={len(p_missing)}")
     if c_missing:
@@ -535,6 +551,8 @@ def main() -> int:
             "same_15m_market_stream": True,
             "no_240m_deribit_request": True,
             "four_hour_source": "completed 1h candles aggregated locally",
+            "candidate_selected_feature_count": len(candidate_features),
+            "production_selected_feature_count": len(production_features),
             "promotion_ready": False,
         },
     }
