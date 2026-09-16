@@ -204,7 +204,7 @@ def preload_symbol_features() -> list[pd.DataFrame]:
     return preloaded
 
 
-def make_targets(df: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float) -> pd.Series:
+def make_targets(df: pd.DataFrame, sell_tp_mult: float = 3.5, sell_sl_mult: float = 2.5) -> pd.Series:
     n = len(df)
     labels = np.full(n, "NO_TRADE", dtype=object)
     lookahead = 24
