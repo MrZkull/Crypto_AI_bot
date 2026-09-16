@@ -126,6 +126,27 @@ def load_parquet_segment(symbol: str, interval: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "btc_close" in df.columns and df["btc_close"].notna().sum() > 30:
+        btc_ret = df["btc_close"].pct_change()
+        coin_ret = df["close"].pct_change()
+        roll_cov = coin_ret.rolling(20, min_periods=10).cov(btc_ret)
+        roll_var = btc_ret.rolling(20, min_periods=10).var()
+        df["btc_corr_20"] = coin_ret.rolling(20, min_periods=10).corr(btc_ret)
+        df["btc_beta_20"] = roll_cov / roll_var.replace(0, np.nan)
+        df["btc_rel_strength"] = (df["close"].pct_change(6) - df["btc_close"].pct_change(6)) * 100
+    else:
+        df["btc_corr_20"] = 0.0
+        df["btc_beta_20"] = 1.0
+        df["btc_rel_strength"] = 0.0
+
+    df["btc_corr_20"] = df["btc_corr_20"].fillna(0.0).clip(-1, 1)
+    df["btc_beta_20"] = df["btc_beta_20"].fillna(1.0).clip(-5, 5)
+    df["btc_rel_strength"] = df["btc_rel_strength"].fillna(0.0).clip(-50, 50)
+    return df
+
+
 def _build_features(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: pd.DataFrame, regime: str, btc_df15=None) -> pd.DataFrame:
     if df15.empty or len(df15) < MIN_BARS:
         return pd.DataFrame()
@@ -155,22 +176,8 @@ def _build_features(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: p
     if "htf1h_source_close_time" not in df15.columns or "htf4h_source_close_time" not in df15.columns:
         return pd.DataFrame()
 
-    if "btc_close" in df15.columns and df15["btc_close"].notna().sum() > 30:
-        btc_ret = df15["btc_close"].pct_change()
-        coin_ret = df15["close"].pct_change()
-        roll_cov = coin_ret.rolling(20, min_periods=10).cov(btc_ret)
-        roll_var = btc_ret.rolling(20, min_periods=10).var()
-        df15["btc_corr_20"] = coin_ret.rolling(20, min_periods=10).corr(btc_ret)
-        df15["btc_beta_20"] = roll_cov / roll_var.replace(0, np.nan)
-        df15["btc_rel_strength"] = (df15["close"].pct_change(6) - df15["btc_close"].pct_change(6)) * 100
-    else:
-        df15["btc_corr_20"] = 0.0
-        df15["btc_beta_20"] = 1.0
-        df15["btc_rel_strength"] = 0.0
+    df15 = _add_extra_features(df15)
 
-    df15["btc_corr_20"] = df15["btc_corr_20"].fillna(0.0).clip(-1, 1)
-    df15["btc_beta_20"] = df15["btc_beta_20"].fillna(1.0).clip(-5, 5)
-    df15["btc_rel_strength"] = df15["btc_rel_strength"].fillna(0.0).clip(-50, 50)
     if "fundingRate" not in df15.columns:
         df15["fundingRate"] = 0.0
 
