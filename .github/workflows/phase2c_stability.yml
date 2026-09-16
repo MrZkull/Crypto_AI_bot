@@ -1,0 +1,33 @@
+name: CryptoBot AI — Run Phase 2C Feature Stability
+
+on:
+  workflow_dispatch:
+
+jobs:
+  stability:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pyarrow fastparquet
+
+      - name: Run Phase 2C Feature Stability
+        run: python phase2c_feature_stability.py
+
+      - name: Upload Phase 2C artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2c-feature-stability-results
+          path: artifacts/
+          if-no-files-found: error
