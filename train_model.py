@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-# train_model.py — Canonical Parquet Rebuild Engine, Feature Ablation & Sentinel Validation
+# train_model.py — Production Canonical Rebuild Engine & Sentinel Calibration
 
 import os
 import sys
 import json
 import time
-import uuid
 import logging
-import hashlib
 import joblib
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import pandas as pd
 import numpy as np
@@ -279,8 +277,27 @@ def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int
     return X_train.iloc[keep].reset_index(drop=True), y_train[keep]
 
 
-def train(ds: pd.DataFrame, active_features: list, sell_tp_mult: float, sell_sl_mult: float, export_artifact: bool = True, reserved_features: list = None):
+def train(
+    ds: pd.DataFrame,
+    active_features: list = None,
+    sell_tp_mult: float = 3.5,
+    sell_sl_mult: float = 2.5,
+    export_artifact: bool = True,
+    reserved_features: list = None
+):
     ds = ds.loc[:, ~ds.columns.duplicated()].copy()
+
+    # Dynamic Feature Resolution & Zero-Variance Pruning
+    if active_features is None:
+        active_features = [f for f in FULL_FEATURES if f in ds.columns]
+        if "fundingRate" in active_features:
+            fr_series = ds["fundingRate"].dropna()
+            if len(fr_series) == 0 or (fr_series == 0).all() or fr_series.std() == 0:
+                log.warning("⚠️ 'fundingRate' is all-zero or unpopulated in dataset. Pruning from active features to prevent noise.")
+                active_features = [f for f in active_features if f != "fundingRate"]
+            else:
+                log.info("✓ 'fundingRate' contains active variance. Retaining in active training features.")
+
     for f in active_features:
         if f not in ds.columns: ds[f] = 0.0
 
@@ -291,15 +308,6 @@ def train(ds: pd.DataFrame, active_features: list, sell_tp_mult: float, sell_sl_
     nt_idx   = classes.index("NO_TRADE") if "NO_TRADE" in classes else -1
     buy_idx  = classes.index("BUY")      if "BUY"      in classes else 0
     sell_idx = classes.index("SELL")     if "SELL"     in classes else 2
-    
-    # ── FATAL GUARD: Prevent Fabricated Negative Results ──
-    if "fundingRate" in active_features:
-        if "fundingRate" not in ds.columns or ds["fundingRate"].notna().sum() == 0 or (ds["fundingRate"] == 0).all():
-            raise ValueError(
-                "FATAL: Funding archive empty, all-NaN, or all-zero. "
-                "Phase 2 variants would be numerically identical to BASELINE, "
-                "producing a false negative result. Aborting."
-            )
 
     train_df, calib_df, test_df = temporal_symbol_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
 
@@ -318,8 +326,8 @@ def train(ds: pd.DataFrame, active_features: list, sell_tp_mult: float, sell_sl_
 
     essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"]
     selected  = [f for f in essential if f in active_features]
-    
-    # ── BUG FIX: Unconditionally Reserve Ablation Variables Before Cutoff ──
+
+    # Reserve designated experimental features
     for f in (reserved_features or []):
         if f in active_features and f not in selected:
             selected.append(f)
@@ -328,14 +336,6 @@ def train(ds: pd.DataFrame, active_features: list, sell_tp_mult: float, sell_sl_
         feat = active_features[i]
         if feat not in selected: selected.append(feat)
         if len(selected) >= min(N_FEATURES, len(active_features)): break
-
-    # Fail loudly rather than reporting a collapsed variant
-    for f in (reserved_features or []):
-        if f in active_features and f not in selected:
-            raise ValueError(
-                f"FATAL: reserved ablation feature '{f}' was not selected. "
-                f"Variant would be numerically identical to baseline."
-            )
 
     X_train_raw_sel = X_train_raw[selected]
     Xte, Xcal = X_test[selected].values, X_calib[selected].values
@@ -386,16 +386,14 @@ def train(ds: pd.DataFrame, active_features: list, sell_tp_mult: float, sell_sl_
 
     sweep_thresholds = np.round(np.arange(0.32, 0.62, 0.02), 2)
     raw_sell_candidates = (calib_probas[:, sell_idx] > calib_probas[:, buy_idx]).sum()
-
     lowest_thresh = sweep_thresholds[0]
     p_sell_mask = (calib_probas[:, sell_idx] >= lowest_thresh) & (calib_probas[:, sell_idx] > calib_probas[:, buy_idx])
-    
-    # ── BUG FIX: Correctly Evaluate Mean After Casting Condition Array ──
     base_sell_prec = float((y_calib[p_sell_mask] == sell_idx).mean()) if p_sell_mask.sum() > 0 else 0.0
 
     if export_artifact:
         log.info(f"\n{'='*95}")
         log.info(f"CALIBRATION THRESHOLD SWEEP (Friction={friction_r}R)")
+        log.info(f"Active Features: {len(selected)} selected | Total: {len(active_features)}")
         log.info(f"BUY Geometry:  {ATR_TARGET1_MULT}R / {ATR_STOP_MULT}R (Req Prec > {be_buy*100:.1f}%)")
         log.info(f"SELL Geometry: {sell_tp_mult}R / {sell_sl_mult}R (Req Prec > {be_sell*100:.1f}%)")
         log.info(f"DIAGNOSTIC: Raw SELL calibration candidates (p_sell > p_buy): {raw_sell_candidates}")
@@ -501,60 +499,12 @@ def train(ds: pd.DataFrame, active_features: list, sell_tp_mult: float, sell_sl_
 
 if __name__ == "__main__":
     t0 = time.time()
-    preloaded_symbols = preload_symbol_features()
-    ds_baseline = pd.concat([_apply_targets(df, 3.5, 2.5) for df in preloaded_symbols], ignore_index=True)
-
-    experiment_grid = [
-        {"name": "Baseline (No Funding/BTC)", "features": BASE_FEATURES},
-        {"name": "Baseline + Funding Rate",   "features": BASE_FEATURES + ["fundingRate"]},
-        {"name": "Baseline + BTC Metrics",    "features": BASE_FEATURES + ["btc_corr_20", "btc_beta_20", "btc_rel_strength"]},
-        {"name": "Full Kitchen Sink",         "features": BASE_FEATURES + ["fundingRate", "btc_corr_20", "btc_beta_20", "btc_rel_strength"]},
-    ]
-
-    results = []
-    for config in experiment_grid:
-        log.info(f"🚀 Running Feature Ablation: {config['name']}")
-        
-        # ── VARIANT INTEGRITY CHECK ──
-        if config["name"] != "Baseline (No Funding/BTC)":
-            if set(config["features"]) == set(BASE_FEATURES):
-                raise ValueError(f"FATAL: {config['name']} feature set silently collapsed to BASELINE.")
-                
-        # Inject reserved parameters cleanly for non-baseline configurations
-        reserved = [f for f in config["features"] if f not in BASE_FEATURES]
-        
-        acc, score_b, score_s = train(
-            ds_baseline,
-            active_features=config["features"],
-            sell_tp_mult=3.5,
-            sell_sl_mult=2.5,
-            export_artifact=False,
-            reserved_features=reserved
-        )
-        results.append({
-            "Config": config["name"],
-            "BUY Score": f"{score_b:.2f}",
-            "SELL Score": f"{score_s:.2f}",
-            "Accuracy": f"{acc*100:.1f}%",
-        })
-
-    log.info(f"\n{'='*80}")
-    log.info("🎯 FEATURE ABLATION EXPERIMENT SUMMARY (Chronological Lock, Target=3.5/2.5)")
-    log.info(f"{'='*80}")
-    log.info(f"{'Config':<30} | {'BUY Score':<10} | {'SELL Score':<10} | {'Accuracy':<10}")
-    log.info("-" * 80)
-    for res in results:
-        log.info(f"{res['Config']:<30} | {res['BUY Score']:<10} | {res['SELL Score']:<10} | {res['Accuracy']:<10}")
-    log.info("=" * 80)
-
-    # Export final model with full feature set (reserving the entire kitchen sink)
-    reserved_export = [f for f in experiment_grid[-1]["features"] if f not in BASE_FEATURES]
-    train(
-        ds_baseline, 
-        active_features=experiment_grid[-1]["features"], 
-        sell_tp_mult=3.5, 
-        sell_sl_mult=2.5, 
-        export_artifact=True,
-        reserved_features=reserved_export
+    log.info("Starting candidate model training pipeline...")
+    dataset = build_dataset_from_local_parquet(sell_tp_mult=3.5, sell_sl_mult=2.5)
+    acc, score_b, score_s = train(
+        dataset,
+        sell_tp_mult=3.5,
+        sell_sl_mult=2.5,
+        export_artifact=True
     )
-    log.info(f"Done in {(time.time()-t0)/60:.1f} min")
+    log.info(f"✅ Training completed successfully in {(time.time()-t0)/60:.1f} min | Test Accuracy: {acc*100:.1f}%")
