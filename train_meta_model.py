@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# train_meta_model.py — Research Pipeline: Unwrapped OOF Meta-Training & 6-Tier Gate 10
+# train_meta_model.py — Research Pipeline: Direction-Aware Meta-Training & Gate 10
 
 import json
 import logging
@@ -41,6 +41,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 META_MODEL_FILE = "meta_pipeline.pkl"
+CANDIDATE_META_FILE = "candidate_meta_model.pkl"
 N_META_FEATURES = 25
 META_SYSTEM_FEATURES = [
     "meta_primary_conf",
@@ -92,7 +93,6 @@ def _fold_selected_features(tr: pd.DataFrame, af: list, n_features: int, target_
 
 
 def get_primary_predictions(ds: pd.DataFrame, primary_pipeline: dict) -> pd.DataFrame:
-    # Safely extract the features actually used by the loaded primary model
     af = primary_pipeline.get("all_features", FULL_FEATURES)
     for f in af:
         if f not in ds.columns:
@@ -199,7 +199,6 @@ def evaluate_gate_10(
     primary_test_pred: pd.DataFrame,
     test_proba: np.ndarray,
     meta_threshold: float,
-    primary_threshold: float,
     primary_pipeline: dict,
     realized_returns_by_id: pd.Series = None,
     friction_r: float = 0.12
@@ -211,13 +210,23 @@ def evaluate_gate_10(
 
     df = primary_test_pred.copy()
     df["meta_prob"] = test_proba
-    df["primary_selected"] = df["primary_conf"] >= primary_threshold
+
+    # Direction-Aware Primary Selection (respects sentinels without dropping active sides)
+    thresh_buy = float(primary_pipeline.get("recommended_threshold_buy", 0.40))
+    thresh_sell = float(primary_pipeline.get("recommended_threshold_sell", 0.40))
+
+    buy_active = (thresh_buy <= 1.0)
+    sell_active = (thresh_sell <= 1.0)
+
+    df["primary_selected"] = (
+        (buy_active & (df["primary_side"] == "BUY") & (df["primary_conf"] >= thresh_buy)) |
+        (sell_active & (df["primary_side"] == "SELL") & (df["primary_conf"] >= thresh_sell))
+    )
     df["meta_selected"] = df["primary_selected"] & (df["meta_prob"] >= meta_threshold)
 
     is_production_mode = realized_returns_by_id is not None
     eval_mode = "PRODUCTION_REALIZED_RETURNS" if is_production_mode else "RESEARCH_SYNTHETIC_PAYOFF"
 
-    # DYNAMIC TARGET GEOMETRY EXTRACTION: Use pipeline metrics to compute accurate EV
     buy_tp_mult  = float(primary_pipeline.get("buy_tp_mult", 3.5))
     buy_sl_mult  = float(primary_pipeline.get("buy_sl_mult", 2.5))
     sell_tp_mult = float(primary_pipeline.get("sell_tp_mult", 3.5))
@@ -243,7 +252,7 @@ def evaluate_gate_10(
         return {
             "passed_production_gate": False, "passed_research_gate": False,
             "tier_failed": "SAMPLE_VALIDITY", "evaluation_mode": eval_mode,
-            "reason": f"Active trades {n_meta} < minimum threshold {Gate10Policy.MIN_TEST_TRADES}"
+            "reason": f"Active trades {n_meta} < minimum threshold {Gate10Policy.MIN_TEST_TRADES} (Primary active: {n_primary_active})"
         }
 
     mean_net_r = float(meta_sample["net_r"].mean())
@@ -322,7 +331,6 @@ def train_meta_model():
     log.info("Loading primary model artifact...")
     primary_pipeline = joblib.load(MODEL_FILE)
 
-    # DYNAMIC TARGET EXTRACTION: Propagate pipeline targets to dataset generation
     sell_tp = float(primary_pipeline.get("sell_tp_mult", 3.5))
     sell_sl = float(primary_pipeline.get("sell_sl_mult", 2.5))
     ds = build_dataset_from_local_parquet(sell_tp_mult=sell_tp, sell_sl_mult=sell_sl)
@@ -337,7 +345,6 @@ def train_meta_model():
     primary_calib_pred = augment_meta_features(build_meta_labels(get_primary_predictions(primary_calib.copy(), primary_pipeline)))
     primary_test_pred = augment_meta_features(build_meta_labels(get_primary_predictions(primary_test.copy(), primary_pipeline)))
 
-    # Use the features the primary pipeline was actually trained on
     active_features = primary_pipeline.get("all_features", FULL_FEATURES)
     meta_feature_universe = list(dict.fromkeys(active_features + META_SYSTEM_FEATURES))
     for f in meta_feature_universe:
@@ -373,19 +380,28 @@ def train_meta_model():
     test_proba  = calibrated_meta.predict_proba(X_test)[:, pos_idx]
 
     best_thresh, best_score = 0.50, 0.0
+    log.info(f"\n{'='*70}")
+    log.info("META-MODEL THRESHOLD CALIBRATION SWEEP")
+    log.info(f"{'='*70}")
+    log.info(f"{'Thresh':<8} | {'Trades':<8} | {'Precision':<10} | {'Score':<8}")
+    log.info(f"{'-'*70}")
+
     for thresh in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]:
         mask = calib_proba >= thresh
-        if mask.sum() < 10: continue
-        score = float(y_calib[mask].mean()) * np.sqrt(mask.sum())
+        if mask.sum() < 10:
+            log.info(f"{thresh:<8.2f} | {mask.sum():<8} | {'SKIPPED (<10 trades)':<20}")
+            continue
+        prec = float(y_calib[mask].mean())
+        score = prec * np.sqrt(mask.sum())
+        log.info(f"{thresh:<8.2f} | {mask.sum():<8} | {prec*100:>8.1f}%  | {score:>8.2f}")
         if score > best_score:
             best_score, best_thresh = score, thresh
+    log.info(f"{'-'*70}\n")
 
-    primary_baseline_threshold = float(primary_pipeline.get("recommended_threshold", 0.45))
     gate10_result = evaluate_gate_10(
         primary_test_pred=primary_test_pred,
         test_proba=test_proba,
         meta_threshold=best_thresh,
-        primary_threshold=primary_baseline_threshold,
         primary_pipeline=primary_pipeline,
         friction_r=0.12
     )
@@ -401,8 +417,11 @@ def train_meta_model():
         "gate10_summary": gate10_result,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Save both canonical and candidate-named files for CI runner compatibility
     joblib.dump(meta_pipeline, META_MODEL_FILE)
-    log.info(f"✅ Saved meta-model pipeline: {META_MODEL_FILE}")
+    joblib.dump(meta_pipeline, CANDIDATE_META_FILE)
+    log.info(f"✅ Saved meta-model pipelines: {META_MODEL_FILE} and {CANDIDATE_META_FILE}")
 
     with open("meta_model_performance.json", "w") as f:
         json.dump(gate10_result, f, indent=2)
