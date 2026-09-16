@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-# train_model.py — Production Canonical Rebuild Engine & Sentinel Calibration
+# train_model.py — Production Canonical Rebuild Engine, Detailed Logs & Manifest Export
 
 import os
 import sys
 import json
 import time
+import uuid
 import logging
+import hashlib
 import joblib
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import numpy as np
@@ -40,6 +42,18 @@ from feature_engineering import add_indicators, ALL_FEATURES, ImportanceSelector
 from market_data_integrity import sanitize_closed_candles, merge_completed_htf, interval_ms
 
 try:
+    from execution_policy import (
+        get_policy_hash, get_feature_code_hash, get_feature_schema_hash,
+        build_candidate_config, get_config_hash
+    )
+except ImportError:
+    def get_policy_hash(): return hashlib.sha256(b"default_policy").hexdigest()
+    def get_feature_code_hash(): return hashlib.sha256(b"default_code").hexdigest()
+    def get_feature_schema_hash(features): return hashlib.sha256(json.dumps(sorted(features)).encode()).hexdigest()
+    def build_candidate_config(): return {"target": "3.5/2.5", "friction": 0.12}
+    def get_config_hash(cfg): return hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()
+
+try:
     from config import SYMBOLS, ATR_STOP_MULT, ATR_TARGET1_MULT
 except ImportError:
     SYMBOLS = [
@@ -59,6 +73,7 @@ CALIB_SPLIT        = 0.15
 EMBARGO_BARS       = 24
 MODEL_FILE         = "pro_crypto_ai_model.pkl"
 CANDIDATE_MODEL_FILE = "candidate_model.pkl"
+CANDIDATE_MANIFEST = "candidate_manifest.json"
 N_FEATURES         = 30
 MIN_BARS           = 100
 UNDERSAMPLE_RATIO  = 1.0
@@ -287,16 +302,16 @@ def train(
 ):
     ds = ds.loc[:, ~ds.columns.duplicated()].copy()
 
-    # Dynamic Feature Resolution & Zero-Variance Pruning
+    # Dynamic Zero-Variance Pruning
     if active_features is None:
         active_features = [f for f in FULL_FEATURES if f in ds.columns]
         if "fundingRate" in active_features:
             fr_series = ds["fundingRate"].dropna()
             if len(fr_series) == 0 or (fr_series == 0).all() or fr_series.std() == 0:
-                log.warning("⚠️ 'fundingRate' is all-zero or unpopulated in dataset. Pruning from active features to prevent noise.")
+                log.warning("⚠️ 'fundingRate' is all-zero or unpopulated. Pruning from active features to prevent noise.")
                 active_features = [f for f in active_features if f != "fundingRate"]
             else:
-                log.info("✓ 'fundingRate' contains active variance. Retaining in active training features.")
+                log.info("✓ 'fundingRate' contains active variance. Retaining in active features.")
 
     for f in active_features:
         if f not in ds.columns: ds[f] = 0.0
@@ -327,7 +342,6 @@ def train(
     essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"]
     selected  = [f for f in essential if f in active_features]
 
-    # Reserve designated experimental features
     for f in (reserved_features or []):
         if f in active_features and f not in selected:
             selected.append(f)
@@ -391,14 +405,19 @@ def train(
     base_sell_prec = float((y_calib[p_sell_mask] == sell_idx).mean()) if p_sell_mask.sum() > 0 else 0.0
 
     if export_artifact:
-        log.info(f"\n{'='*95}")
+        log.info(f"\n{'='*102}")
         log.info(f"CALIBRATION THRESHOLD SWEEP (Friction={friction_r}R)")
-        log.info(f"Active Features: {len(selected)} selected | Total: {len(active_features)}")
+        log.info(f"Active Features: {len(selected)} selected | Total Universe: {len(active_features)}")
         log.info(f"BUY Geometry:  {ATR_TARGET1_MULT}R / {ATR_STOP_MULT}R (Req Prec > {be_buy*100:.1f}%)")
         log.info(f"SELL Geometry: {sell_tp_mult}R / {sell_sl_mult}R (Req Prec > {be_sell*100:.1f}%)")
         log.info(f"DIAGNOSTIC: Raw SELL calibration candidates (p_sell > p_buy): {raw_sell_candidates}")
         log.info(f"DIAGNOSTIC: SELL Precision @ Floor {lowest_thresh:.2f}: {base_sell_prec*100:.1f}% (n={p_sell_mask.sum()})")
-        log.info(f"{'='*95}")
+        log.info(f"{'='*102}")
+        log.info(
+            f"{'Thresh':<7} | {'BUY N':<6} {'BUY Prec':<9} {'BUY Rec':<8} {'BUY EV':<8} {'Score':<7} | "
+            f"{'SELL N':<7} {'SELL Prec':<10} {'SELL Rec':<9} {'SELL EV':<8} {'Score':<7}"
+        )
+        log.info(f"{'-'*102}")
 
     for thresh in sweep_thresholds:
         yp = []
@@ -422,14 +441,25 @@ def train(
         buy_score  = buy_ev * rb * np.sqrt(max(bm.sum(), 1))  if buy_ev > 0 else 0.0
         sell_score = sell_ev * rs * np.sqrt(max(sm.sum(), 1)) if sell_ev > 0 else 0.0
 
+        if export_artifact:
+            log.info(
+                f"{thresh:<7.2f} | {bm.sum():<6} {pb*100:>7.1f}%  {rb*100:>6.1f}%  {buy_ev:>+6.2f}R {buy_score:>7.2f} | "
+                f"{sm.sum():<7} {ps*100:>8.1f}%  {rs*100:>7.1f}%  {sell_ev:>+6.2f}R {sell_score:>7.2f}"
+            )
+
         if thresh >= MIN_BUY_THRESHOLD_FLOOR and buy_score > best_score_buy and bm.sum() > 15:
             best_score_buy, best_thresh_buy = buy_score, thresh
         if thresh >= MIN_SELL_THRESHOLD_FLOOR and sell_score > best_score_sell and sm.sum() > 15:
             best_score_sell, best_thresh_sell = sell_score, thresh
 
-    # Fail-closed sentinel check (disables broken sides entirely)
+    # Fail-closed sentinel check (1.01 disables broken sides)
     best_thresh_buy = max(MIN_BUY_THRESHOLD_FLOOR, best_thresh_buy) if best_score_buy > 0.0 else 1.01
     best_thresh_sell = max(MIN_SELL_THRESHOLD_FLOOR, best_thresh_sell) if best_score_sell > 0.0 else 1.01
+
+    if export_artifact:
+        log.info(f"{'-'*102}")
+        log.info(f"✅ Selected Optimal Thresholds -> BUY: {best_thresh_buy:.2f} (Score: {best_score_buy:.2f}) | SELL: {best_thresh_sell:.2f} (Score: {best_score_sell:.2f})")
+        log.info(f"{'='*102}\n")
 
     probas = ensemble.predict_proba(Xte)
     y_pred_tuned = []
@@ -448,6 +478,10 @@ def train(
     train_acc = accuracy_score(y_train, ensemble.predict(Xtr))
     report = classification_report(y_test, y_pred_tuned, target_names=classes, output_dict=True, zero_division=0)
 
+    # Resolve safe scalar threshold without sentinel poisoning
+    active_thresh_list = [t for t in (best_thresh_buy, best_thresh_sell) if t <= 1.0]
+    scalar_recommended = min(active_thresh_list) if active_thresh_list else 1.01
+
     now_utc = datetime.now(timezone.utc)
     pipeline = {
         "ensemble":                   ensemble,
@@ -462,7 +496,7 @@ def train(
         "n_features":                 len(active_features),
         "recommended_threshold_buy":  best_thresh_buy,
         "recommended_threshold_sell": best_thresh_sell,
-        "recommended_threshold":      max(best_thresh_buy, best_thresh_sell),
+        "recommended_threshold":      scalar_recommended,
         "calibrated":                 True,
         "buy_tp_mult":                ATR_TARGET1_MULT,
         "buy_sl_mult":                ATR_STOP_MULT,
@@ -474,7 +508,34 @@ def train(
     joblib.dump(pipeline, CANDIDATE_MODEL_FILE, compress=3)
     log.info(f"✅ Exported candidate binary: {CANDIDATE_MODEL_FILE}")
 
+    # Build and export immutable candidate manifest
+    with open(CANDIDATE_MODEL_FILE, "rb") as f:
+        model_sha256 = hashlib.sha256(f.read()).hexdigest()
+
+    candidate_id = f"cand_{uuid.uuid4().hex}"
+    manifest = {
+        "artifact_version": 1,
+        "candidate_id": candidate_id,
+        "model_sha256": model_sha256,
+        "feature_schema_hash": get_feature_schema_hash(active_features),
+        "feature_code_hash": get_feature_code_hash(),
+        "execution_policy_hash": get_policy_hash(),
+        "config_hash": get_config_hash(build_candidate_config()),
+        "candidate_created_at": now_utc.isoformat(),
+        "candidate_expiry_at": (now_utc + timedelta(days=30)).isoformat(),
+        "status": "AWAITING_PROSPECTIVE_EVIDENCE",
+        "recommended_threshold_buy": best_thresh_buy,
+        "recommended_threshold_sell": best_thresh_sell,
+        "recommended_threshold": scalar_recommended,
+        "accuracy": round(acc * 100, 1),
+    }
+
+    with open(CANDIDATE_MANIFEST, "w") as f:
+        json.dump(manifest, f, indent=2)
+    log.info(f"✅ Generated candidate manifest: {CANDIDATE_MANIFEST} (ID: {candidate_id})")
+
     perf = {
+        "candidate_id":               candidate_id,
         "accuracy":                   round(acc * 100, 1),
         "test_accuracy":              f"{round(acc * 100, 1)}%",
         "train_accuracy":             f"{round(train_acc * 100, 1)}%",
@@ -486,6 +547,7 @@ def train(
         "selected":                   selected,
         "recommended_threshold_buy":  best_thresh_buy,
         "recommended_threshold_sell": best_thresh_sell,
+        "recommended_threshold":      scalar_recommended,
         "buy_precision":              round(report.get("BUY", {}).get("precision", 0), 4),
         "sell_precision":             round(report.get("SELL", {}).get("precision", 0), 4),
         "no_trade_precision":         round(report.get("NO_TRADE", {}).get("precision", 0), 4),
