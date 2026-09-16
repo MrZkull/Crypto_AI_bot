@@ -40,6 +40,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
+
           mkdir -p research_outputs
 
           RUN_ID=$(gh run list \
@@ -51,6 +52,7 @@ jobs:
 
           if [ -n "$RUN_ID" ]; then
             echo "Restoring Phase 2D state from run $RUN_ID"
+
             gh run download "$RUN_ID" \
               -n phase2d-state \
               -D research_outputs || true
@@ -69,6 +71,7 @@ jobs:
             -D phase2d_candidate
 
           cp phase2d_candidate/candidate_model.pkl ./candidate_model.pkl
+
           test -s candidate_model.pkl
 
       - name: Verify locked candidate
@@ -109,9 +112,10 @@ jobs:
             --clobber
 
           test -s pro_crypto_ai_model.pkl
+
           ls -lh pro_crypto_ai_model.pkl
 
-            - name: Verify production model
+      - name: Verify production model
         run: |
           set -e
 
@@ -125,7 +129,10 @@ jobs:
           )
 
           path = Path("pro_crypto_ai_model.pkl")
-          actual = hashlib.sha256(path.read_bytes()).hexdigest()
+
+          actual = hashlib.sha256(
+              path.read_bytes()
+          ).hexdigest()
 
           print("production SHA256:", actual)
 
@@ -153,7 +160,8 @@ jobs:
 
           if missing:
               raise SystemExit(
-                  f"FATAL: production model missing keys: {sorted(missing)}"
+                  "FATAL: production model missing keys: "
+                  f"{sorted(missing)}"
               )
 
           declared = [
@@ -197,14 +205,15 @@ jobs:
               )
 
           missing_from_declared = [
-              f for f in selected
+              f
+              for f in selected
               if f not in declared
           ]
 
           if missing_from_declared:
               raise SystemExit(
                   "FATAL: best_features contains features "
-                  f"not present in all_features: "
+                  "not present in all_features: "
                   f"{missing_from_declared}"
               )
           PY
@@ -212,6 +221,7 @@ jobs:
       - name: Run Phase 2D validator
         run: |
           set -e
+
           python phase2d_prospective_validator.py
 
       - name: Upload Phase 2D state
