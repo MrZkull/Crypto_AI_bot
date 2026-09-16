@@ -24,3 +24,10 @@ jobs:
 
       - name: Run Phase 2 Feature Ablation
         run: python phase2_feature_ablation.py
+
+      - name: Upload Phase 2A artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2a-ablation-results
+          path: artifacts/
+          if-no-files-found: error
