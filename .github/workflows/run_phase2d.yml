@@ -77,6 +77,38 @@ jobs:
                   raise SystemExit('FATAL: candidate manifest SHA256 mismatch')
           PY
 
+      - name: Download locked production model from release v2.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          echo "Downloading production model asset from release v2.0..."
+          gh release download v2.0 --repo "${{ github.repository }}" \
+            --pattern 'pro_crypto_ai_model.pkl' \
+            --dir . \
+            --clobber
+          test -s pro_crypto_ai_model.pkl
+          ls -lh pro_crypto_ai_model.pkl
+
+      - name: Verify production model is loadable
+        run: |
+          python - <<'PY'
+          import hashlib
+          import joblib
+          from pathlib import Path
+          p = Path('pro_crypto_ai_model.pkl')
+          sha = hashlib.sha256(p.read_bytes()).hexdigest()
+          print('production_model.pkl SHA256:', sha)
+          model = joblib.load(p)
+          required = {'all_features', 'selector', 'ensemble', 'label_map'}
+          missing = required - set(model.keys()) if isinstance(model, dict) else required
+          if missing:
+              raise SystemExit(f'FATAL: production model missing required keys: {sorted(missing)}')
+          print('production model load: OK')
+          print('production feature count:', len(model.get('all_features', [])))
+          print('production trained_at:', model.get('trained_at'))
+          PY
+
       - name: Run Phase 2D validator
         run: python phase2d_prospective_validator.py
 
