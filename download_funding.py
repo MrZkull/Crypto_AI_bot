@@ -29,6 +29,14 @@ BINANCE_FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
 REQUEST_TIMEOUT = 15
 BATCH_SLEEP_SECONDS = 0.08
 
+# Keep each Binance request small enough that the API cannot collapse
+# the whole historical range into a limited recent subset.
+FUNDING_CHUNK_MS = 7 * 24 * 60 * 60 * 1000
+
+# Look back before the first candle so the earliest candle has a
+# prior point-in-time funding observation.
+FUNDING_LOOKBACK_MS = 24 * 60 * 60 * 1000
+
 
 def fetch_binance_funding_strict(
     session: requests.Session,
@@ -37,13 +45,19 @@ def fetch_binance_funding_strict(
     end_ms: int
 ) -> pd.DataFrame:
     records = []
-    current_start = start_ms
 
-    while current_start <= end_ms:
+    chunk_start = start_ms
+
+    while chunk_start <= end_ms:
+        chunk_end = min(
+            chunk_start + FUNDING_CHUNK_MS - 1,
+            end_ms
+        )
+
         params = {
             "symbol": symbol,
-            "startTime": current_start,
-            "endTime": end_ms,
+            "startTime": chunk_start,
+            "endTime": chunk_end,
             "limit": 1000
         }
 
@@ -62,33 +76,20 @@ def fetch_binance_funding_strict(
         data = resp.json()
 
         if not data or not isinstance(data, list):
-            break
+            chunk_start = chunk_end + 1
+            time.sleep(BATCH_SLEEP_SECONDS)
+            continue
 
         for item in data:
             ft = int(item["fundingTime"])
 
-            if ft <= end_ms:
+            if chunk_start <= ft <= end_ms:
                 records.append({
                     "funding_time": ft,
                     "fundingRate": float(item["fundingRate"])
                 })
 
-        # Continue until the requested end time has actually
-        # been reached. Do not assume len(data) < 1000 means
-        # that the requested historical range is complete.
-        last_funding_time = int(data[-1]["fundingTime"])
-
-        if last_funding_time >= end_ms:
-            break
-
-        next_start = last_funding_time + 1
-
-        if next_start <= current_start:
-            raise ValueError(
-                f"FATAL: Funding pagination did not advance for {symbol}."
-            )
-
-        current_start = next_start
+        chunk_start = chunk_end + 1
         time.sleep(BATCH_SLEEP_SECONDS)
 
     if not records:
@@ -142,13 +143,11 @@ def main():
 
         candle_df = pd.read_parquet(candle_file)
 
-        # Fetch funding history 24 hours before the first candle
-        # so the earliest candle has a prior PIT funding observation.
-        FUNDING_LOOKBACK_MS = 24 * 60 * 60 * 1000
-
+        # Look back 24 hours so the earliest candle has
+        # a prior point-in-time funding observation.
         start_ms = max(
             0,
-            int(candle_df["open_time"].min()) - FUNDING_LOOKBACK_MS,
+            int(candle_df["open_time"].min()) - FUNDING_LOOKBACK_MS
         )
 
         end_ms = int(candle_df["close_time"].max())
