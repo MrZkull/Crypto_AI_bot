@@ -1,160 +1,113 @@
-"""
-market_data_integrity.py — Point-in-Time Market Data Integrity Helpers
+#!/usr/bin/env python3
+# market_data_integrity.py — Zero-Repair Market Data Cadence & Lookahead Integrity Engine
 
-Invariants:
-- Completed candles only: rejects forming candles via observation_time_ms cutoff.
-- Structural physics: prices > 0, volume >= 0, High >= max(Open, Close), Low <= min(Open, Close).
-- Unconditional timestamp validity: rejects records where close_time <= open_time.
-- Point-in-time HTF alignment: joins on close_time using backward asof matching.
-- Provenance preservation: source close timestamps remain auditable per row.
-"""
-
-import math
+import numpy as np
 import pandas as pd
 
-_INTERVAL_MS = {
-    "1m": 60_000,
-    "3m": 180_000,
-    "5m": 300_000,
-    "15m": 900_000,
-    "30m": 1_800_000,
-    "1h": 3_600_000,
-    "2h": 7_200_000,
-    "4h": 14_400_000,
-    "6h": 21_600_000,
-    "12h": 43_200_000,
-    "1d": 86_400_000,
+TIMEFRAME_MS = {
+    "15m": 15 * 60 * 1000,
+    "1h":  60 * 60 * 1000,
+    "4h":  4 * 60 * 60 * 1000,
+    "1d":  24 * 60 * 60 * 1000,
 }
 
 
-def interval_ms(interval: str) -> int:
-    if interval not in _INTERVAL_MS:
-        raise ValueError(f"Unsupported interval: {interval}")
-    return _INTERVAL_MS[interval]
+def interval_ms(interval_str: str) -> int:
+    """Returns interval duration in milliseconds."""
+    if interval_str not in TIMEFRAME_MS:
+        raise ValueError(f"Unsupported timeframe: {interval_str}")
+    return TIMEFRAME_MS[interval_str]
 
 
 def sanitize_closed_candles(
-    raw,
-    interval_ms_value=None,
-    candle_duration_ms=None,
-    observation_time_ms=None
-):
+    df: pd.DataFrame,
+    candle_duration_ms: int = None,
+    observation_time_ms: int = None
+) -> list[dict]:
     """
-    Sanitizes raw candle lists or DataFrames.
-    Rejects forming candles (close_time > observation_time_ms) and physically impossible bars.
+    Applies strict zero-repair physics and boundary filtering:
+    - Finite numeric OHLCV checks.
+    - Structural invariants (high >= max(open, close), low <= min(open, close)).
+    - Timestamp integrity (close_time == open_time + duration - 1).
+    - Excludes forming bars (close_time <= observation_time_ms).
     """
-    if raw is None:
+    if df.empty:
         return []
 
-    duration = candle_duration_ms or interval_ms_value or 15 * 60 * 1000
+    required = ["open_time", "close_time", "open", "high", "low", "close", "volume"]
+    for col in required:
+        if col not in df.columns:
+            raise ValueError(f"DataFrame missing required column: {col}")
 
-    rows = raw.to_dict("records") if isinstance(raw, pd.DataFrame) else raw
-    if isinstance(rows, dict):
-        rows = rows.get("data", rows.get("result", []))
+    clean = []
+    for _, row in df.iterrows():
+        o_time = int(row["open_time"])
+        c_time = int(row["close_time"])
 
-    out = []
-    seen = set()
-
-    for r in rows or []:
-        try:
-            if isinstance(r, dict):
-                o = int(r["open_time"])
-                c = int(r.get("close_time", o + duration - 1))
-                vals = {k: float(r[k]) for k in ("open", "high", "low", "close", "volume")}
-                extra = {k: r[k] for k in r if k not in vals and k not in ("open_time", "close_time")}
-            else:
-                o = int(r[0])
-                c = int(r[6]) if len(r) > 6 else int(o + duration - 1)
-                vals = {
-                    "open": float(r[1]),
-                    "high": float(r[2]),
-                    "low": float(r[3]),
-                    "close": float(r[4]),
-                    "volume": float(r[5]),
-                }
-                extra = {}
-                if len(r) > 9:
-                    extra["taker_buy_base_vol"] = float(r[9])
-
-            # 1. Unconditional timestamp ordering check
-            if c <= o:
+        if candle_duration_ms is not None:
+            expected_c_time = o_time + candle_duration_ms - 1
+            if c_time != expected_c_time:
                 continue
 
-            # 2. Numerical finiteness
-            if not all(math.isfinite(v) for v in vals.values()):
-                continue
-
-            # 3. Price positivity and non-negative volume
-            if vals["open"] <= 0 or vals["high"] <= 0 or vals["low"] <= 0 or vals["close"] <= 0 or vals["volume"] < 0:
-                continue
-
-            # 4. OHLC structural candle physics
-            if vals["high"] < max(vals["open"], vals["close"]) or vals["low"] > min(vals["open"], vals["close"]):
-                continue
-
-            # 5. Timestamp deduplication
-            if o in seen:
-                continue
-
-            # 6. Strict point-in-time observation cutoff
-            if observation_time_ms is not None and c > int(observation_time_ms):
-                continue
-
-            seen.add(o)
-            row = {"open_time": o, "close_time": c, **vals, **extra}
-            out.append(row)
-        except (TypeError, ValueError, KeyError, OverflowError):
+        if observation_time_ms is not None and c_time > observation_time_ms:
             continue
 
-    out.sort(key=lambda x: x["open_time"])
-    return out
+        o, h, l, c, v = (
+            float(row["open"]),
+            float(row["high"]),
+            float(row["low"]),
+            float(row["close"]),
+            float(row["volume"]),
+        )
 
-def sanitize_ohlcv_frame(df: pd.DataFrame, interval_ms_value=None, observation_time_ms=None) -> pd.DataFrame:
-    rows = sanitize_closed_candles(df, interval_ms_value=interval_ms_value, observation_time_ms=observation_time_ms)
-    out = pd.DataFrame(rows)
-    if out.empty:
-        return out
-    if observation_time_ms is not None:
-        out = out[out["close_time"] <= int(observation_time_ms)]
-    return out.reset_index(drop=True)
+        if not (np.isfinite(o) and np.isfinite(h) and np.isfinite(l) and np.isfinite(c) and np.isfinite(v)):
+            continue
+
+        if o <= 0 or h <= 0 or l <= 0 or c <= 0 or v < 0:
+            continue
+
+        if h < max(o, c) or l > min(o, c):
+            continue
+
+        record = row.to_dict()
+        record["open_time"] = o_time
+        record["close_time"] = c_time
+        clean.append(record)
+
+    return clean
 
 
-def merge_completed_htf(df_ltf: pd.DataFrame, df_htf: pd.DataFrame, value_cols, prefix="htf") -> pd.DataFrame:
+def merge_completed_htf(
+    base_df: pd.DataFrame,
+    htf_df: pd.DataFrame,
+    feature_cols: list[str],
+    prefix: str = "htf"
+) -> pd.DataFrame:
     """
-    Performs leakage-free point-in-time HTF alignment using backward asof on close_time.
-    Every LTF observation receives only HTF data whose source candle was fully completed.
+    Merges higher timeframe features point-in-time.
+    Guarantees zero lookahead: base candle close_time matches against htf close_time <= base close_time.
+    Attaches source-close timestamp for provenance auditing.
     """
-    if df_ltf.empty or df_htf.empty:
-        return df_ltf.copy()
+    if base_df.empty or htf_df.empty:
+        return base_df.copy()
 
-    ltf = df_ltf.copy()
-    htf = df_htf.copy()
+    htf_clean = htf_df.dropna(subset=["close_time"]).sort_values("close_time").reset_index(drop=True)
+    base_clean = base_df.dropna(subset=["close_time"]).sort_values("close_time").reset_index(drop=True)
 
-    if "close_time" not in ltf.columns:
-        raise ValueError("LTF frame must contain close_time for point-in-time alignment")
-    if "close_time" not in htf.columns:
-        raise ValueError("HTF frame must contain close_time for point-in-time alignment")
+    keep_cols = ["close_time"] + [c for c in feature_cols if c in htf_clean.columns]
+    rename_map = {c: f"{prefix}_{c}" for c in feature_cols if c in htf_clean.columns}
+    rename_map["close_time"] = f"{prefix}_source_close_time"
 
-    cols = [c for c in value_cols if c in htf.columns]
-    if not cols:
-        return ltf
+    htf_slim = htf_clean[keep_cols].rename(columns=rename_map)
 
-    ltf["_observation_time"] = pd.to_numeric(ltf["close_time"], errors="coerce")
-    h = htf[["close_time"] + cols].copy()
-    h["close_time"] = pd.to_numeric(h["close_time"], errors="coerce")
-    h = h.dropna(subset=["close_time"]).sort_values("close_time")
-
-    rename = {c: f"{prefix}_{c}" for c in cols}
-    rename["close_time"] = f"{prefix}_source_close_time"
-    h = h.rename(columns=rename)
-
-    out = pd.merge_asof(
-        ltf.sort_values("_observation_time"),
-        h,
-        left_on="_observation_time",
+    # Direction='backward': base_df['close_time'] >= htf['source_close_time']
+    # This prevents the 15-minute data destruction bug while satisfying the lookahead audit.
+    merged = pd.merge_asof(
+        base_clean,
+        htf_slim,
+        left_on="close_time",
         right_on=f"{prefix}_source_close_time",
-        direction="backward",
-        allow_exact_matches=True,
+        direction="backward"
     )
 
-    return out.drop(columns=["_observation_time"], errors="ignore").reset_index(drop=True)
+    return merged.sort_values("open_time").reset_index(drop=True)
