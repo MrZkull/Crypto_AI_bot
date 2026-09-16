@@ -111,7 +111,7 @@ jobs:
           test -s pro_crypto_ai_model.pkl
           ls -lh pro_crypto_ai_model.pkl
 
-      - name: Verify production model
+            - name: Verify production model
         run: |
           set -e
 
@@ -137,9 +137,18 @@ jobs:
           model = joblib.load(path)
 
           if not isinstance(model, dict):
-              raise SystemExit("FATAL: unexpected production model type")
+              raise SystemExit(
+                  "FATAL: unexpected production model type"
+              )
 
-          required = {"all_features", "selector", "ensemble", "label_map"}
+          required = {
+              "all_features",
+              "selector",
+              "ensemble",
+              "label_map",
+              "best_features",
+          }
+
           missing = required - set(model)
 
           if missing:
@@ -147,21 +156,57 @@ jobs:
                   f"FATAL: production model missing keys: {sorted(missing)}"
               )
 
-          selected = getattr(
-              model["selector"],
-              "selected_features",
-              [],
+          declared = [
+              str(x)
+              for x in model["all_features"]
+          ]
+
+          selected = [
+              str(x)
+              for x in model["best_features"]
+          ]
+
+          print(
+              "production declared features:",
+              len(declared),
           )
 
-          print("production declared features:", len(model["all_features"]))
-          print("production selected features:", len(selected))
-          print("production trained_at:", model.get("trained_at"))
+          print(
+              "production selected features:",
+              len(selected),
+          )
 
-          if len(model["all_features"]) != 63:
-              raise SystemExit("FATAL: expected 63 production declared features")
+          print(
+              "production trained_at:",
+              model.get("trained_at"),
+          )
+
+          print(
+              "production selected feature list:",
+              selected,
+          )
+
+          if len(declared) != 63:
+              raise SystemExit(
+                  "FATAL: expected 63 production declared features"
+              )
 
           if len(selected) != 35:
-              raise SystemExit("FATAL: expected 35 production selected features")
+              raise SystemExit(
+                  "FATAL: expected 35 production selected features"
+              )
+
+          missing_from_declared = [
+              f for f in selected
+              if f not in declared
+          ]
+
+          if missing_from_declared:
+              raise SystemExit(
+                  "FATAL: best_features contains features "
+                  f"not present in all_features: "
+                  f"{missing_from_declared}"
+              )
           PY
 
       - name: Run Phase 2D validator
