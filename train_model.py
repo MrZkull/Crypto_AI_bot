@@ -147,18 +147,150 @@ def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _merge_funding_to_15m(df15: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """
+    Strict point-in-time funding alignment for Phase 2 research.
+
+    Funding is sourced from data/historical/funding/{symbol}_funding.parquet
+    and attached to each 15m observation using close_time <= funding_time
+    via a backward as-of merge. Missing coverage, invalid values, duplicate
+    funding timestamps, future timestamps, or zero-variance funding all fail
+    closed.
+    """
+    funding_path = HISTORICAL_DATA_DIR / "funding" / f"{symbol}_funding.parquet"
+
+    if not funding_path.exists():
+        raise FileNotFoundError(
+            f"CRITICAL: Missing funding archive for {symbol}: {funding_path}"
+        )
+
+    fdf = pd.read_parquet(funding_path)
+    if fdf.empty:
+        raise ValueError(f"CRITICAL: Funding archive for {symbol} is empty")
+
+    time_col = next((c for c in ("funding_time", "timestamp", "open_time") if c in fdf.columns), None)
+    rate_col = next((c for c in ("fundingRate", "funding_rate") if c in fdf.columns), None)
+
+    if time_col is None or rate_col is None:
+        raise ValueError(
+            f"CRITICAL: Missing expected funding columns for {symbol}. "
+            f"Found: {fdf.columns.tolist()}"
+        )
+
+    fdf = fdf.rename(
+        columns={time_col: "funding_time", rate_col: "fundingRate"}
+    ).copy()
+
+    fdf["funding_time"] = pd.to_numeric(
+        fdf["funding_time"], errors="coerce"
+    )
+    fdf["fundingRate"] = pd.to_numeric(
+        fdf["fundingRate"], errors="coerce"
+    )
+
+    if fdf["funding_time"].isna().any():
+        raise ValueError(f"CRITICAL: Invalid funding timestamps for {symbol}")
+
+    if fdf["fundingRate"].isna().any():
+        raise ValueError(f"CRITICAL: NaN funding rates in source for {symbol}")
+
+    if not np.isfinite(fdf["funding_time"].to_numpy(dtype=float)).all():
+        raise ValueError(f"CRITICAL: Non-finite funding timestamps for {symbol}")
+
+    if not np.isfinite(fdf["fundingRate"].to_numpy(dtype=float)).all():
+        raise ValueError(f"CRITICAL: Non-finite funding rates for {symbol}")
+
+    if fdf["funding_time"].duplicated().any():
+        raise ValueError(f"CRITICAL: Duplicate funding timestamps detected for {symbol}")
+
+    fdf = fdf.sort_values("funding_time").reset_index(drop=True)
+
+    source_std = float(fdf["fundingRate"].std())
+    source_unique = int(fdf["fundingRate"].nunique(dropna=True))
+
+    if source_unique < 2 or not np.isfinite(source_std) or source_std == 0.0:
+        raise ValueError(
+            f"CRITICAL: Source funding archive for {symbol} has zero variance "
+            f"(N={len(fdf)}, unique={source_unique}, std={source_std})"
+        )
+
+    if "close_time" not in df15.columns:
+        raise ValueError(
+            f"CRITICAL: 15m dataset for {symbol} is missing close_time "
+            "required for funding alignment"
+        )
+
+    base = df15.copy()
+    base["close_time"] = pd.to_numeric(
+        base["close_time"], errors="coerce"
+    )
+
+    if base["close_time"].isna().any():
+        raise ValueError(f"CRITICAL: Invalid 15m close_time values for {symbol}")
+
+    base = base.sort_values("close_time").reset_index(drop=True)
+
+    merged = pd.merge_asof(
+        base,
+        fdf[["funding_time", "fundingRate"]],
+        left_on="close_time",
+        right_on="funding_time",
+        direction="backward",
+    )
+
+    if merged["fundingRate"].isna().any():
+        missing_count = int(merged["fundingRate"].isna().sum())
+        raise ValueError(
+            f"CRITICAL: Missing funding coverage after merge for {symbol}: "
+            f"{missing_count} rows"
+        )
+
+    if (merged["funding_time"] > merged["close_time"]).any():
+        raise ValueError(
+            f"CRITICAL: Lookahead leakage detected for {symbol}: "
+            "funding timestamp is after observation close_time"
+        )
+
+    merged_std = float(merged["fundingRate"].std())
+    merged_unique = int(merged["fundingRate"].nunique(dropna=True))
+
+    if merged_unique < 2 or not np.isfinite(merged_std) or merged_std == 0.0:
+        raise ValueError(
+            f"CRITICAL: Zero-variance funding after merge for {symbol} "
+            f"(N={len(merged)}, unique={merged_unique}, std={merged_std})"
+        )
+
+    log.info(
+        "Funding source OK | %s | rows=%d | unique=%d | min=%.8g | max=%.8g | std=%.8g",
+        symbol,
+        len(fdf),
+        source_unique,
+        float(fdf["fundingRate"].min()),
+        float(fdf["fundingRate"].max()),
+        source_std,
+    )
+
+    merged = merged.rename(
+        columns={"funding_time": "funding_source_time"}
+    )
+
+    return merged.sort_values("open_time").reset_index(drop=True)
+
+
 def _build_features(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: pd.DataFrame, regime: str, btc_df15=None) -> pd.DataFrame:
     if df15.empty or len(df15) < MIN_BARS:
         return pd.DataFrame()
 
+    # Strict funding attachment. Never use a stale/constant existing
+    # fundingRate column from the candle file and never silently replace
+    # missing funding with zero.
+    df15 = _merge_funding_to_15m(df15, symbol)
+
     taker_col = df15[["open_time", "taker_buy_base_vol"]].copy() if "taker_buy_base_vol" in df15.columns else None
-    funding_col = df15[["open_time", "fundingRate"]].copy() if "fundingRate" in df15.columns else None
 
     df15 = add_indicators(df15)
     if taker_col is not None and "taker_buy_base_vol" not in df15.columns:
         df15 = df15.merge(taker_col, on="open_time", how="left")
-    if funding_col is not None and "fundingRate" not in df15.columns:
-        df15 = df15.merge(funding_col, on="open_time", how="left")
 
     if not df1h.empty:
         df15 = _align_1h_to_15m(add_indicators(df1h), df15)
@@ -178,8 +310,12 @@ def _build_features(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: p
 
     df15 = _add_extra_features(df15)
 
+    # fundingRate must have been attached by _merge_funding_to_15m().
     if "fundingRate" not in df15.columns:
-        df15["fundingRate"] = 0.0
+        raise ValueError(
+            f"CRITICAL: Funding attachment failed for {symbol}; "
+            "fundingRate column is missing"
+        )
 
     df15["symbol"] = symbol
     df15["regime"] = regime
