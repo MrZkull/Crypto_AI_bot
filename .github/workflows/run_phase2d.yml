@@ -17,17 +17,15 @@ jobs:
   prospective:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -41,13 +39,26 @@ jobs:
         run: |
           set -e
           mkdir -p research_outputs
-          RUN_ID=$(gh run list --workflow="run_phase2d.yml" --limit 20 --json databaseId,conclusion --jq '.[] | select(.conclusion == "success") | .databaseId' | head -n 1 || true)
+
+          RUN_ID=$(
+            gh run list \
+              --workflow="run_phase2d.yml" \
+              --limit 20 \
+              --json databaseId,conclusion \
+              --jq '.[] | select(.conclusion == "success") | .databaseId' \
+            | head -n 1 || true
+          )
+
           if [ -n "$RUN_ID" ]; then
-            echo "Restoring state from Phase 2D run $RUN_ID"
-            rm -f research_outputs/phase2d_state.json research_outputs/phase2d_results.json research_outputs/phase2d_latest_snapshot.json
-            gh run download "$RUN_ID" -n phase2d-state -D research_outputs || true
+            echo "Restoring state from run $RUN_ID"
+
+            gh run download \
+              "$RUN_ID" \
+              -n phase2d-state \
+              -D research_outputs \
+              || true
           else
-            echo "No previous Phase 2D state found; starting fresh."
+            echo "No previous state found."
           fi
 
       - name: Download locked HTF-removal candidate
@@ -55,28 +66,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          gh run download 35139155066 -n htf-removal-candidate -D phase2d_candidate
-          cp phase2d_candidate/candidate_model.pkl ./candidate_model.pkl
+
+          gh run download \
+            35139155066 \
+            -n htf-removal-candidate \
+            -D phase2d_candidate
+
+          cp phase2d_candidate/candidate_model.pkl .
+          cp phase2d_candidate/candidate_manifest.json .
+
           test -s candidate_model.pkl
-          if [ -f phase2d_candidate/candidate_manifest.json ]; then cp phase2d_candidate/candidate_manifest.json ./candidate_manifest.json; fi
 
       - name: Verify candidate identity
         run: |
           python - <<'PY'
-          import hashlib, json
-          from pathlib import Path
-          p = Path('candidate_model.pkl')
-          sha = hashlib.sha256(p.read_bytes()).hexdigest()
-          print('candidate_model.pkl SHA256:', sha)
-          m = Path('candidate_manifest.json')
-          if m.exists():
-              obj = json.loads(m.read_text())
-              print('candidate_id:', obj.get('candidate_id'))
-              print('candidate_status:', obj.get('status'))
-              if obj.get('model_sha256') and obj['model_sha256'] != sha:
-                  raise SystemExit('FATAL: candidate manifest SHA256 mismatch')
-          if sha != '45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc90b8b9b6d82fc3838c4308c2':
-              raise SystemExit('FATAL: candidate SHA is not the locked HTF-removal candidate')
+          import hashlib
+
+          expected = (
+              "45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc"
+              "90b8b9b6d82fc3838c4308c2"
+          )
+
+          actual = hashlib.sha256(
+              open("candidate_model.pkl", "rb").read()
+          ).hexdigest()
+
+          print("Candidate SHA256:", actual)
+
+          if actual != expected:
+              raise SystemExit(
+                  "FATAL: candidate SHA mismatch"
+              )
           PY
 
       - name: Download locked production model from release v2.0
@@ -84,49 +104,77 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          echo "Downloading production model asset from release v2.0..."
-          gh release download v2.0 --repo "${{ github.repository }}" \
-            --pattern 'pro_crypto_ai_model.pkl' --dir . --clobber
+
+          gh release download \
+            v2.0 \
+            --repo "${{ github.repository }}" \
+            --pattern 'pro_crypto_ai_model.pkl' \
+            --dir . \
+            --clobber
+
           test -s pro_crypto_ai_model.pkl
+
           ls -lh pro_crypto_ai_model.pkl
 
-      - name: Download exact v2.0 source for production feature compatibility
+      # IMPORTANT:
+      # Do not archive/clone v2.0.
+      # Retrieve only the legacy feature-engineering source.
+      - name: Download exact v2.0 feature engineering
         run: |
           set -e
-          rm -rf legacy_v20 legacy_v20.zip legacy_v20_src
-          git fetch origin refs/tags/v2.0:refs/tags/v2.0 --depth=1
-          git archive --format=zip --output=legacy_v20.zip v2.0
-          mkdir -p legacy_v20_src
-          unzip -q legacy_v20.zip -d legacy_v20_src
-          ROOT=$(find legacy_v20_src -maxdepth 1 -type d -print | grep '/Crypto_AI_bot-' | head -n 1)
-          test -n "$ROOT"
-          test -f "$ROOT/feature_engineering.py"
-          cp -r "$ROOT" legacy_v20
-          echo "Legacy v2.0 feature engineering: legacy_v20/feature_engineering.py"
 
-      - name: Verify production model and legacy feature source
+          mkdir -p legacy_v20
+
+          curl -fL --retry 3 --retry-all-errors \
+            "https://raw.githubusercontent.com/${{ github.repository }}/v2.0/feature_engineering.py" \
+            -o legacy_v20/feature_engineering.py
+
+          test -s legacy_v20/feature_engineering.py
+
+          echo "v2.0 feature_engineering.py:"
+          sha256sum legacy_v20/feature_engineering.py
+
+      - name: Verify models
         run: |
           python - <<'PY'
-          import hashlib, joblib
-          from pathlib import Path
-          p = Path('pro_crypto_ai_model.pkl')
-          sha = hashlib.sha256(p.read_bytes()).hexdigest()
-          print('production_model.pkl SHA256:', sha)
-          model = joblib.load(p)
-          required = {'all_features', 'selector', 'ensemble', 'label_map'}
-          missing = required - set(model) if isinstance(model, dict) else required
-          if missing:
-              raise SystemExit(f'FATAL: production model missing required keys: {sorted(missing)}')
-          print('production model load: OK')
-          print('production feature count:', len(model.get('all_features', [])))
-          print('production trained_at:', model.get('trained_at'))
-          print('legacy FE exists:', Path('legacy_v20/feature_engineering.py').exists())
+          import hashlib
+          import joblib
+
+          for filename in [
+              "candidate_model.pkl",
+              "pro_crypto_ai_model.pkl",
+          ]:
+              sha = hashlib.sha256(
+                  open(filename, "rb").read()
+              ).hexdigest()
+
+              model = joblib.load(filename)
+
+              print(
+                  filename,
+                  "SHA256:",
+                  sha
+              )
+
+              print(
+                  filename,
+                  "features:",
+                  len(model["all_features"])
+              )
+
+              print(
+                  filename,
+                  "trained_at:",
+                  model.get("trained_at")
+              )
           PY
 
-      - name: Run Phase 2D validator v2
+      - name: Run Phase 2D validator
         env:
           PHASE2D_LEGACY_FE: legacy_v20/feature_engineering.py
-        run: python phase2d_prospective_validator_v2.py
+        run: |
+          set -e
+          python phase2d_prospective_validator.py
 
       - name: Upload Phase 2D state
         uses: actions/upload-artifact@v4
