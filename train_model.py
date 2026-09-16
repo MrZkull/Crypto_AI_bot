@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# train_model.py — Canonical Parquet Rebuild Engine & Target Geometry Experiment Runner
+# train_model.py — Canonical Parquet Rebuild Engine, Feature Ablation & Sentinel Validation
 
 import os
 import sys
@@ -21,7 +21,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.frozen import FrozenEstimator
 from xgboost import XGBClassifier
 
-# ── Scikit-Learn 1.6+ Compatibility Patch for XGBoost in VotingClassifier ──
+# Scikit-Learn 1.6+ compatibility patch for XGBoost in VotingClassifier
 XGBClassifier._estimator_type = "classifier"
 try:
     from sklearn.utils._tags import ClassifierTags
@@ -39,15 +39,7 @@ except (ImportError, AttributeError):
     pass
 
 from feature_engineering import add_indicators, ALL_FEATURES, ImportanceSelector
-from market_data_integrity import sanitize_closed_candles, merge_completed_htf
-from execution_policy import (
-    get_file_hash,
-    get_policy_hash,
-    get_feature_code_hash,
-    get_feature_schema_hash,
-    build_candidate_config,
-    get_config_hash,
-)
+from market_data_integrity import sanitize_closed_candles, merge_completed_htf, interval_ms
 
 try:
     from config import SYMBOLS, ATR_STOP_MULT, ATR_TARGET1_MULT
@@ -67,8 +59,8 @@ log = logging.getLogger(__name__)
 TEST_SPLIT         = 0.20
 CALIB_SPLIT        = 0.15
 EMBARGO_BARS       = 24
+MODEL_FILE         = "pro_crypto_ai_model.pkl"
 CANDIDATE_MODEL_FILE = "candidate_model.pkl"
-CANDIDATE_MANIFEST = Path("candidate_manifest.json")
 N_FEATURES         = 30
 MIN_BARS           = 100
 UNDERSAMPLE_RATIO  = 1.0
@@ -77,17 +69,9 @@ MIN_BUY_THRESHOLD_FLOOR  = 0.36
 MIN_SELL_THRESHOLD_FLOOR = 0.36
 
 HISTORICAL_DATA_DIR = Path("data/historical")
+BASE_FEATURES = list(dict.fromkeys(ALL_FEATURES))
+FULL_FEATURES = list(dict.fromkeys(BASE_FEATURES + ["fundingRate", "btc_corr_20", "btc_beta_20", "btc_rel_strength"]))
 
-INTERVAL_MS_MAP = {
-    "15m": 15 * 60 * 1000,
-    "1h": 60 * 60 * 1000,
-    "4h": 4 * 60 * 60 * 1000,
-}
-
-FULL_FEATURES = list(dict.fromkeys(ALL_FEATURES))
-
-
-# ── Strict HTF Alignment & Base Feature Generation ────────────────────
 
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     if df1h.empty or len(df1h) < 5 or df15.empty:
@@ -122,38 +106,34 @@ def load_parquet_segment(symbol: str, interval: str) -> pd.DataFrame:
         return pd.DataFrame()
     try:
         df = pd.read_parquet(path)
-        duration_ms = INTERVAL_MS_MAP.get(interval, 15 * 60 * 1000)
-        clean = sanitize_closed_candles(df, candle_duration_ms=duration_ms)
-        out = pd.DataFrame(clean)
-        return out.sort_values("open_time").reset_index(drop=True)
+        clean = sanitize_closed_candles(df, candle_duration_ms=interval_ms(interval))
+        return pd.DataFrame(clean).sort_values("open_time").reset_index(drop=True)
     except Exception as e:
         log.warning(f"Failed loading Parquet segment {path}: {e}")
         return pd.DataFrame()
 
 
-def _build_features(symbol, df15, df1h, df4h, regime, btc_df15=None) -> pd.DataFrame:
-    """Calculates all indicators and HTF alignments. Does NOT apply targets or truncate lookahead."""
+def _build_features(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: pd.DataFrame, regime: str, btc_df15=None) -> pd.DataFrame:
     if df15.empty or len(df15) < MIN_BARS:
         return pd.DataFrame()
 
-    taker_col = None
-    if "taker_buy_base_vol" in df15.columns:
-        taker_col = df15[["open_time", "taker_buy_base_vol"]].copy()
+    taker_col = df15[["open_time", "taker_buy_base_vol"]].copy() if "taker_buy_base_vol" in df15.columns else None
+    funding_col = df15[["open_time", "fundingRate"]].copy() if "fundingRate" in df15.columns else None
 
     df15 = add_indicators(df15)
     if taker_col is not None and "taker_buy_base_vol" not in df15.columns:
         df15 = df15.merge(taker_col, on="open_time", how="left")
+    if funding_col is not None and "fundingRate" not in df15.columns:
+        df15 = df15.merge(funding_col, on="open_time", how="left")
 
     if not df1h.empty:
-        df1h_feat = add_indicators(df1h)
-        df15 = _align_1h_to_15m(df1h_feat, df15)
+        df15 = _align_1h_to_15m(add_indicators(df1h), df15)
         if df15.empty: return pd.DataFrame()
     else:
         return pd.DataFrame()
 
     if not df4h.empty:
-        df4h_feat = add_indicators(df4h)
-        df15 = _align_4h_to_15m(df4h_feat, df15)
+        df15 = _align_4h_to_15m(add_indicators(df4h), df15)
         if df15.empty: return pd.DataFrame()
     else:
         return pd.DataFrame()
@@ -162,18 +142,31 @@ def _build_features(symbol, df15, df1h, df4h, regime, btc_df15=None) -> pd.DataF
     if "htf1h_source_close_time" not in df15.columns or "htf4h_source_close_time" not in df15.columns:
         return pd.DataFrame()
 
+    if "btc_close" in df15.columns and df15["btc_close"].notna().sum() > 30:
+        btc_ret = df15["btc_close"].pct_change()
+        coin_ret = df15["close"].pct_change()
+        roll_cov = coin_ret.rolling(20, min_periods=10).cov(btc_ret)
+        roll_var = btc_ret.rolling(20, min_periods=10).var()
+        df15["btc_corr_20"] = coin_ret.rolling(20, min_periods=10).corr(btc_ret)
+        df15["btc_beta_20"] = roll_cov / roll_var.replace(0, np.nan)
+        df15["btc_rel_strength"] = (df15["close"].pct_change(6) - df15["btc_close"].pct_change(6)) * 100
+    else:
+        df15["btc_corr_20"] = 0.0
+        df15["btc_beta_20"] = 1.0
+        df15["btc_rel_strength"] = 0.0
+
+    df15["btc_corr_20"] = df15["btc_corr_20"].fillna(0.0).clip(-1, 1)
+    df15["btc_beta_20"] = df15["btc_beta_20"].fillna(1.0).clip(-5, 5)
+    df15["btc_rel_strength"] = df15["btc_rel_strength"].fillna(0.0).clip(-50, 50)
+    if "fundingRate" not in df15.columns:
+        df15["fundingRate"] = 0.0
+
     df15["symbol"] = symbol
     df15["regime"] = regime
     return df15.copy()
 
 
 def preload_symbol_features() -> list[pd.DataFrame]:
-    if not HISTORICAL_DATA_DIR.exists() or len(list(HISTORICAL_DATA_DIR.glob("*.parquet"))) < 10:
-        log.warning("data/historical/ incomplete. Invoking download_training_data.py...")
-        from download_training_data import build_canonical_archive
-        build_canonical_archive()
-
-    log.info(f"Preloading Base Indicator Features across {len(SYMBOLS)} symbols (I/O Heavy)...")
     preloaded = []
     btc_df15 = load_parquet_segment("BTCUSDT", "15m")
 
@@ -185,13 +178,11 @@ def preload_symbol_features() -> list[pd.DataFrame]:
         seg = _build_features(symbol, df15, df1h, df4h, regime="historical_canonical", btc_df15=btc_df15)
         if not seg.empty:
             preloaded.append(seg)
-            
+
     if not preloaded:
         raise ValueError("CRITICAL: No valid Parquet datasets qualified.")
     return preloaded
 
-
-# ── Dynamic Target Generation (Phase 1 Variable Isolation) ────────────
 
 def make_targets(df: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float) -> pd.Series:
     n = len(df)
@@ -207,12 +198,9 @@ def make_targets(df: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float) -> 
         atr = atrs[i]
         if atr <= 0 or np.isnan(atr):
             continue
-            
-        # BUY target geometry strictly held constant across experiments
+
         buy_tp = entry + atr * ATR_TARGET1_MULT
         buy_sl = entry - atr * ATR_STOP_MULT
-        
-        # SELL target geometry dynamically adjusted for isolation testing
         sell_tp = entry - atr * sell_tp_mult
         sell_sl = entry + atr * sell_sl_mult
 
@@ -228,17 +216,16 @@ def make_targets(df: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float) -> 
 
         b = first_barrier(buy_tp, buy_sl, True)
         s = first_barrier(sell_tp, sell_sl, False)
-        
+
         if b == "BOTH" or s == "BOTH" or (b == "TP" and s == "TP"):
             labels[i] = "AMBIGUOUS"
         elif b == "TP" and s != "TP": labels[i] = "BUY"
         elif s == "TP" and b != "TP": labels[i] = "SELL"
-        
+
     return pd.Series(labels, index=df.index)
 
 
 def _apply_targets(df: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float) -> pd.DataFrame:
-    """Applies target logic dynamically, truncates lookahead bars, and drops ambiguous setups."""
     df = df.copy()
     df["target"] = make_targets(df, sell_tp_mult, sell_sl_mult)
     if len(df) <= 24:
@@ -247,14 +234,11 @@ def _apply_targets(df: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float) -
     return df[df["target"] != "AMBIGUOUS"].copy()
 
 
-def build_dataset_from_local_parquet(sell_tp_mult=3.5, sell_sl_mult=2.5) -> pd.DataFrame:
-    """Legacy wrapper for train_meta_model.py backward compatibility."""
+def build_dataset_from_local_parquet(sell_tp_mult: float = 3.5, sell_sl_mult: float = 2.5) -> pd.DataFrame:
     raw_list = preload_symbol_features()
     processed = [_apply_targets(df, sell_tp_mult, sell_sl_mult) for df in raw_list]
     return pd.concat(processed, ignore_index=True)
 
-
-# ── Training & Chronological Evaluation ───────────────────────────────
 
 def temporal_symbol_split(ds: pd.DataFrame, test_split: float, calib_split: float, embargo: int):
     train_parts, calib_parts, test_parts = [], [], []
@@ -295,9 +279,9 @@ def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int
     return X_train.iloc[keep].reset_index(drop=True), y_train[keep]
 
 
-def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_artifact: bool = True):
+def train(ds: pd.DataFrame, active_features: list, sell_tp_mult: float, sell_sl_mult: float, export_artifact: bool = True, reserved_features: list = None):
     ds = ds.loc[:, ~ds.columns.duplicated()].copy()
-    for f in FULL_FEATURES:
+    for f in active_features:
         if f not in ds.columns: ds[f] = 0.0
 
     le = LabelEncoder()
@@ -307,21 +291,25 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
     nt_idx   = classes.index("NO_TRADE") if "NO_TRADE" in classes else -1
     buy_idx  = classes.index("BUY")      if "BUY"      in classes else 0
     sell_idx = classes.index("SELL")     if "SELL"     in classes else 2
+    
+    # ── FATAL GUARD: Prevent Fabricated Negative Results ──
+    if "fundingRate" in active_features:
+        if "fundingRate" not in ds.columns or ds["fundingRate"].notna().sum() == 0 or (ds["fundingRate"] == 0).all():
+            raise ValueError(
+                "FATAL: Funding archive empty, all-NaN, or all-zero. "
+                "Phase 2 variants would be numerically identical to BASELINE, "
+                "producing a false negative result. Aborting."
+            )
 
     train_df, calib_df, test_df = temporal_symbol_split(ds, TEST_SPLIT, CALIB_SPLIT, EMBARGO_BARS)
-    
-    if export_artifact:
-        n = len(ds)
-        b, s, nt = (ds.target == "BUY").sum(), (ds.target == "SELL").sum(), (ds.target == "NO_TRADE").sum()
-        log.info(f"DATASET DISTRIBUTION: {n:,} rows | BUY: {b:,} ({b/n*100:.1f}%) | SELL: {s:,} ({s/n*100:.1f}%) | NO_TRADE: {nt:,} ({nt/n*100:.1f}%)")
 
     train_df = train_df.sort_values("open_time").reset_index(drop=True)
-    X_train_raw = train_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+    X_train_raw = train_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_train_raw = le.transform(train_df["target"])
 
-    X_calib = calib_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+    X_calib = calib_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_calib = le.transform(calib_df["target"]) if len(calib_df) > 0 else np.array([])
-    X_test = test_df[FULL_FEATURES].replace([np.inf, -np.inf], np.nan).fillna(0)
+    X_test = test_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_test = le.transform(test_df["target"]) if len(test_df) > 0 else np.array([])
 
     scanner = XGBClassifier(n_estimators=100, max_depth=4, random_state=42, n_jobs=-1, eval_metric="mlogloss")
@@ -329,11 +317,25 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
     top_idx = np.argsort(scanner.feature_importances_)[::-1]
 
     essential = ["volume_ratio", "volume_spike", "obv_slope", "bb_width", "atr_pct", "volatility", "vwap_dev"]
-    selected  = [f for f in essential if f in FULL_FEATURES]
+    selected  = [f for f in essential if f in active_features]
+    
+    # ── BUG FIX: Unconditionally Reserve Ablation Variables Before Cutoff ──
+    for f in (reserved_features or []):
+        if f in active_features and f not in selected:
+            selected.append(f)
+
     for i in top_idx:
-        feat = FULL_FEATURES[i]
+        feat = active_features[i]
         if feat not in selected: selected.append(feat)
-        if len(selected) >= N_FEATURES: break
+        if len(selected) >= min(N_FEATURES, len(active_features)): break
+
+    # Fail loudly rather than reporting a collapsed variant
+    for f in (reserved_features or []):
+        if f in active_features and f not in selected:
+            raise ValueError(
+                f"FATAL: reserved ablation feature '{f}' was not selected. "
+                f"Variant would be numerically identical to baseline."
+            )
 
     X_train_raw_sel = X_train_raw[selected]
     Xte, Xcal = X_test[selected].values, X_calib[selected].values
@@ -347,20 +349,20 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
     sw_asym[y_train == sell_idx] = sell_weight
 
     xgb = XGBClassifier(
-        n_estimators=250, max_depth=4, learning_rate=0.03, subsample=0.75, 
-        colsample_bytree=0.75, min_child_weight=5, reg_alpha=1.0, reg_lambda=2.0, 
+        n_estimators=250, max_depth=4, learning_rate=0.03, subsample=0.75,
+        colsample_bytree=0.75, min_child_weight=5, reg_alpha=1.0, reg_lambda=2.0,
         eval_metric="mlogloss", random_state=42, n_jobs=-1,
     )
     xgb.fit(Xtr, y_train, sample_weight=sw_asym)
 
     rf = RandomForestClassifier(
-        n_estimators=250, max_depth=7, min_samples_leaf=10, max_features="sqrt", 
+        n_estimators=250, max_depth=7, min_samples_leaf=10, max_features="sqrt",
         random_state=42, n_jobs=-1, class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: sell_weight},
     )
     rf.fit(Xtr, y_train)
 
     gb = HistGradientBoostingClassifier(
-        max_iter=150, max_depth=4, learning_rate=0.03, min_samples_leaf=10, 
+        max_iter=150, max_depth=4, learning_rate=0.03, min_samples_leaf=10,
         l2_regularization=1.5, random_state=42, class_weight={nt_idx: 1.0, buy_idx: 2.0, sell_idx: sell_weight},
     )
     gb.fit(Xtr, y_train)
@@ -379,23 +381,27 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
     best_thresh_sell, best_score_sell = MIN_SELL_THRESHOLD_FLOOR, 0.0
     friction_r = 0.12
 
-    # Break-Even Pre-Calculations
     be_buy = (ATR_STOP_MULT + friction_r) / (ATR_TARGET1_MULT + ATR_STOP_MULT)
     be_sell = (sell_sl_mult + friction_r) / (sell_tp_mult + sell_sl_mult)
+
+    sweep_thresholds = np.round(np.arange(0.32, 0.62, 0.02), 2)
+    raw_sell_candidates = (calib_probas[:, sell_idx] > calib_probas[:, buy_idx]).sum()
+
+    lowest_thresh = sweep_thresholds[0]
+    p_sell_mask = (calib_probas[:, sell_idx] >= lowest_thresh) & (calib_probas[:, sell_idx] > calib_probas[:, buy_idx])
     
+    # ── BUG FIX: Correctly Evaluate Mean After Casting Condition Array ──
+    base_sell_prec = float((y_calib[p_sell_mask] == sell_idx).mean()) if p_sell_mask.sum() > 0 else 0.0
+
     if export_artifact:
         log.info(f"\n{'='*95}")
         log.info(f"CALIBRATION THRESHOLD SWEEP (Friction={friction_r}R)")
         log.info(f"BUY Geometry:  {ATR_TARGET1_MULT}R / {ATR_STOP_MULT}R (Req Prec > {be_buy*100:.1f}%)")
         log.info(f"SELL Geometry: {sell_tp_mult}R / {sell_sl_mult}R (Req Prec > {be_sell*100:.1f}%)")
+        log.info(f"DIAGNOSTIC: Raw SELL calibration candidates (p_sell > p_buy): {raw_sell_candidates}")
+        log.info(f"DIAGNOSTIC: SELL Precision @ Floor {lowest_thresh:.2f}: {base_sell_prec*100:.1f}% (n={p_sell_mask.sum()})")
         log.info(f"{'='*95}")
-        log.info(
-            f"{'Thresh':<7} | {'BUY N':<6} {'BUY Prec':<9} {'BUY Rec':<8} {'BUY EV':<8} {'Score':<7} | "
-            f"{'SELL N':<7} {'SELL Prec':<10} {'SELL Rec':<9} {'SELL EV':<8} {'Score':<7}"
-        )
-        log.info(f"{'-'*95}")
 
-    sweep_thresholds = np.round(np.arange(0.32, 0.62, 0.02), 2)
     for thresh in sweep_thresholds:
         yp = []
         for p in calib_probas:
@@ -403,7 +409,7 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
             if p_buy >= thresh and p_buy > p_sell: yp.append(buy_idx)
             elif p_sell >= thresh and p_sell > p_buy: yp.append(sell_idx)
             else: yp.append(nt_idx)
-                
+
         yp = np.array(yp)
         bm, sm = (yp == buy_idx), (yp == sell_idx)
 
@@ -418,19 +424,14 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
         buy_score  = buy_ev * rb * np.sqrt(max(bm.sum(), 1))  if buy_ev > 0 else 0.0
         sell_score = sell_ev * rs * np.sqrt(max(sm.sum(), 1)) if sell_ev > 0 else 0.0
 
-        if export_artifact:
-            log.info(
-                f"{thresh:<7.2f} | {bm.sum():<6} {pb*100:>7.1f}%  {rb*100:>6.1f}%  {buy_ev:>+6.2f}R {buy_score:>7.2f} | "
-                f"{sm.sum():<7} {ps*100:>8.1f}%  {rs*100:>7.1f}%  {sell_ev:>+6.2f}R {sell_score:>7.2f}"
-            )
-
         if thresh >= MIN_BUY_THRESHOLD_FLOOR and buy_score > best_score_buy and bm.sum() > 15:
             best_score_buy, best_thresh_buy = buy_score, thresh
         if thresh >= MIN_SELL_THRESHOLD_FLOOR and sell_score > best_score_sell and sm.sum() > 15:
             best_score_sell, best_thresh_sell = sell_score, thresh
 
-    best_thresh_buy  = max(MIN_BUY_THRESHOLD_FLOOR, best_thresh_buy)
-    best_thresh_sell = max(MIN_SELL_THRESHOLD_FLOOR, best_thresh_sell)
+    # Fail-closed sentinel check (disables broken sides entirely)
+    best_thresh_buy = max(MIN_BUY_THRESHOLD_FLOOR, best_thresh_buy) if best_score_buy > 0.0 else 1.01
+    best_thresh_sell = max(MIN_SELL_THRESHOLD_FLOOR, best_thresh_sell) if best_score_sell > 0.0 else 1.01
 
     probas = ensemble.predict_proba(Xte)
     y_pred_tuned = []
@@ -439,7 +440,7 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
         if p_buy >= best_thresh_buy and p_buy > p_sell: y_pred_tuned.append(buy_idx)
         elif p_sell >= best_thresh_sell and p_sell > p_buy: y_pred_tuned.append(sell_idx)
         else: y_pred_tuned.append(nt_idx)
-            
+
     y_pred_tuned = np.array(y_pred_tuned)
     acc = accuracy_score(y_test, y_pred_tuned)
 
@@ -448,56 +449,34 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
 
     train_acc = accuracy_score(y_train, ensemble.predict(Xtr))
     report = classification_report(y_test, y_pred_tuned, target_names=classes, output_dict=True, zero_division=0)
-    
-    log.info(f"{'-'*95}")
-    log.info(f"✅ Selected Optimal Thresholds -> BUY: {best_thresh_buy:.2f} (Score: {best_score_buy:.2f}) | SELL: {best_thresh_sell:.2f} (Score: {best_score_sell:.2f})")
-    log.info(f"{'='*95}\n")
-    log.info(f"Generalization Check: In-Sample (Train)={train_acc*100:.1f}% | Out-of-Sample (Test)={acc*100:.1f}%")
 
     now_utc = datetime.now(timezone.utc)
     pipeline = {
         "ensemble":                   ensemble,
         "selector":                   ImportanceSelector(selected),
-        "all_features":               FULL_FEATURES,
+        "all_features":               active_features,
         "best_features":              selected,
         "label_map":                  {i: c for i, c in enumerate(classes)},
         "label_encoder":              le,
         "accuracy":                   round(acc * 100, 1),
         "trained_at":                 now_utc.isoformat(),
         "symbols":                    SYMBOLS,
-        "n_features":                 len(FULL_FEATURES),
+        "n_features":                 len(active_features),
         "recommended_threshold_buy":  best_thresh_buy,
         "recommended_threshold_sell": best_thresh_sell,
         "recommended_threshold":      max(best_thresh_buy, best_thresh_sell),
         "calibrated":                 True,
+        "buy_tp_mult":                ATR_TARGET1_MULT,
+        "buy_sl_mult":                ATR_STOP_MULT,
+        "sell_tp_mult":               sell_tp_mult,
+        "sell_sl_mult":               sell_sl_mult,
     }
 
+    joblib.dump(pipeline, MODEL_FILE)
     joblib.dump(pipeline, CANDIDATE_MODEL_FILE, compress=3)
-    log.info(f"✅ Exported compressed candidate binary: {CANDIDATE_MODEL_FILE}")
-
-    with open(CANDIDATE_MODEL_FILE, "rb") as f:
-        model_sha256 = hashlib.sha256(f.read()).hexdigest()
-
-    candidate_id = f"cand_{uuid.uuid4().hex}"
-    manifest = {
-        "artifact_version": 1,
-        "candidate_id": candidate_id,
-        "model_sha256": model_sha256,
-        "feature_schema_hash": get_feature_schema_hash(FULL_FEATURES),
-        "feature_code_hash": get_feature_code_hash(),
-        "execution_policy_hash": get_policy_hash(),
-        "decision_policy_hash": "",
-        "config_hash": get_config_hash(build_candidate_config()),
-        "candidate_created_at": now_utc.isoformat(),
-        "candidate_expiry_at": (now_utc + timedelta(days=30)).isoformat(),
-        "status": "AWAITING_PROSPECTIVE_EVIDENCE",
-    }
-
-    with open(CANDIDATE_MANIFEST, "w") as f:
-        json.dump(manifest, f, indent=2)
+    log.info(f"✅ Exported candidate binary: {CANDIDATE_MODEL_FILE}")
 
     perf = {
-        "candidate_id":               candidate_id,
         "accuracy":                   round(acc * 100, 1),
         "test_accuracy":              f"{round(acc * 100, 1)}%",
         "train_accuracy":             f"{round(train_acc * 100, 1)}%",
@@ -505,12 +484,13 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
         "n_calib":                    int(len(X_calib)),
         "n_train_sampled":            int(len(y_train)),
         "n_test":                     int(len(X_test)),
-        "features":                   FULL_FEATURES,
+        "features":                   active_features,
         "selected":                   selected,
         "recommended_threshold_buy":  best_thresh_buy,
         "recommended_threshold_sell": best_thresh_sell,
         "buy_precision":              round(report.get("BUY", {}).get("precision", 0), 4),
         "sell_precision":             round(report.get("SELL", {}).get("precision", 0), 4),
+        "no_trade_precision":         round(report.get("NO_TRADE", {}).get("precision", 0), 4),
     }
 
     with open("model_performance.json", "w") as f:
@@ -521,53 +501,60 @@ def train(ds: pd.DataFrame, sell_tp_mult: float, sell_sl_mult: float, export_art
 
 if __name__ == "__main__":
     t0 = time.time()
-    log.info("Starting Target Geometry Experiment (Phase 1)...")
-    
     preloaded_symbols = preload_symbol_features()
-    
+    ds_baseline = pd.concat([_apply_targets(df, 3.5, 2.5) for df in preloaded_symbols], ignore_index=True)
+
     experiment_grid = [
-        {"name": "Current Baseline", "tp": 3.5, "sl": 2.5},
-        {"name": "Moderate Relax",   "tp": 3.0, "sl": 2.5},
-        {"name": "Symmetric",        "tp": 2.5, "sl": 2.5},
-        {"name": "Aggressive Relax", "tp": 2.0, "sl": 2.0},
+        {"name": "Baseline (No Funding/BTC)", "features": BASE_FEATURES},
+        {"name": "Baseline + Funding Rate",   "features": BASE_FEATURES + ["fundingRate"]},
+        {"name": "Baseline + BTC Metrics",    "features": BASE_FEATURES + ["btc_corr_20", "btc_beta_20", "btc_rel_strength"]},
+        {"name": "Full Kitchen Sink",         "features": BASE_FEATURES + ["fundingRate", "btc_corr_20", "btc_beta_20", "btc_rel_strength"]},
     ]
-    
+
     results = []
-    
     for config in experiment_grid:
-        log.info(f"\n{'='*95}")
-        log.info(f"🚀 RUNNING GEOMETRY EXPERIMENT: {config['name']} (SELL TP: {config['tp']}R | SELL SL: {config['sl']}R)")
-        log.info(f"{'='*95}")
+        log.info(f"🚀 Running Feature Ablation: {config['name']}")
         
-        ds_parts = [_apply_targets(df, config["tp"], config["sl"]) for df in preloaded_symbols]
-        ds = pd.concat(ds_parts, ignore_index=True)
+        # ── VARIANT INTEGRITY CHECK ──
+        if config["name"] != "Baseline (No Funding/BTC)":
+            if set(config["features"]) == set(BASE_FEATURES):
+                raise ValueError(f"FATAL: {config['name']} feature set silently collapsed to BASELINE.")
+                
+        # Inject reserved parameters cleanly for non-baseline configurations
+        reserved = [f for f in config["features"] if f not in BASE_FEATURES]
         
-        acc, best_score_buy, best_score_sell = train(
-            ds, 
-            sell_tp_mult=config["tp"], 
-            sell_sl_mult=config["sl"], 
-            export_artifact=False
+        acc, score_b, score_s = train(
+            ds_baseline,
+            active_features=config["features"],
+            sell_tp_mult=3.5,
+            sell_sl_mult=2.5,
+            export_artifact=False,
+            reserved_features=reserved
         )
-        
         results.append({
             "Config": config["name"],
-            "TP/SL": f"{config['tp']}R/{config['sl']}R",
-            "BUY Score": f"{best_score_buy:.2f}",
-            "SELL Score": f"{best_score_sell:.2f}",
+            "BUY Score": f"{score_b:.2f}",
+            "SELL Score": f"{score_s:.2f}",
             "Accuracy": f"{acc*100:.1f}%",
         })
-        
+
     log.info(f"\n{'='*80}")
-    log.info("🎯 TARGET GEOMETRY EXPERIMENT SUMMARY (Chronological Lock, Undersampling=1.0)")
+    log.info("🎯 FEATURE ABLATION EXPERIMENT SUMMARY (Chronological Lock, Target=3.5/2.5)")
     log.info(f"{'='*80}")
-    log.info(f"{'Config':<20} | {'TP/SL':<12} | {'BUY Score':<10} | {'SELL Score':<10} | {'Accuracy':<10}")
+    log.info(f"{'Config':<30} | {'BUY Score':<10} | {'SELL Score':<10} | {'Accuracy':<10}")
     log.info("-" * 80)
     for res in results:
-        log.info(f"{res['Config']:<20} | {res['TP/SL']:<12} | {res['BUY Score']:<10} | {res['SELL Score']:<10} | {res['Accuracy']:<10}")
+        log.info(f"{res['Config']:<30} | {res['BUY Score']:<10} | {res['SELL Score']:<10} | {res['Accuracy']:<10}")
     log.info("=" * 80)
-    
-    log.info("\nExecuting Final Export Run to satisfy CI pipeline schema (Baseline 3.5R/2.5R)...")
-    ds_final = pd.concat([_apply_targets(df, 3.5, 2.5) for df in preloaded_symbols], ignore_index=True)
-    acc_final, _, _ = train(ds_final, sell_tp_mult=3.5, sell_sl_mult=2.5, export_artifact=True)
-    
-    log.info(f"Phase 1 Experiment & Build complete in {(time.time()-t0)/60:.1f} min")
+
+    # Export final model with full feature set (reserving the entire kitchen sink)
+    reserved_export = [f for f in experiment_grid[-1]["features"] if f not in BASE_FEATURES]
+    train(
+        ds_baseline, 
+        active_features=experiment_grid[-1]["features"], 
+        sell_tp_mult=3.5, 
+        sell_sl_mult=2.5, 
+        export_artifact=True,
+        reserved_features=reserved_export
+    )
+    log.info(f"Done in {(time.time()-t0)/60:.1f} min")
