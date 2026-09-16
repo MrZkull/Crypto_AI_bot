@@ -1,0 +1,37 @@
+name: CryptoBot AI — Build HTF Removal Candidate
+
+on:
+  workflow_dispatch:
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pyarrow fastparquet
+
+      - name: Build HTF removal candidate
+        run: python train_candidate_minus_htf.py
+
+      - name: Upload candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: htf-removal-candidate
+          path: |
+            candidate_model.pkl
+            candidate_manifest.json
+            model_performance.json
+            research_outputs/candidate_minus_htf_record.json
+          if-no-files-found: error
