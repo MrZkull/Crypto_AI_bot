@@ -41,9 +41,10 @@ jobs:
         run: |
           set -e
           mkdir -p research_outputs
-          RUN_ID=$(gh run list --workflow="run_phase2d.yml" --limit 10 --json databaseId,conclusion --jq '.[] | select(.conclusion == "success") | .databaseId' | head -n 1 || true)
+          RUN_ID=$(gh run list --workflow="run_phase2d.yml" --limit 20 --json databaseId,conclusion --jq '.[] | select(.conclusion == "success") | .databaseId' | head -n 1 || true)
           if [ -n "$RUN_ID" ]; then
             echo "Restoring state from Phase 2D run $RUN_ID"
+            rm -f research_outputs/phase2d_state.json research_outputs/phase2d_results.json research_outputs/phase2d_latest_snapshot.json
             gh run download "$RUN_ID" -n phase2d-state -D research_outputs || true
           else
             echo "No previous Phase 2D state found; starting fresh."
@@ -62,8 +63,7 @@ jobs:
       - name: Verify candidate identity
         run: |
           python - <<'PY'
-          import hashlib
-          import json
+          import hashlib, json
           from pathlib import Path
           p = Path('candidate_model.pkl')
           sha = hashlib.sha256(p.read_bytes()).hexdigest()
@@ -75,6 +75,8 @@ jobs:
               print('candidate_status:', obj.get('status'))
               if obj.get('model_sha256') and obj['model_sha256'] != sha:
                   raise SystemExit('FATAL: candidate manifest SHA256 mismatch')
+          if sha != '45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc90b8b9b6d82fc3838c4308c2':
+              raise SystemExit('FATAL: candidate SHA is not the locked HTF-removal candidate')
           PY
 
       - name: Download locked production model from release v2.0
@@ -84,33 +86,47 @@ jobs:
           set -e
           echo "Downloading production model asset from release v2.0..."
           gh release download v2.0 --repo "${{ github.repository }}" \
-            --pattern 'pro_crypto_ai_model.pkl' \
-            --dir . \
-            --clobber
+            --pattern 'pro_crypto_ai_model.pkl' --dir . --clobber
           test -s pro_crypto_ai_model.pkl
           ls -lh pro_crypto_ai_model.pkl
 
-      - name: Verify production model is loadable
+      - name: Download exact v2.0 source for production feature compatibility
+        run: |
+          set -e
+          rm -rf legacy_v20 legacy_v20.zip legacy_v20_src
+          git fetch origin refs/tags/v2.0:refs/tags/v2.0 --depth=1
+          git archive --format=zip --output=legacy_v20.zip v2.0
+          mkdir -p legacy_v20_src
+          unzip -q legacy_v20.zip -d legacy_v20_src
+          ROOT=$(find legacy_v20_src -maxdepth 1 -type d -print | grep '/Crypto_AI_bot-' | head -n 1)
+          test -n "$ROOT"
+          test -f "$ROOT/feature_engineering.py"
+          cp -r "$ROOT" legacy_v20
+          echo "Legacy v2.0 feature engineering: legacy_v20/feature_engineering.py"
+
+      - name: Verify production model and legacy feature source
         run: |
           python - <<'PY'
-          import hashlib
-          import joblib
+          import hashlib, joblib
           from pathlib import Path
           p = Path('pro_crypto_ai_model.pkl')
           sha = hashlib.sha256(p.read_bytes()).hexdigest()
           print('production_model.pkl SHA256:', sha)
           model = joblib.load(p)
           required = {'all_features', 'selector', 'ensemble', 'label_map'}
-          missing = required - set(model.keys()) if isinstance(model, dict) else required
+          missing = required - set(model) if isinstance(model, dict) else required
           if missing:
               raise SystemExit(f'FATAL: production model missing required keys: {sorted(missing)}')
           print('production model load: OK')
           print('production feature count:', len(model.get('all_features', [])))
           print('production trained_at:', model.get('trained_at'))
+          print('legacy FE exists:', Path('legacy_v20/feature_engineering.py').exists())
           PY
 
-      - name: Run Phase 2D validator
-        run: python phase2d_prospective_validator.py
+      - name: Run Phase 2D validator v2
+        env:
+          PHASE2D_LEGACY_FE: legacy_v20/feature_engineering.py
+        run: python phase2d_prospective_validator_v2.py
 
       - name: Upload Phase 2D state
         uses: actions/upload-artifact@v4
@@ -121,4 +137,4 @@ jobs:
             research_outputs/phase2d_results.json
             research_outputs/phase2d_latest_snapshot.json
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 20
