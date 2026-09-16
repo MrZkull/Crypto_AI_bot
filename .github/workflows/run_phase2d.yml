@@ -22,13 +22,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
+          set -e
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyarrow fastparquet
@@ -40,25 +42,20 @@ jobs:
           set -e
           mkdir -p research_outputs
 
-          RUN_ID=$(
-            gh run list \
-              --workflow="run_phase2d.yml" \
-              --limit 20 \
-              --json databaseId,conclusion \
-              --jq '.[] | select(.conclusion == "success") | .databaseId' \
-            | head -n 1 || true
-          )
+          RUN_ID=$(gh run list \
+            --workflow="run_phase2d.yml" \
+            --limit 20 \
+            --json databaseId,conclusion \
+            --jq '.[] | select(.conclusion == "success") | .databaseId' \
+            | head -n 1 || true)
 
           if [ -n "$RUN_ID" ]; then
-            echo "Restoring state from run $RUN_ID"
-
-            gh run download \
-              "$RUN_ID" \
+            echo "Restoring Phase 2D state from run $RUN_ID"
+            gh run download "$RUN_ID" \
               -n phase2d-state \
-              -D research_outputs \
-              || true
+              -D research_outputs || true
           else
-            echo "No previous state found."
+            echo "No previous Phase 2D state found. Starting fresh."
           fi
 
       - name: Download locked HTF-removal candidate
@@ -67,20 +64,20 @@ jobs:
         run: |
           set -e
 
-          gh run download \
-            35139155066 \
+          gh run download 35139155066 \
             -n htf-removal-candidate \
             -D phase2d_candidate
 
-          cp phase2d_candidate/candidate_model.pkl .
-          cp phase2d_candidate/candidate_manifest.json .
-
+          cp phase2d_candidate/candidate_model.pkl ./candidate_model.pkl
           test -s candidate_model.pkl
 
-      - name: Verify candidate identity
+      - name: Verify locked candidate
         run: |
+          set -e
+
           python - <<'PY'
           import hashlib
+          from pathlib import Path
 
           expected = (
               "45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc"
@@ -88,90 +85,86 @@ jobs:
           )
 
           actual = hashlib.sha256(
-              open("candidate_model.pkl", "rb").read()
+              Path("candidate_model.pkl").read_bytes()
           ).hexdigest()
 
-          print("Candidate SHA256:", actual)
+          print("candidate SHA256:", actual)
 
           if actual != expected:
               raise SystemExit(
-                  "FATAL: candidate SHA mismatch"
+                  "FATAL: candidate SHA does not match locked HTF-removal candidate"
               )
           PY
 
-      - name: Download locked production model from release v2.0
+      - name: Download locked production model v2.0
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
 
-          gh release download \
-            v2.0 \
+          gh release download v2.0 \
             --repo "${{ github.repository }}" \
             --pattern 'pro_crypto_ai_model.pkl' \
             --dir . \
             --clobber
 
           test -s pro_crypto_ai_model.pkl
-
           ls -lh pro_crypto_ai_model.pkl
 
-      # IMPORTANT:
-      # Do not archive/clone v2.0.
-      # Retrieve only the legacy feature-engineering source.
-      - name: Download exact v2.0 feature engineering
+      - name: Verify production model
         run: |
           set -e
 
-          mkdir -p legacy_v20
-
-          curl -fL --retry 3 --retry-all-errors \
-            "https://raw.githubusercontent.com/${{ github.repository }}/v2.0/feature_engineering.py" \
-            -o legacy_v20/feature_engineering.py
-
-          test -s legacy_v20/feature_engineering.py
-
-          echo "v2.0 feature_engineering.py:"
-          sha256sum legacy_v20/feature_engineering.py
-
-      - name: Verify models
-        run: |
           python - <<'PY'
           import hashlib
           import joblib
+          from pathlib import Path
 
-          for filename in [
-              "candidate_model.pkl",
-              "pro_crypto_ai_model.pkl",
-          ]:
-              sha = hashlib.sha256(
-                  open(filename, "rb").read()
-              ).hexdigest()
+          expected = (
+              "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
+          )
 
-              model = joblib.load(filename)
+          path = Path("pro_crypto_ai_model.pkl")
+          actual = hashlib.sha256(path.read_bytes()).hexdigest()
 
-              print(
-                  filename,
-                  "SHA256:",
-                  sha
+          print("production SHA256:", actual)
+
+          if actual != expected:
+              raise SystemExit(
+                  "FATAL: production SHA does not match locked v2.0 model"
               )
 
-              print(
-                  filename,
-                  "features:",
-                  len(model["all_features"])
+          model = joblib.load(path)
+
+          if not isinstance(model, dict):
+              raise SystemExit("FATAL: unexpected production model type")
+
+          required = {"all_features", "selector", "ensemble", "label_map"}
+          missing = required - set(model)
+
+          if missing:
+              raise SystemExit(
+                  f"FATAL: production model missing keys: {sorted(missing)}"
               )
 
-              print(
-                  filename,
-                  "trained_at:",
-                  model.get("trained_at")
-              )
+          selected = getattr(
+              model["selector"],
+              "selected_features",
+              [],
+          )
+
+          print("production declared features:", len(model["all_features"]))
+          print("production selected features:", len(selected))
+          print("production trained_at:", model.get("trained_at"))
+
+          if len(model["all_features"]) != 63:
+              raise SystemExit("FATAL: expected 63 production declared features")
+
+          if len(selected) != 35:
+              raise SystemExit("FATAL: expected 35 production selected features")
           PY
 
       - name: Run Phase 2D validator
-        env:
-          PHASE2D_LEGACY_FE: legacy_v20/feature_engineering.py
         run: |
           set -e
           python phase2d_prospective_validator.py
