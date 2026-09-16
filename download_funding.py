@@ -30,37 +30,71 @@ REQUEST_TIMEOUT = 15
 BATCH_SLEEP_SECONDS = 0.08
 
 
-def fetch_binance_funding_strict(session: requests.Session, symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
+def fetch_binance_funding_strict(
+    session: requests.Session,
+    symbol: str,
+    start_ms: int,
+    end_ms: int
+) -> pd.DataFrame:
     records = []
     current_start = start_ms
 
     while current_start <= end_ms:
-        params = {"symbol": symbol, "startTime": current_start, "limit": 1000}
-        resp = session.get(BINANCE_FUNDING_URL, params=params, timeout=REQUEST_TIMEOUT)
+        params = {
+            "symbol": symbol,
+            "startTime": current_start,
+            "endTime": end_ms,
+            "limit": 1000
+        }
+
+        resp = session.get(
+            BINANCE_FUNDING_URL,
+            params=params,
+            timeout=REQUEST_TIMEOUT
+        )
 
         if resp.status_code != 200:
-            raise ValueError(f"FATAL: Binance Futures API returned HTTP {resp.status_code} for {symbol}.")
+            raise ValueError(
+                f"FATAL: Binance Futures API returned "
+                f"HTTP {resp.status_code} for {symbol}."
+            )
 
         data = resp.json()
+
         if not data or not isinstance(data, list):
             break
 
         for item in data:
             ft = int(item["fundingTime"])
+
             if ft <= end_ms:
                 records.append({
                     "funding_time": ft,
                     "fundingRate": float(item["fundingRate"])
                 })
 
-        if len(data) < 1000:
+        # Continue until the requested end time has actually
+        # been reached. Do not assume len(data) < 1000 means
+        # that the requested historical range is complete.
+        last_funding_time = int(data[-1]["fundingTime"])
+
+        if last_funding_time >= end_ms:
             break
 
-        current_start = int(data[-1]["fundingTime"]) + 1
+        next_start = last_funding_time + 1
+
+        if next_start <= current_start:
+            raise ValueError(
+                f"FATAL: Funding pagination did not advance for {symbol}."
+            )
+
+        current_start = next_start
         time.sleep(BATCH_SLEEP_SECONDS)
 
     if not records:
-        raise ValueError(f"FATAL: Zero funding records retrieved for {symbol}.")
+        raise ValueError(
+            f"FATAL: Zero funding records retrieved for {symbol}."
+        )
 
     df = (
         pd.DataFrame(records)
@@ -69,7 +103,9 @@ def fetch_binance_funding_strict(session: requests.Session, symbol: str, start_m
     )
 
     if df["fundingRate"].std() == 0:
-        raise ValueError(f"FATAL: Zero variance in funding rate for {symbol}.")
+        raise ValueError(
+            f"FATAL: Zero variance in funding rate for {symbol}."
+        )
 
     return df.reset_index(drop=True)
 
@@ -78,6 +114,7 @@ def main():
     FUNDING_DIR.mkdir(parents=True, exist_ok=True)
 
     session = requests.Session()
+
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept": "application/json"
