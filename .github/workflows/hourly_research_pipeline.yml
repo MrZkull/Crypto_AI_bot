@@ -1,0 +1,529 @@
+name: CryptoBot AI — Hourly Research Pipeline
+
+on:
+  schedule:
+    - cron: '10 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: crypto-bot-hourly-research
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  research-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          token: ${{ secrets.GH_PAT_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyarrow fastparquet
+
+      - name: Initialize state files if missing
+        run: |
+          set -e
+          [ -f predictions.json ]          || echo '[]' > predictions.json
+          [ -f coin_dossier.json ]         || echo '{}' > coin_dossier.json
+          [ -f trade_history.json ]        || echo '[]' > trade_history.json
+          [ -f adaptation_proposals.json ] || echo '[]' > adaptation_proposals.json
+          mkdir -p research_outputs data
+
+      # ------------------------------------------------------------------
+      # Phase 2D LOCKED MODEL INPUTS
+      # ------------------------------------------------------------------
+
+      - name: Restore previous Phase 2D state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p research_outputs
+
+          # Prefer the new consolidated workflow after its first successful
+          # run. On the first run, fall back to the previous standalone
+          # Phase 2D workflow so the existing pending ledger is preserved.
+          RUN_ID=$(gh run list             --workflow="hourly_research_pipeline.yml"             --limit 20             --json databaseId,conclusion             --jq '.[] | select(.conclusion == "success") | .databaseId'             | head -n 1 || true)
+
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh run list               --workflow="run_phase2d.yml"               --limit 20               --json databaseId,conclusion               --jq '.[] | select(.conclusion == "success") | .databaseId'               | head -n 1 || true)
+          fi
+
+          if [ -n "$RUN_ID" ]; then
+            echo "Restoring Phase 2D state from successful run $RUN_ID"
+            gh run download "$RUN_ID"               -n phase2d-state               -D research_outputs || true
+          else
+            echo "No previous Phase 2D state artifact found. Starting fresh."
+          fi
+
+      - name: Download locked HTF-removal candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          gh run download 35139155066             -n htf-removal-candidate             -D phase2d_candidate
+
+          cp phase2d_candidate/candidate_model.pkl ./candidate_model.pkl
+
+          test -s candidate_model.pkl
+
+      - name: Verify locked candidate
+        run: |
+          set -e
+
+          python - <<'PY'
+          import hashlib
+          import joblib
+          from pathlib import Path
+
+          expected_sha = (
+              "45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc"
+              "90b8b9b6d82fc3838c4308c2"
+          )
+
+          path = Path("candidate_model.pkl")
+          actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+
+          print("candidate SHA256:", actual_sha)
+
+          if actual_sha != expected_sha:
+              raise SystemExit(
+                  "FATAL: candidate SHA does not match locked HTF-removal candidate"
+              )
+
+          model = joblib.load(path)
+
+          if not isinstance(model, dict):
+              raise SystemExit(
+                  "FATAL: unexpected candidate model type"
+              )
+
+          required = {
+              "all_features",
+              "selector",
+              "ensemble",
+              "label_map",
+              "best_features",
+          }
+
+          missing = required - set(model)
+
+          if missing:
+              raise SystemExit(
+                  f"FATAL: candidate model missing keys: {sorted(missing)}"
+              )
+
+          declared = [
+              str(x)
+              for x in model["all_features"]
+          ]
+
+          selected = [
+              str(x)
+              for x in model["best_features"]
+          ]
+
+          print("candidate declared features:", len(declared))
+          print("candidate selected features:", len(selected))
+          print("candidate trained_at:", model.get("trained_at"))
+          print("candidate selected feature list:", selected)
+
+          if len(declared) != 25:
+              raise SystemExit(
+                  "FATAL: expected 25 candidate declared features"
+              )
+
+          if len(selected) != 25:
+              raise SystemExit(
+                  "FATAL: expected 25 candidate selected features"
+              )
+
+          missing_from_declared = [
+              f for f in selected
+              if f not in declared
+          ]
+
+          if missing_from_declared:
+              raise SystemExit(
+                  "FATAL: candidate best_features contains features "
+                  f"not present in all_features: {missing_from_declared}"
+              )
+          PY
+
+      - name: Download locked production model v2.0
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+        run: |
+          set -e
+
+          gh release download v2.0             --repo "${{ github.repository }}"             --pattern 'pro_crypto_ai_model.pkl'             --dir .             --clobber
+
+          test -s pro_crypto_ai_model.pkl
+          ls -lh pro_crypto_ai_model.pkl
+
+      - name: Verify locked production model
+        run: |
+          set -e
+
+          python - <<'PY'
+          import hashlib
+          import joblib
+          from pathlib import Path
+
+          expected_sha = (
+              "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
+          )
+
+          path = Path("pro_crypto_ai_model.pkl")
+          actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+
+          print("production SHA256:", actual_sha)
+
+          if actual_sha != expected_sha:
+              raise SystemExit(
+                  "FATAL: production SHA does not match locked v2.0 model"
+              )
+
+          model = joblib.load(path)
+
+          if not isinstance(model, dict):
+              raise SystemExit(
+                  "FATAL: unexpected production model type"
+              )
+
+          required = {
+              "all_features",
+              "selector",
+              "ensemble",
+              "label_map",
+              "best_features",
+          }
+
+          missing = required - set(model)
+
+          if missing:
+              raise SystemExit(
+                  f"FATAL: production model missing keys: {sorted(missing)}"
+              )
+
+          declared = [
+              str(x)
+              for x in model["all_features"]
+          ]
+
+          selected = [
+              str(x)
+              for x in model["best_features"]
+          ]
+
+          print("production declared features:", len(declared))
+          print("production selected features:", len(selected))
+          print("production trained_at:", model.get("trained_at"))
+          print("production selected feature list:", selected)
+
+          if len(declared) != 63:
+              raise SystemExit(
+                  "FATAL: expected 63 production declared features"
+              )
+
+          if len(selected) != 35:
+              raise SystemExit(
+                  "FATAL: expected 35 production selected features"
+              )
+
+          missing_from_declared = [
+              f for f in selected
+              if f not in declared
+          ]
+
+          if missing_from_declared:
+              raise SystemExit(
+                  "FATAL: production best_features contains features "
+                  f"not present in all_features: {missing_from_declared}"
+              )
+          PY
+
+      # ------------------------------------------------------------------
+      # RESEARCH
+      # ------------------------------------------------------------------
+
+      - name: Step 1 — Run Prediction Auditor
+        run: python prediction_auditor.py
+
+      - name: Step 2 — Run Failure Taxonomy
+        run: python failure_taxonomy.py
+
+      - name: Step 3 — Run Phase 2D Prospective Shadow Validator
+        env:
+          DERIBIT_CLIENT_ID: ${{ secrets.DERIBIT_CLIENT_ID }}
+          DERIBIT_CLIENT_SECRET: ${{ secrets.DERIBIT_CLIENT_SECRET }}
+        run: python phase2d_prospective_validator.py
+
+      # ------------------------------------------------------------------
+      # STATE SYNC
+      # ------------------------------------------------------------------
+
+      - name: Snapshot research state
+        if: always()
+        run: |
+          set -e
+
+          mkdir -p /tmp/cryptobot_research
+
+          cp predictions.json             /tmp/cryptobot_research/predictions.json             2>/dev/null || echo '[]' > /tmp/cryptobot_research/predictions.json
+
+          cp coin_dossier.json             /tmp/cryptobot_research/coin_dossier.json             2>/dev/null || echo '{}' > /tmp/cryptobot_research/coin_dossier.json
+
+          cp trade_history.json             /tmp/cryptobot_research/trade_history.json             2>/dev/null || echo '[]' > /tmp/cryptobot_research/trade_history.json
+
+          cp adaptation_proposals.json             /tmp/cryptobot_research/adaptation_proposals.json             2>/dev/null || echo '[]' > /tmp/cryptobot_research/adaptation_proposals.json
+
+          # CRITICAL: Phase 2D outputs must also survive git reset/pull.
+          cp research_outputs/phase2d_state.json             /tmp/cryptobot_research/phase2d_state.json             2>/dev/null || true
+
+          cp research_outputs/phase2d_results.json             /tmp/cryptobot_research/phase2d_results.json             2>/dev/null || true
+
+          cp research_outputs/phase2d_latest_snapshot.json             /tmp/cryptobot_research/phase2d_latest_snapshot.json             2>/dev/null || true
+
+      - name: Sync and Commit Research State
+        if: always()
+        run: |
+          set -e
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          rm -f .env
+
+          git reset --hard HEAD
+          git fetch origin main
+          git pull --rebase origin main || git pull origin main || true
+
+          # Restore state written during this run.
+          cp /tmp/cryptobot_research/predictions.json             predictions.json
+
+          cp /tmp/cryptobot_research/coin_dossier.json             coin_dossier.json
+
+          cp /tmp/cryptobot_research/trade_history.json             trade_history.json
+
+          cp /tmp/cryptobot_research/adaptation_proposals.json             adaptation_proposals.json
+
+          # CRITICAL: restore Phase 2D outputs after reset/pull.
+          if [ -f /tmp/cryptobot_research/phase2d_state.json ]; then
+            cp /tmp/cryptobot_research/phase2d_state.json               research_outputs/phase2d_state.json
+          fi
+
+          if [ -f /tmp/cryptobot_research/phase2d_results.json ]; then
+            cp /tmp/cryptobot_research/phase2d_results.json               research_outputs/phase2d_results.json
+          fi
+
+          if [ -f /tmp/cryptobot_research/phase2d_latest_snapshot.json ]; then
+            cp /tmp/cryptobot_research/phase2d_latest_snapshot.json               research_outputs/phase2d_latest_snapshot.json
+          fi
+
+          python - <<'PY'
+          import json
+          import shutil
+
+          def load(path, default):
+              try:
+                  with open(path, encoding="utf-8") as f:
+                      return json.load(f)
+              except Exception:
+                  return default
+
+          # predictions.json
+          local_preds = load(
+              "/tmp/cryptobot_research/predictions.json",
+              [],
+          )
+          remote_preds = load(
+              "predictions.json",
+              [],
+          )
+
+          try:
+              local_map = {
+                  p["pred_id"]: p
+                  for p in local_preds
+                  if "pred_id" in p
+              }
+
+              remote_map = {
+                  p["pred_id"]: p
+                  for p in remote_preds
+                  if "pred_id" in p
+              }
+
+              merged = dict(local_map)
+
+              for pid, remote in remote_map.items():
+                  if pid not in merged:
+                      merged[pid] = remote
+                  elif remote.get("was_executed"):
+                      merged[pid]["was_executed"] = True
+
+              with open(
+                  "predictions.json",
+                  "w",
+                  encoding="utf-8",
+              ) as f:
+                  json.dump(
+                      list(merged.values())[-10000:],
+                      f,
+                      indent=2,
+                  )
+
+          except Exception as exc:
+              print(f"Prediction merge warning: {exc}")
+              shutil.copyfile(
+                  "/tmp/cryptobot_research/predictions.json",
+                  "predictions.json",
+              )
+
+          # trade_history.json
+          local_hist = load(
+              "/tmp/cryptobot_research/trade_history.json",
+              [],
+          )
+          remote_hist = load(
+              "trade_history.json",
+              [],
+          )
+
+          def trade_key(t):
+              return (
+                  t.get("symbol"),
+                  t.get("opened_at"),
+                  t.get("closed_at"),
+                  t.get("close_reason"),
+              )
+
+          try:
+              merged_hist = {
+                  trade_key(t): t
+                  for t in local_hist
+              }
+
+              for trade in remote_hist:
+                  key = trade_key(trade)
+                  if key not in merged_hist:
+                      merged_hist[key] = trade
+
+              with open(
+                  "trade_history.json",
+                  "w",
+                  encoding="utf-8",
+              ) as f:
+                  json.dump(
+                      list(merged_hist.values()),
+                      f,
+                      indent=2,
+                  )
+
+          except Exception as exc:
+              print(f"Trade history merge warning: {exc}")
+              shutil.copyfile(
+                  "/tmp/cryptobot_research/trade_history.json",
+                  "trade_history.json",
+              )
+
+          # adaptation_proposals.json
+          local_props = load(
+              "/tmp/cryptobot_research/adaptation_proposals.json",
+              [],
+          )
+          remote_props = load(
+              "adaptation_proposals.json",
+              [],
+          )
+
+          try:
+              local_map = {
+                  p["id"]: p
+                  for p in local_props
+                  if "id" in p
+              }
+
+              remote_map = {
+                  p["id"]: p
+                  for p in remote_props
+                  if "id" in p
+              }
+
+              # Remote state/approvals take precedence.
+              merged_props = dict(remote_map)
+
+              for pid, proposal in local_map.items():
+                  if pid not in merged_props:
+                      merged_props[pid] = proposal
+
+              with open(
+                  "adaptation_proposals.json",
+                  "w",
+                  encoding="utf-8",
+              ) as f:
+                  json.dump(
+                      list(merged_props.values()),
+                      f,
+                      indent=2,
+                  )
+
+          except Exception as exc:
+              print(f"Proposal merge warning: {exc}")
+              shutil.copyfile(
+                  "/tmp/cryptobot_research/adaptation_proposals.json",
+                  "adaptation_proposals.json",
+              )
+          PY
+
+          git add predictions.json
+          git add coin_dossier.json
+          git add trade_history.json
+          git add adaptation_proposals.json
+          git add research_outputs/
+          git add data/
+
+          if ! git diff --cached --quiet; then
+            git commit               -m "chore(research): hourly audit and Phase 2D sync [skip ci]"
+
+            # State writers can race. Retry once after rebasing.
+            if ! git push origin main; then
+              echo "Push race detected; rebasing and retrying."
+              git pull --rebase origin main
+              git push origin main
+            fi
+          else
+            echo "No research-state changes to commit."
+          fi
+
+      - name: Upload Phase 2D state artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2d-state
+          path: |
+            research_outputs/phase2d_state.json
+            research_outputs/phase2d_results.json
+            research_outputs/phase2d_latest_snapshot.json
+          if-no-files-found: error
+          retention-days: 20
