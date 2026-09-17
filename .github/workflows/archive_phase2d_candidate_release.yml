@@ -1,0 +1,65 @@
+name: CryptoBot AI — Archive Locked Phase 2D Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download locked candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          gh run download 35139155066             -n htf-removal-candidate             -D candidate_archive
+
+          test -s candidate_archive/candidate_model.pkl
+          ls -lh candidate_archive/candidate_model.pkl
+
+      - name: Verify candidate SHA
+        run: |
+          set -e
+
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          expected = (
+              "45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc"
+              "90b8b9b6d82fc3838c4308c2"
+          )
+
+          path = Path("candidate_archive/candidate_model.pkl")
+          actual = hashlib.sha256(path.read_bytes()).hexdigest()
+
+          print("candidate SHA256:", actual)
+
+          if actual != expected:
+              raise SystemExit(
+                  "FATAL: candidate SHA does not match locked candidate"
+              )
+          PY
+
+      - name: Publish locked candidate release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          TAG="phase2d-htf-removal-candidate"
+
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG"               --repo "${{ github.repository }}"               --title "Phase 2D — HTF Removal Candidate (Locked)"               --notes "Locked research candidate. Do not replace without a new SHA-locked research decision."
+          fi
+
+          gh release upload "$TAG"             candidate_archive/candidate_model.pkl             --repo "${{ github.repository }}"             --clobber
+
+          echo "Candidate archived as release asset under $TAG"
