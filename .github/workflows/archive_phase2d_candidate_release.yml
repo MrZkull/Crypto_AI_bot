@@ -19,7 +19,10 @@ jobs:
         run: |
           set -e
 
-          gh run download 35139155066             -n htf-removal-candidate             -D candidate_archive
+          gh run download 35139155066 \
+            --repo "${{ github.repository }}" \
+            -n htf-removal-candidate \
+            -D candidate_archive
 
           test -s candidate_archive/candidate_model.pkl
           ls -lh candidate_archive/candidate_model.pkl
