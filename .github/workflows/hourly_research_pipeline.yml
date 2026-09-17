@@ -74,13 +74,20 @@ jobs:
             echo "No previous Phase 2D state artifact found. Starting fresh."
           fi
 
-      - name: Download locked HTF-removal candidate
+            - name: Download locked HTF-removal candidate from archived release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
         run: |
           set -e
 
-          gh run download 35139155066             -n htf-removal-candidate             -D phase2d_candidate
+          rm -rf phase2d_candidate
+          mkdir -p phase2d_candidate
+
+          gh release download phase2d-htf-removal-candidate \
+            --repo "${{ github.repository }}" \
+            --pattern 'candidate_model.pkl' \
+            --dir phase2d_candidate \
+            --clobber
 
           cp phase2d_candidate/candidate_model.pkl ./candidate_model.pkl
 
