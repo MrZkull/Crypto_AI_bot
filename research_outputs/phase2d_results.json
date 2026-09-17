@@ -1,0 +1,59 @@
+{
+  "candidate": {
+    "ambiguous": 0,
+    "cum_net_r": -2.74,
+    "expired": 1,
+    "invalid": 0,
+    "max_drawdown_r": 2.74,
+    "mean_net_r": -1.37,
+    "precision_excluding_ambiguous": 0.0,
+    "resolved": 2,
+    "sl": 1,
+    "tp": 0
+  },
+  "candidate_sha256": "45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc90b8b9b6d82fc3838c4308c2",
+  "candidate_thresholds": {
+    "buy": 0.46,
+    "sell": 1.01
+  },
+  "candidate_trained_at": "2026-09-16T19:15:38.766586+00:00",
+  "methodology": {
+    "ambiguous_excluded_from_precision": true,
+    "candidate_feature_source": "current canonical",
+    "candidate_selected_feature_count": 25,
+    "expired_net_r": -0.12,
+    "four_hour_source": "completed 1h candles aggregated locally",
+    "friction_r": 0.12,
+    "horizon_bars": 24,
+    "no_240m_deribit_request": true,
+    "production_feature_source": "legacy compatibility reconstruction from selected 35 features",
+    "production_selected_feature_count": 35,
+    "promotion_ready": false,
+    "same_15m_market_stream": true,
+    "sl_r": 2.5,
+    "tp_r": 3.5
+  },
+  "pending": {
+    "candidate": 9,
+    "production": 15
+  },
+  "production": {
+    "ambiguous": 0,
+    "cum_net_r": 0.7999999999999893,
+    "expired": 20,
+    "invalid": 0,
+    "max_drawdown_r": 12.540000000000003,
+    "mean_net_r": 0.013333333333333287,
+    "precision_excluding_ambiguous": 0.3,
+    "resolved": 60,
+    "sl": 22,
+    "tp": 18
+  },
+  "production_sha256": "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21",
+  "production_thresholds": {
+    "buy": 0.4,
+    "sell": 0.45
+  },
+  "production_trained_at": "2026-08-23T19:30:12.136077+00:00",
+  "updated_at": "2026-09-17T13:03:19.841146+00:00"
+}
