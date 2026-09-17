@@ -51,7 +51,7 @@ jobs:
       # Phase 2D LOCKED MODEL INPUTS
       # ------------------------------------------------------------------
 
-            - name: Restore previous Phase 2D state
+      - name: Restore previous Phase 2D state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
