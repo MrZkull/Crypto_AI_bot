@@ -51,27 +51,53 @@ jobs:
       # Phase 2D LOCKED MODEL INPUTS
       # ------------------------------------------------------------------
 
-      - name: Restore previous Phase 2D state
+            - name: Restore previous Phase 2D state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          mkdir -p research_outputs
 
-          # Prefer the new consolidated workflow after its first successful
-          # run. On the first run, fall back to the previous standalone
-          # Phase 2D workflow so the existing pending ledger is preserved.
-          RUN_ID=$(gh run list             --workflow="hourly_research_pipeline.yml"             --limit 20             --json databaseId,conclusion             --jq '.[] | select(.conclusion == "success") | .databaseId'             | head -n 1 || true)
+          RUN_ID=$(gh run list \
+            --workflow="hourly_research_pipeline.yml" \
+            --limit 20 \
+            --json databaseId,conclusion \
+            --jq '.[] | select(.conclusion == "success") | .databaseId' \
+            | grep -v "^${{ github.run_id }}$" \
+            | head -n 1 || true)
 
           if [ -z "$RUN_ID" ]; then
-            RUN_ID=$(gh run list               --workflow="run_phase2d.yml"               --limit 20               --json databaseId,conclusion               --jq '.[] | select(.conclusion == "success") | .databaseId'               | head -n 1 || true)
+            RUN_ID=$(gh run list \
+              --workflow="run_phase2d.yml" \
+              --limit 20 \
+              --json databaseId,conclusion \
+              --jq '.[] | select(.conclusion == "success") | .databaseId' \
+              | head -n 1 || true)
           fi
 
           if [ -n "$RUN_ID" ]; then
             echo "Restoring Phase 2D state from successful run $RUN_ID"
-            gh run download "$RUN_ID"               -n phase2d-state               -D research_outputs || true
+
+            rm -rf /tmp/phase2d_restore
+            mkdir -p /tmp/phase2d_restore
+
+            gh run download "$RUN_ID" \
+              -n phase2d-state \
+              -D /tmp/phase2d_restore
+
+            mkdir -p research_outputs
+
+            for file in \
+              phase2d_state.json \
+              phase2d_results.json \
+              phase2d_latest_snapshot.json
+            do
+              if [ -f "/tmp/phase2d_restore/$file" ]; then
+                cp "/tmp/phase2d_restore/$file" "research_outputs/$file"
+                echo "Restored $file"
+              fi
+            done
           else
-            echo "No previous Phase 2D state artifact found. Starting fresh."
+            echo "No previous Phase 2D state artifact found. Using repository state."
           fi
 
       - name: Download locked HTF-removal candidate from archived release
