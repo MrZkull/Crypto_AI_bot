@@ -74,9 +74,9 @@ jobs:
             echo "No previous Phase 2D state artifact found. Starting fresh."
           fi
 
-            - name: Download locked HTF-removal candidate from archived release
+      - name: Download locked HTF-removal candidate from archived release
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
 
@@ -178,7 +178,7 @@ jobs:
 
       - name: Download locked production model v2.0
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
 
