@@ -86,6 +86,53 @@ BASE_FEATURES = list(dict.fromkeys(ALL_FEATURES))
 FULL_FEATURES = list(dict.fromkeys(BASE_FEATURES + ["fundingRate", "btc_corr_20", "btc_beta_20", "btc_rel_strength"]))
 
 
+
+def audit_anti_leakage(ds: pd.DataFrame) -> dict:
+    """Fail-closed provenance audit for every temporal feature source.
+
+    The observation timestamp for a completed 15m row is its close_time.
+    Higher-timeframe/source timestamps must never be later than that observation.
+    This deliberately uses <=, because a source candle that closes at the exact
+    observation boundary is available for the completed observation.
+    """
+    required = ["open_time", "close_time"]
+    missing = [c for c in required if c not in ds.columns]
+    if missing:
+        raise ValueError(f"CRITICAL LEAKAGE AUDIT: missing required columns: {missing}")
+
+    out = {"rows": int(len(ds)), "violations": {}, "total_violations": 0}
+    obs = pd.to_numeric(ds["close_time"], errors="coerce")
+    if obs.isna().any():
+        raise ValueError("CRITICAL LEAKAGE AUDIT: invalid observation close_time")
+
+    provenance_cols = [
+        c for c in ds.columns
+        if c.endswith("_source_close_time") or c == "funding_source_time"
+    ]
+    for col in provenance_cols:
+        src = pd.to_numeric(ds[col], errors="coerce")
+        invalid = int(src.notna().sum() - np.isfinite(src.dropna().to_numpy(dtype=float)).sum())
+        future = int((src.notna() & (src > obs)).sum())
+        if invalid:
+            raise ValueError(f"CRITICAL LEAKAGE AUDIT: non-finite provenance in {col}: {invalid}")
+        out["violations"][col] = future
+        out["total_violations"] += future
+        if future:
+            raise ValueError(
+                f"CRITICAL LEAKAGE: {col} exceeds observation close_time: {future} rows"
+            )
+
+    # Also reject malformed completed 15m chronology.
+    opens = pd.to_numeric(ds["open_time"], errors="coerce")
+    closes = pd.to_numeric(ds["close_time"], errors="coerce")
+    bad_order = int((closes < opens).sum())
+    if bad_order:
+        raise ValueError(f"CRITICAL LEAKAGE AUDIT: close_time precedes open_time: {bad_order} rows")
+
+    log.info("ANTI-LEAKAGE AUDIT OK | rows=%d | provenance_cols=%d | violations=0",
+             len(ds), len(provenance_cols))
+    return out
+
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     if df1h.empty or len(df1h) < 5 or df15.empty:
         return pd.DataFrame()
@@ -444,6 +491,7 @@ def train(
     reserved_features: list = None
 ):
     ds = ds.loc[:, ~ds.columns.duplicated()].copy()
+    audit_anti_leakage(ds)
 
     # Dynamic Zero-Variance Pruning
     if active_features is None:
