@@ -1,8 +1,6 @@
 name: CryptoBot AI — Historical Auditor & Adaptation Engine
 
 on:
-  schedule:
-    - cron: '12,42 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -15,7 +13,7 @@ permissions:
 jobs:
   audit-and-adapt:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
 
     steps:
       - name: Checkout repository
@@ -31,7 +29,9 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          set -euo pipefail
+          pip install -r requirements.txt
 
       - name: Init state files if missing
         run: |
@@ -42,10 +42,67 @@ jobs:
           mkdir -p data
 
       - name: Run Prediction Auditor
-        run: python prediction_auditor.py
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          echo "============================================================"
+          echo " PREDICTION AUDITOR"
+          echo "============================================================"
+          python prediction_auditor.py 2>&1 | tee prediction_auditor.log
 
       - name: Run Failure Taxonomy
-        run: python failure_taxonomy.py
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          echo "============================================================"
+          echo " FAILURE TAXONOMY"
+          echo "============================================================"
+          python failure_taxonomy.py 2>&1 | tee failure_taxonomy.log
+
+      - name: Print audit state summary
+        if: always()
+        run: |
+          set -u
+          echo "============================================================"
+          echo " AUDIT STATE SUMMARY"
+          echo "============================================================"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          checks = [
+              ("predictions.json", []),
+              ("coin_dossier.json", {}),
+              ("trade_history.json", []),
+              ("adaptation_proposals.json", []),
+          ]
+
+          for name, default in checks:
+              p = Path(name)
+              if not p.exists():
+                  print(f"{name}: MISSING")
+                  continue
+              try:
+                  data = json.loads(p.read_text())
+              except Exception as exc:
+                  print(f"{name}: INVALID JSON ({exc})")
+                  continue
+              if isinstance(data, dict):
+                  print(f"{name}: dict_entries={len(data)}")
+              elif isinstance(data, list):
+                  print(f"{name}: list_entries={len(data)}")
+              else:
+                  print(f"{name}: type={type(data).__name__}")
+          PY
+
+          echo
+          echo "Recent auditor log:"
+          tail -n 80 prediction_auditor.log 2>/dev/null || true
+          echo
+          echo "Recent failure-taxonomy log:"
+          tail -n 80 failure_taxonomy.log 2>/dev/null || true
 
       - name: Commit and Push Audit State
         if: always()
@@ -132,7 +189,20 @@ jobs:
           git add coin_dossier.json         || true
           git add adaptation_proposals.json || true
           git add trade_history.json        || true
-          git add data/                     || true
+          # Do NOT persist the generic data/ directory from the audit runner.
+          # Historical/raw data can be large and is not part of the audit state contract.
+          echo "Audit persistence: data/ intentionally excluded from git commit."
 
           git diff --cached --quiet || git commit -m "Audit Predictions & Run Taxonomy [skip ci]"
           git push origin main
+
+      - name: Upload audit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-logs-${{ github.run_id }}
+          path: |
+            prediction_auditor.log
+            failure_taxonomy.log
+          if-no-files-found: warn
+          retention-days: 7
