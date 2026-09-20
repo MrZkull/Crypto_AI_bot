@@ -31,7 +31,6 @@ import pandas as pd
 import requests
 
 from feature_engineering import add_indicators as add_current_indicators
-from market_data_integrity import merge_completed_htf, sanitize_closed_candles
 from phase2d_promotion_gate import evaluate_promotion
 
 SYMBOLS = [
@@ -203,34 +202,52 @@ def current_features(raw15: pd.DataFrame, symbol: str) -> pd.DataFrame:
 
 # ── Locked Production Compatibility Feature Construction ─────────────────
 
-def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    if df1h.empty or len(df1h) < 5 or df15.empty:
-        return pd.DataFrame()
-    h = merge_completed_htf(df15, df1h, ["rsi", "adx", "trend"], prefix="htf1h")
-    return h.rename(columns={"htf1h_rsi": "rsi_1h", "htf1h_adx": "adx_1h", "htf1h_trend": "trend_1h"})
+def _align_htf_point_in_time(ltf: pd.DataFrame, htf: pd.DataFrame, col_map: Dict[str, str]) -> pd.DataFrame:
+    """Strict point-in-time backward merge: HTF candle must be closed on or before LTF close."""
+    if htf.empty or ltf.empty:
+        for target in col_map.values():
+            ltf[target] = 0.0
+        return ltf
+
+    available_cols = [c for c in col_map.keys() if c in htf.columns]
+    if not available_cols:
+        for target in col_map.values():
+            ltf[target] = 0.0
+        return ltf
+
+    htf_sub = htf[["close_time"] + available_cols].dropna().sort_values("close_time").copy()
+    htf_sub = htf_sub.rename(columns=col_map)
+
+    merged = pd.merge_asof(
+        ltf.sort_values("close_time"),
+        htf_sub,
+        on="close_time",
+        direction="backward"
+    )
+
+    for target in col_map.values():
+        if target not in merged.columns:
+            merged[target] = 0.0
+        else:
+            merged[target] = merged[target].fillna(0.0)
+
+    return merged.sort_values("open_time").reset_index(drop=True)
 
 
-def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    if df4h.empty or len(df4h) < 5 or df15.empty:
-        return pd.DataFrame()
-    h = merge_completed_htf(df15, df4h, ["rsi", "trend"], prefix="htf4h")
-    return h.rename(columns={"htf4h_rsi": "rsi_4h", "htf4h_trend": "trend_4h"})
-
-
-def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
-    if btc_df15 is None or btc_df15.empty or "close" not in btc_df15.columns:
-        df15["btc_close"] = np.nan
-        return df15
-    try:
-        out = merge_completed_htf(df15, btc_df15, ["close"], prefix="btc")
-        return out.rename(columns={"btc_close": "btc_close"})
-    except Exception:
-        df15["btc_close"] = np.nan
-        return df15
-
-
-def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
+def _add_btc_cross_features(df: pd.DataFrame, btc_df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    if btc_df is not None and not btc_df.empty and "close" in btc_df.columns:
+        btc_sub = btc_df[["close_time", "close"]].dropna().sort_values("close_time").rename(columns={"close": "btc_close"})
+        merged = pd.merge_asof(
+            df.sort_values("close_time"),
+            btc_sub,
+            on="close_time",
+            direction="backward"
+        )
+        df["btc_close"] = merged["btc_close"].ffill().bfill()
+    else:
+        df["btc_close"] = np.nan
+
     if "btc_close" in df.columns and df["btc_close"].notna().sum() > 30:
         btc_ret = df["btc_close"].pct_change()
         coin_ret = df["close"].pct_change()
@@ -252,8 +269,7 @@ def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_production_features(raw15: pd.DataFrame, symbol: str, btc15: pd.DataFrame) -> pd.DataFrame:
     """Reconstructs the 63-feature matrix expected by locked production v2.0."""
-    now_ms = int(time.time() * 1000)
-    df15 = pd.DataFrame(sanitize_closed_candles(raw15, candle_duration_ms=ENTRY_MS, observation_time_ms=now_ms))
+    df15 = raw15.copy()
     if df15.empty:
         raise RuntimeError(f"{symbol}: empty 15m closed candles")
 
@@ -263,26 +279,36 @@ def build_production_features(raw15: pd.DataFrame, symbol: str, btc15: pd.DataFr
         df15 = df15.merge(taker_col, on="open_time", how="left")
 
     raw1h = fetch_deribit_1h(symbol)
-    if raw1h.empty or len(raw1h) < 10:
-        raise RuntimeError(f"{symbol}: insufficient 1h candles for production HTF features")
+    if not raw1h.empty:
+        df1h_feat = add_current_indicators(raw1h.copy())
+        df15 = _align_htf_point_in_time(
+            df15, df1h_feat,
+            {"rsi": "rsi_1h", "adx": "adx_1h", "trend": "trend_1h"}
+        )
 
-    df1h = pd.DataFrame(sanitize_closed_candles(raw1h, candle_duration_ms=HOUR_MS, observation_time_ms=now_ms))
-    df1h_feat = add_current_indicators(df1h)
-    df15 = _align_1h_to_15m(df1h_feat, df15)
+        raw4h = aggregate_1h_to_4h(raw1h)
+        if not raw4h.empty:
+            df4h_feat = add_current_indicators(raw4h.copy())
+            df15 = _align_htf_point_in_time(
+                df15, df4h_feat,
+                {"rsi": "rsi_4h", "trend": "trend_4h"}
+            )
+        else:
+            df15["rsi_4h"] = 50.0
+            df15["trend_4h"] = 0.0
+    else:
+        for c in ["rsi_1h", "adx_1h", "trend_1h", "rsi_4h", "trend_4h"]:
+            df15[c] = 0.0
 
-    raw4h = aggregate_1h_to_4h(df1h)
-    if raw4h.empty or len(raw4h) < 5:
-        raise RuntimeError(f"{symbol}: insufficient 4h aggregated candles for production HTF features")
-
-    df4h = pd.DataFrame(sanitize_closed_candles(raw4h, candle_duration_ms=4 * HOUR_MS, observation_time_ms=now_ms))
-    df4h_feat = add_current_indicators(df4h)
-    df15 = _align_4h_to_15m(df4h_feat, df15)
-
-    df15 = _align_btc_to_15m(btc15, df15)
-    df15 = _add_extra_features(df15)
+    df15 = _add_btc_cross_features(df15, btc15)
 
     if "fundingRate" not in df15.columns:
         df15["fundingRate"] = 0.0
+    if "regime_transitional" not in df15.columns:
+        if "trend" in df15.columns:
+            df15["regime_transitional"] = (df15["trend"] == 0).astype(float)
+        else:
+            df15["regime_transitional"] = 0.0
 
     df15["symbol"] = symbol
     return df15.reset_index(drop=True)
