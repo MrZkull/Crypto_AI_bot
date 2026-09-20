@@ -113,13 +113,11 @@ def _dump_model_atomic(model, path: Path, compress: int = 3) -> int:
         size_bytes = tmp.stat().st_size
 
         if size_bytes <= 0:
-            raise ValueError(
-                f"CRITICAL: model artifact is empty: {tmp}"
-            )
+            raise ValueError(f"CRITICAL: model artifact is empty: {tmp}")
 
         if size_bytes > MAX_MODEL_BYTES:
             raise ValueError(
-                "CRITICAL: compressed model artifact exceeds the "
+                f"CRITICAL: compressed model artifact exceeds the "
                 f"{MAX_MODEL_BYTES / (1024 * 1024):.1f} MiB safety ceiling: "
                 f"{size_bytes / (1024 * 1024):.1f} MiB"
             )
@@ -731,18 +729,13 @@ def _parse_args():
 if __name__ == "__main__":
     args = _parse_args()
 
-    # Safe default: no --production flag means candidate mode.
     is_candidate = not bool(args.production)
     t0 = time.time()
     run_mode = "CANDIDATE" if is_candidate else "PRODUCTION"
     export_target = CANDIDATE_MODEL_FILE if is_candidate else MODEL_FILE
 
-    log.info(
-        f"Starting model training pipeline (Mode: {run_mode})..."
-    )
-    log.info(
-        f"Model export target: {export_target}"
-    )
+    log.info(f"Starting model training pipeline (Mode: {run_mode})...")
+    log.info(f"Model export target: {export_target}")
 
     dataset = build_dataset_from_local_parquet(
         sell_tp_mult=3.5,
@@ -755,4 +748,3 @@ if __name__ == "__main__":
         candidate_mode=is_candidate
     )
     log.info(f"✅ Training completed in {(time.time()-t0)/60:.1f} min | Test Accuracy: {acc*100:.1f}%")
-
