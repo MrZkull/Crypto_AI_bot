@@ -22,9 +22,12 @@ TIMEFRAME_MS = {
 
 
 def interval_ms(interval_str: str) -> int:
-    """Returns interval duration in milliseconds."""
+    """Return interval duration in milliseconds."""
     if interval_str not in TIMEFRAME_MS:
-        raise ValueError(f"Unsupported timeframe: '{interval_str}'. Supported: {list(TIMEFRAME_MS.keys())}")
+        raise ValueError(
+            f"Unsupported timeframe: '{interval_str}'. "
+            f"Supported: {list(TIMEFRAME_MS.keys())}"
+        )
     return TIMEFRAME_MS[interval_str]
 
 
@@ -33,18 +36,27 @@ def sanitize_closed_candles(
     interval_ms_value: int = None,
     observation_time_ms: int = None,
     candle_duration_ms: int = None,
-    **kwargs
+    **kwargs,
 ) -> list[dict]:
     """
-    Sanitizes raw candle data under a strict zero-repair contract.
-    Supports both `interval_ms_value` and `candle_duration_ms` to guarantee
-    cross-compatibility with audit_archive_cadence.py, train_model.py, and trade_executor.py.
+    Strict zero-repair candle sanitizer.
+
+    Accepted input forms:
+      - pandas DataFrame
+      - list[dict]
+      - exchange-style array rows: [open_time, open, high, low, close, volume, close_time, ...]
+      - None
+
+    No values are repaired or interpolated. Invalid rows are rejected.
     """
     if raw is None:
         return []
 
-    # Unify duration parameter alias
-    duration_ms = interval_ms_value if interval_ms_value is not None else candle_duration_ms
+    duration_ms = (
+        interval_ms_value
+        if interval_ms_value is not None
+        else candle_duration_ms
+    )
     if duration_ms is None:
         duration_ms = kwargs.get("duration_ms") or kwargs.get("interval_ms")
 
@@ -60,8 +72,15 @@ def sanitize_closed_candles(
             if isinstance(r, dict):
                 o = int(r["open_time"])
                 c = int(r["close_time"])
-                vals = {k: float(r[k]) for k in ("open", "high", "low", "close", "volume")}
-                extra = {k: r[k] for k in r if k not in vals and k not in ("open_time", "close_time")}
+                vals = {
+                    k: float(r[k])
+                    for k in ("open", "high", "low", "close", "volume")
+                }
+                extra = {
+                    k: r[k]
+                    for k in r
+                    if k not in vals and k not in ("open_time", "close_time")
+                }
             else:
                 o = int(r[0])
                 c = int(r[6])
@@ -76,33 +95,35 @@ def sanitize_closed_candles(
                 if len(r) > 9:
                     extra["taker_buy_base_vol"] = float(r[9])
 
-            # 1. Unconditional timestamp ordering check
             if c <= o:
                 continue
 
-            # 2. Strict duration invariant if duration is specified
             if duration_ms is not None:
                 expected_c_time = o + int(duration_ms) - 1
                 if c != expected_c_time:
                     continue
 
-            # 3. Observation time boundary (excludes forming candles)
             if observation_time_ms is not None and c > int(observation_time_ms):
                 continue
 
-            # 4. Numerical finiteness
             if not all(math.isfinite(v) for v in vals.values()):
                 continue
 
-            # 5. Price positivity and non-negative volume
-            if vals["open"] <= 0 or vals["high"] <= 0 or vals["low"] <= 0 or vals["close"] <= 0 or vals["volume"] < 0:
+            if (
+                vals["open"] <= 0
+                or vals["high"] <= 0
+                or vals["low"] <= 0
+                or vals["close"] <= 0
+                or vals["volume"] < 0
+            ):
                 continue
 
-            # 6. Structural candle bounds
-            if vals["high"] < max(vals["open"], vals["close"]) or vals["low"] > min(vals["open"], vals["close"]):
+            if (
+                vals["high"] < max(vals["open"], vals["close"])
+                or vals["low"] > min(vals["open"], vals["close"])
+            ):
                 continue
 
-            # 7. Deduplication
             if o in seen_open_times:
                 continue
 
@@ -121,15 +142,19 @@ def sanitize_ohlcv_frame(
     interval_ms_value: int = None,
     observation_time_ms: int = None,
     candle_duration_ms: int = None,
-    **kwargs
+    **kwargs,
 ) -> pd.DataFrame:
-    """Helper returning a sanitized pandas DataFrame."""
-    duration_ms = interval_ms_value if interval_ms_value is not None else candle_duration_ms
+    """Return a sanitized pandas DataFrame while preserving extra columns."""
+    duration_ms = (
+        interval_ms_value
+        if interval_ms_value is not None
+        else candle_duration_ms
+    )
     rows = sanitize_closed_candles(
         df,
         interval_ms_value=duration_ms,
         observation_time_ms=observation_time_ms,
-        **kwargs
+        **kwargs,
     )
     out = pd.DataFrame(rows)
     if out.empty:
@@ -145,11 +170,18 @@ def merge_completed_htf(
     feature_cols: list = None,
     prefix: str = "htf",
     value_cols: list = None,
-    **kwargs
+    **kwargs,
 ) -> pd.DataFrame:
     """
-    Merges higher timeframe features point-in-time using backward matching on close_time.
-    Supports both `feature_cols` and `value_cols` signatures to prevent caller mismatch.
+    Point-in-time HTF alignment.
+
+    The observation timestamp is the completed LTF candle close_time.
+    An HTF feature row is usable only when:
+
+        HTF source close_time <= LTF observation close_time
+
+    Equal timestamps are explicitly allowed because the HTF candle is complete
+    at that instant.
     """
     if base_df.empty or htf_df.empty:
         return base_df.copy()
@@ -162,7 +194,10 @@ def merge_completed_htf(
     htf = htf_df.copy()
 
     if "close_time" not in ltf.columns or "close_time" not in htf.columns:
-        raise ValueError("Both LTF and HTF frames must contain 'close_time' for point-in-time alignment")
+        raise ValueError(
+            "Both LTF and HTF frames must contain 'close_time' "
+            "for point-in-time alignment"
+        )
 
     valid_cols = [c for c in cols_to_merge if c in htf.columns]
     if not valid_cols:
@@ -171,7 +206,8 @@ def merge_completed_htf(
     ltf["_obs_time"] = pd.to_numeric(ltf["close_time"], errors="coerce")
     h = htf[["close_time"] + valid_cols].copy()
     h["close_time"] = pd.to_numeric(h["close_time"], errors="coerce")
-    h = h.dropna(subset=["close_time"]).sort_values("close_time")
+    h = h.dropna(subset=["close_time"])
+    h = h.sort_values("close_time")
 
     rename_map = {c: f"{prefix}_{c}" for c in valid_cols}
     rename_map["close_time"] = f"{prefix}_source_close_time"
@@ -183,7 +219,11 @@ def merge_completed_htf(
         left_on="_obs_time",
         right_on=f"{prefix}_source_close_time",
         direction="backward",
-        allow_exact_matches=True
+        allow_exact_matches=True,
     )
 
-    return merged.drop(columns=["_obs_time"], errors="ignore").sort_values("open_time").reset_index(drop=True)
+    return (
+        merged.drop(columns=["_obs_time"], errors="ignore")
+        .sort_values("open_time")
+        .reset_index(drop=True)
+    )
