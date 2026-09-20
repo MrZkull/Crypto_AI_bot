@@ -31,6 +31,7 @@ import pandas as pd
 import requests
 
 from feature_engineering import add_indicators as add_current_indicators
+from phase2d_promotion_gate import evaluate_promotion
 
 SYMBOLS = [
     "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "NEARUSDT", "LTCUSDT",
@@ -59,6 +60,7 @@ REQUEST_TIMEOUT = 12
 CANDLE_LIMIT_15M = 300
 CANDLE_LIMIT_1H = 300
 STATE_SCHEMA = 4
+BACKFILL_BARS = 8  # 2h of 15m bars; covers hourly cadence with slack
 
 LOCKED_CANDIDATE_SHA = (
     "45064fddd32f2e23eb4c34ed56bcbe73a8a1bffc"
@@ -184,80 +186,13 @@ def aggregate_1h_to_4h(df1h: pd.DataFrame) -> pd.DataFrame:
     g["close_time"] = g["open_time"] + 4 * HOUR_MS
     g["taker_buy_base_vol"] = g["volume"] * 0.5
     return g.reset_index(drop=True)
-def current_row(raw15: pd.DataFrame, symbol: str) -> pd.Series:
+def current_features(raw15: pd.DataFrame, symbol: str) -> pd.DataFrame:
     df = add_current_indicators(raw15.copy())
     if df.empty:
         raise RuntimeError(f"{symbol}: current feature engineering returned no rows")
-    row = df.iloc[-1].copy()
-    row["symbol"] = symbol
-    return row
-
-
-def build_production_row(raw15: pd.DataFrame, symbol: str, btc15: pd.DataFrame) -> pd.Series:
-    if len(raw15) < 220:
-        raise RuntimeError(f"{symbol}: insufficient 15m history")
-    d = add_current_indicators(raw15.copy())
-    c = d["close"].astype(float)
-    e9 = c.ewm(span=9, adjust=False).mean()
-    e20 = c.ewm(span=20, adjust=False).mean()
-    e50 = c.ewm(span=50, adjust=False).mean()
-    e200 = c.ewm(span=200, adjust=False).mean()
-    d["ema9"], d["ema20"], d["ema50"], d["ema200"] = e9, e20, e50, e200
-    d["ema20_slope"] = e20 / e20.shift(5) - 1.0
-    d["ema50_slope"] = e50 / e50.shift(5) - 1.0
-    d["price_vs_ema50"] = c / e50.replace(0, np.nan) - 1.0
-    d["price_vs_ema200"] = c / e200.replace(0, np.nan) - 1.0
-    sma20 = c.rolling(20, min_periods=1).mean()
-    std20 = c.rolling(20, min_periods=1).std()
-    d["bb_high"] = sma20 + 2.0 * std20
-    d["bb_low"] = sma20 - 2.0 * std20
-    vol = c.pct_change().rolling(20, min_periods=5).std()
-    vol_med = vol.rolling(100, min_periods=20).median()
-    d["vol_regime"] = vol / vol_med.replace(0, np.nan)
-    d["regime_transitional"] = (d["trend"].rolling(4, min_periods=4).mean().abs() < 1.0).astype(float)
-
-    h1_raw = fetch_deribit_1h(symbol)
-    if len(h1_raw) < 80:
-        raise RuntimeError(f"{symbol}: insufficient 1h history")
-    h1 = add_current_indicators(h1_raw.copy())
-    h4_raw = aggregate_1h_to_4h(h1_raw)
-    if len(h4_raw) < 20:
-        raise RuntimeError(f"{symbol}: insufficient 4h history")
-    h4 = add_current_indicators(h4_raw.copy())
-
-    def asof_features(base, higher, cols, names):
-        left = base[["close_time"]].sort_values("close_time")
-        right = higher[["close_time"] + cols].sort_values("close_time").rename(columns=dict(zip(cols, names)))
-        out = pd.merge_asof(left, right, on="close_time", direction="backward")
-        return out[names].reset_index(drop=True)
-
-    h1a = asof_features(d, h1, ["rsi", "adx", "trend"], ["rsi_1h", "adx_1h", "trend_1h"])
-    h4a = asof_features(d, h4, ["rsi", "trend"], ["rsi_4h", "trend_4h"])
-    d = d.reset_index(drop=True)
-    d["rsi_1h"], d["adx_1h"], d["trend_1h"] = h1a["rsi_1h"], h1a["adx_1h"], h1a["trend_1h"]
-    d["rsi_4h"], d["trend_4h"] = h4a["rsi_4h"], h4a["trend_4h"]
-
-    dt = pd.to_datetime(d["open_time"], unit="ms", utc=True)
-    hour = dt.dt.hour + dt.dt.minute / 60.0
-    dow = dt.dt.dayofweek
-    d["hour_sin"] = np.sin(2.0 * np.pi * hour / 24.0)
-    d["hour_cos"] = np.cos(2.0 * np.pi * hour / 24.0)
-    d["dow_sin"] = np.sin(2.0 * np.pi * dow / 7.0)
-    d["dow_cos"] = np.cos(2.0 * np.pi * dow / 7.0)
-
-    d["regime_transitional"] = (d["trend_1h"] != d["trend_4h"]).astype(float)
-
-    if btc15.empty:
-        raise RuntimeError("BTC reference data unavailable")
-    btc = btc15[["open_time", "close"]].rename(columns={"close": "btc_close"}).sort_values("open_time")
-    d = pd.merge_asof(d.sort_values("open_time"), btc, on="open_time", direction="backward")
-    cr = d["close"].pct_change()
-    br = d["btc_close"].pct_change()
-    d["btc_corr_20"] = cr.rolling(20, min_periods=10).corr(br).clip(-1, 1)
-    d["btc_beta_20"] = (cr.rolling(20, min_periods=10).cov(br) / br.rolling(20, min_periods=10).var().replace(0, np.nan)).clip(-5, 5)
-
-    d = d.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    return d.iloc[-1].copy()
+    df = df.copy()
+    df["symbol"] = symbol
+    return df.reset_index(drop=True)
 
 
 def model_features(model) -> List[str]:
@@ -449,9 +384,9 @@ def main() -> int:
     probe = fetch_deribit_15m("ETHUSDT")
     if len(probe) < 80:
         raise RuntimeError("ETHUSDT: insufficient completed 15m candles")
-    c_probe = current_row(probe, "ETHUSDT")
+    c_probe = current_features(probe, "ETHUSDT").iloc[-1].copy()
     btc_probe = fetch_deribit_15m("BTCUSDT")
-    p_probe = build_production_row(probe, "ETHUSDT", btc_probe)
+    p_probe = build_production_features(probe, "ETHUSDT", btc_probe).iloc[-1].copy()
     candidate_features = model_features(candidate)
     production_features = model_features(production)
 
@@ -472,43 +407,59 @@ def main() -> int:
     models = {"candidate": candidate, "production": production}
     run_snapshot = {"timestamp": utc_now(), "signals": {"candidate": [], "production": []}}
     current_rows: Dict[str, pd.DataFrame] = {}
+    seen_sets = {name: set(state["seen"].get(name, [])) for name in models}
+    new_predictions = {name: 0 for name in models}
 
     for symbol in SYMBOLS:
         try:
             raw15 = fetch_deribit_15m(symbol)
             if len(raw15) < 80:
                 raise RuntimeError("insufficient completed 15m candles")
-            c_row = current_row(raw15, symbol)
-            p_row = build_production_row(raw15, symbol, btc15)
-            rows_by_model = {"candidate": c_row, "production": p_row}
-            df15 = raw15
-            current_rows[symbol] = df15
-            ts = int(c_row["open_time"])
-            entry = safe_float(c_row["close"])
-            c_atr = safe_float(c_row.get("atr", 0))
-            p_atr = safe_float(p_row.get("atr", c_row.get("atr", 0)))
-            if entry <= 0 or c_atr <= 0 or p_atr <= 0:
-                continue
 
-            for name, model in models.items():
-                row = rows_by_model[name]
-                scored = score_model(model, row)
-                run_snapshot["signals"][name].append({"symbol": symbol, "open_time": ts, **scored})
-                if scored["signal"] == "NO_TRADE":
+            # Build the complete featured history once. Never discard the
+            # three 15m observations that arrived between hourly runs.
+            c_df = current_features(raw15, symbol)
+            p_df = build_production_features(raw15, symbol, btc15)
+            if len(c_df) != len(p_df):
+                raise RuntimeError(f"candidate/production feature-frame length mismatch: {len(c_df)} != {len(p_df)}")
+            current_rows[symbol] = raw15
+
+            # Score only a bounded recent window. The seen ledger makes this
+            # idempotent, while the cap prevents a first-run burst from
+            # backfilling the entire 300-bar history.
+            max_offset = min(BACKFILL_BARS, len(c_df), len(p_df))
+            for offset in range(1, max_offset + 1):
+                c_row = c_df.iloc[-offset]
+                p_row = p_df.iloc[-offset]
+                ts = int(c_row["open_time"])
+                entry = safe_float(c_row["close"])
+                c_atr = safe_float(c_row.get("atr", 0))
+                p_atr = safe_float(p_row.get("atr", c_row.get("atr", 0)))
+                if entry <= 0 or c_atr <= 0 or p_atr <= 0:
                     continue
-                key = f"{symbol}:{ts}"
-                if key in set(state["seen"].get(name, [])):
-                    continue
-                pred = {
-                    "id": f"{name}:{symbol}:{ts}", "model": name, "symbol": symbol,
-                    "open_time": ts, "signal": scored["signal"],
-                    "confidence": scored["confidence"], "p_buy": scored["p_buy"],
-                    "p_sell": scored["p_sell"], "threshold_buy": scored["threshold_buy"],
-                    "threshold_sell": scored["threshold_sell"], "entry": entry,
-                    "atr": c_atr if name == "candidate" else p_atr, "created_at": utc_now(),
-                }
-                state["pending"][name].append(pred)
-                state["seen"][name].append(key)
+
+                rows_by_model = {"candidate": c_row, "production": p_row}
+                for name, model in models.items():
+                    row = rows_by_model[name]
+                    scored = score_model(model, row)
+                    run_snapshot["signals"][name].append({"symbol": symbol, "open_time": ts, **scored})
+                    if scored["signal"] == "NO_TRADE":
+                        continue
+                    key = f"{symbol}:{ts}"
+                    if key in seen_sets[name]:
+                        continue
+                    pred = {
+                        "id": f"{name}:{symbol}:{ts}", "model": name, "symbol": symbol,
+                        "open_time": ts, "signal": scored["signal"],
+                        "confidence": scored["confidence"], "p_buy": scored["p_buy"],
+                        "p_sell": scored["p_sell"], "threshold_buy": scored["threshold_buy"],
+                        "threshold_sell": scored["threshold_sell"], "entry": entry,
+                        "atr": c_atr if name == "candidate" else p_atr, "created_at": utc_now(),
+                    }
+                    state["pending"][name].append(pred)
+                    state["seen"][name].append(key)
+                    seen_sets[name].add(key)
+                    new_predictions[name] += 1
         except Exception as e:
             print(f"WARN {symbol}: {e}")
 
@@ -532,6 +483,11 @@ def main() -> int:
         state["resolved"][name] = state["resolved"][name][-500:]
         state["seen"][name] = state["seen"][name][-1000:]
 
+    promotion_gate = evaluate_promotion(
+        state["resolved"]["candidate"],
+        state["resolved"]["production"],
+    )
+
     summary = {
         "updated_at": utc_now(),
         "candidate": summarize(state["resolved"]["candidate"]),
@@ -543,6 +499,7 @@ def main() -> int:
         "production_trained_at": production.get("trained_at"),
         "candidate_thresholds": {"buy": candidate.get("recommended_threshold_buy"), "sell": candidate.get("recommended_threshold_sell")},
         "production_thresholds": {"buy": production.get("recommended_threshold_buy"), "sell": production.get("recommended_threshold_sell")},
+        "promotion_gate": promotion_gate,
         "methodology": {
             "horizon_bars": LOOKAHEAD, "tp_r": BUY_TP_R, "sl_r": BUY_SL_R,
             "friction_r": FRICTION_R, "ambiguous_excluded_from_precision": True,
@@ -553,7 +510,8 @@ def main() -> int:
             "four_hour_source": "completed 1h candles aggregated locally",
             "candidate_selected_feature_count": len(candidate_features),
             "production_selected_feature_count": len(production_features),
-            "promotion_ready": False,
+            "backfill_bars": BACKFILL_BARS,
+            "new_predictions": new_predictions,
         },
     }
     state["last_run"] = summary
