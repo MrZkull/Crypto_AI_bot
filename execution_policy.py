@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -46,10 +47,17 @@ def build_candidate_config() -> dict:
     import config
 
     keys = (
-        "THRESHOLD_BUY", "THRESHOLD_SELL", "RISK_MULT",
-        "ATR_STOP_MULT", "ATR_TARGET1_MULT", "ATR_TARGET2_MULT",
-        "MAX_OPEN_TRADES", "MAX_SAME_DIRECTION", "ENTRY_MAX_SPREAD_PCT",
-        "RISK_PER_TRADE", "MAX_DAILY_TRADES",
+        "THRESHOLD_BUY",
+        "THRESHOLD_SELL",
+        "RISK_MULT",
+        "ATR_STOP_MULT",
+        "ATR_TARGET1_MULT",
+        "ATR_TARGET2_MULT",
+        "MAX_OPEN_TRADES",
+        "MAX_SAME_DIRECTION",
+        "ENTRY_MAX_SPREAD_PCT",
+        "RISK_PER_TRADE",
+        "MAX_DAILY_TRADES",
     )
     out = {}
     for key in keys:
@@ -60,8 +68,57 @@ def build_candidate_config() -> dict:
 
 
 def get_config_hash(config_dict: dict) -> str:
-    payload = json.dumps(config_dict, sort_keys=True, separators=(",", ":"), default=str)
+    payload = json.dumps(
+        config_dict,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def calculate_continuous_funding(
+    side: str,
+    qty_base: float,
+    mark_price: float,
+    funding_rate: float,
+    elapsed_ms: int,
+) -> float:
+    """Calculate pro-rata funding cost for an elapsed interval.
+
+    Positive funding means BUY/long pays and SELL/short receives.
+    Funding is normalized to an 8-hour period.
+    """
+    side = str(side).upper()
+    if side not in {"BUY", "SELL"}:
+        raise ValueError(f"Invalid side: {side}")
+
+    if elapsed_ms < 0:
+        raise ValueError(f"elapsed_ms cannot be negative: {elapsed_ms}")
+
+    for name, value in (
+        ("qty_base", qty_base),
+        ("mark_price", mark_price),
+        ("funding_rate", funding_rate),
+    ):
+        if not math.isfinite(float(value)):
+            raise ValueError(f"Non-finite {name}: {value}")
+
+    if qty_base <= 0:
+        raise ValueError(f"qty_base must be > 0: {qty_base}")
+    if mark_price <= 0:
+        raise ValueError(f"mark_price must be > 0: {mark_price}")
+
+    if elapsed_ms == 0 or funding_rate == 0:
+        return 0.0
+
+    fraction_8h = elapsed_ms / (8.0 * 3600.0 * 1000.0)
+    cost = qty_base * mark_price * funding_rate * fraction_8h
+
+    if not math.isfinite(cost):
+        raise ValueError(f"Non-finite funding result: {cost}")
+
+    return cost if side == "BUY" else -cost
 
 
 def evaluate_thesis_outcome(exit_reason: str) -> int:
@@ -106,7 +163,12 @@ def fee(notional: float, rate: float) -> float:
     return notional * rate
 
 
-def close_partial(pos: Position, exit_price: float, exit_qty: float, exit_fee_rate: float) -> dict:
+def close_partial(
+    pos: Position,
+    exit_price: float,
+    exit_qty: float,
+    exit_fee_rate: float,
+) -> dict:
     if exit_qty <= 0 or exit_qty > pos.qty:
         raise ValueError("exit_qty outside remaining position")
     g = gross_pnl(pos.side, pos.entry_price, exit_price, exit_qty)
