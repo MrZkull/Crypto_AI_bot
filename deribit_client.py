@@ -1,4 +1,4 @@
-# deribit_client.py — V13.2: Linear USDC Contract Semantics & Authoritative Verification
+# deribit_client.py — V13.3: Unified Linear USDC Execution Engine & Authoritative Safeguards
 
 import math
 import time
@@ -426,28 +426,133 @@ class DeribitClient:
         return res
 
     def place_market_order(self, symbol: str, side: str, amount: float, reduce_only: bool = False) -> dict:
+        """
+        Place an entry/exit with a bounded IOC attempt.
+
+        Entry policy (reduce_only=False):
+          - Uses best bid/ask to construct a worst acceptable IOC limit price.
+          - If the IOC is cancelled or the pre-flight book is unavailable, NO raw
+            market fallback is allowed. This preserves the configured slippage bound.
+
+        Exit policy (reduce_only=True):
+          - Uses the same bounded IOC attempt first.
+          - A direct market fallback is allowed only for protective reduction because
+            leaving an active position open can be a higher-risk failure mode.
+        """
         instrument = self.get_instrument_name(symbol)
         method     = "/private/buy" if side.upper() == "BUY" else "/private/sell"
         label      = f"bot_entry_{int(time.time())}"
+
+        # 1) Bounded IOC attempt.
+        try:
+            spread = self.get_order_book_spread(symbol)
+            best_bid = float(spread.get("best_bid", 0.0))
+            best_ask = float(spread.get("best_ask", 0.0))
+            spread_pct = float(spread.get("spread_pct", 999.0))
+            effective_ceiling = 0.50 if reduce_only else MAX_TRADEABLE_SPREAD_PCT
+
+            if spread_pct > effective_ceiling:
+                log.warning(
+                    f"  🚫 {symbol}: spread {spread_pct*100:.1f}% exceeds "
+                    f"{effective_ceiling*100:.0f}% ceiling — aborting."
+                )
+                return {}
+
+            if best_bid <= 0 or best_ask <= 0:
+                raise RuntimeError("order book is missing valid best bid/ask")
+
+            if side.upper() == "BUY":
+                worst_price = self.round_price(symbol, best_ask * (1 + MAX_SLIPPAGE_PCT))
+            else:
+                worst_price = self.round_price(symbol, best_bid * (1 - MAX_SLIPPAGE_PCT))
+
+            if worst_price <= 0:
+                raise RuntimeError("computed worst acceptable price is invalid")
+
+            log.info(
+                f"  IoC limit {side.upper()} {amount} {instrument} @ max {worst_price} "
+                f"(spread {spread_pct*100:.3f}%)"
+            )
+
+            cur_amount = amount
+            for attempt in range(4):
+                try:
+                    result = self._post(method, {
+                        "instrument_name": instrument,
+                        "amount": cur_amount,
+                        "type": "limit",
+                        "price": worst_price,
+                        "time_in_force": "immediate_or_cancel",
+                        "label": label,
+                        "reduce_only": "true" if reduce_only else "false",
+                    })
+                    order = result.get("order", result)
+                    state = str(order.get("order_state", "")).lower()
+                    filled_amount = float(order.get("filled_amount", 0) or 0)
+
+                    if state == "cancelled" and filled_amount <= 0:
+                        log.warning(
+                            f"  ⚠️ IoC CANCELLED — price moved outside the "
+                            f"{MAX_SLIPPAGE_PCT*100:.1f}% bound."
+                        )
+                        if not reduce_only:
+                            return {}
+                        break
+
+                    log.info(
+                        f"  ✅ IoC {side.upper()} {cur_amount} {instrument} "
+                        f"id={order.get('order_id','')} state={state} filled={filled_amount}"
+                    )
+                    return result
+                except Exception as e:
+                    if self._is_position_size_limit_error(e) and attempt < 3:
+                        cur_amount = self.round_amount(symbol, cur_amount * 0.5)
+                        if cur_amount <= 0:
+                            break
+                        log.warning(
+                            f"  ⚠️ {symbol}: position-size limit on IOC — "
+                            f"retrying at {cur_amount}"
+                        )
+                        continue
+                    raise
+
+        except Exception as e:
+            if not reduce_only:
+                log.warning(f"  🚫 Entry IOC failed closed for {symbol}: {e}")
+                return {}
+            log.warning(f"  ⚠️ Protective IOC failed for {symbol} ({e}) — using emergency market exit")
+
+        # 2) Emergency raw market fallback is EXIT-ONLY.
+        if not reduce_only:
+            return {}
 
         cur_amount = amount
         for attempt in range(4):
             try:
                 result = self._post(method, {
-                    "instrument_name": instrument, "amount": cur_amount, "type": "market",
-                    "label": label, "reduce_only": bool(reduce_only),
+                    "instrument_name": instrument,
+                    "amount": cur_amount,
+                    "type": "market",
+                    "label": label,
+                    "reduce_only": True,
                 })
                 order = result.get("order", result)
-                log.info(f"  ✅ MARKET {side.upper()} {cur_amount} {instrument} id={order.get('order_id','')} state={order.get('order_state','')}")
+                log.info(
+                    f"  ✅ EMERGENCY MARKET EXIT {side.upper()} {cur_amount} {instrument} "
+                    f"id={order.get('order_id','')} state={order.get('order_state','')}"
+                )
                 return result
             except Exception as e:
                 if self._is_position_size_limit_error(e) and attempt < 3:
                     cur_amount = self.round_amount(symbol, cur_amount * 0.5)
                     if cur_amount <= 0:
                         break
-                    log.warning(f"  ⚠️ {symbol}: position-size limit (Code:10057) on market — retrying at {cur_amount}")
+                    log.warning(
+                        f"  ⚠️ {symbol}: position-size limit on emergency market exit — "
+                        f"retrying at {cur_amount}"
+                    )
                     continue
-                log.error(f"  Market order failed permanently for {symbol}: {e}")
+                log.error(f"  🚨 Emergency market exit failed permanently for {symbol}: {e}")
                 return {}
         return {}
 
@@ -498,6 +603,19 @@ class DeribitClient:
             return float(avg) if avg else fallback
         except Exception:
             return fallback
+
+    def get_order_fill_price(self, order: dict, fallback: float = 0.0) -> float:
+        """Return authoritative average/last fill from an exchange order-state response."""
+        try:
+            avg = order.get("average_price")
+            if avg is not None and float(avg) > 0:
+                return float(avg)
+            lp = order.get("last_price") or order.get("price")
+            if lp is not None and float(lp) > 0:
+                return float(lp)
+        except (TypeError, ValueError):
+            pass
+        return fallback
 
     def get_position_size(self, symbol: str) -> float:
         try:
