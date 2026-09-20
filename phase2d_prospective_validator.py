@@ -31,6 +31,7 @@ import pandas as pd
 import requests
 
 from feature_engineering import add_indicators as add_current_indicators
+from market_data_integrity import merge_completed_htf, sanitize_closed_candles
 from phase2d_promotion_gate import evaluate_promotion
 
 SYMBOLS = [
@@ -162,11 +163,14 @@ def fetch_deribit(symbol: str, resolution: str = "15", limit: int = CANDLE_LIMIT
     raw["taker_buy_base_vol"] = raw["volume"] * 0.5
     return raw.tail(limit).reset_index(drop=True)
 
+
 def fetch_deribit_15m(symbol: str, limit: int = CANDLE_LIMIT_15M) -> pd.DataFrame:
     return fetch_deribit(symbol, "15", limit)
 
+
 def fetch_deribit_1h(symbol: str, limit: int = CANDLE_LIMIT_1H) -> pd.DataFrame:
     return fetch_deribit(symbol, "60", limit)
+
 
 def aggregate_1h_to_4h(df1h: pd.DataFrame) -> pd.DataFrame:
     if df1h.empty:
@@ -186,6 +190,8 @@ def aggregate_1h_to_4h(df1h: pd.DataFrame) -> pd.DataFrame:
     g["close_time"] = g["open_time"] + 4 * HOUR_MS
     g["taker_buy_base_vol"] = g["volume"] * 0.5
     return g.reset_index(drop=True)
+
+
 def current_features(raw15: pd.DataFrame, symbol: str) -> pd.DataFrame:
     df = add_current_indicators(raw15.copy())
     if df.empty:
@@ -195,13 +201,99 @@ def current_features(raw15: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+# ── Locked Production Compatibility Feature Construction ─────────────────
+
+def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
+    if df1h.empty or len(df1h) < 5 or df15.empty:
+        return pd.DataFrame()
+    h = merge_completed_htf(df15, df1h, ["rsi", "adx", "trend"], prefix="htf1h")
+    return h.rename(columns={"htf1h_rsi": "rsi_1h", "htf1h_adx": "adx_1h", "htf1h_trend": "trend_1h"})
+
+
+def _align_4h_to_15m(df4h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
+    if df4h.empty or len(df4h) < 5 or df15.empty:
+        return pd.DataFrame()
+    h = merge_completed_htf(df15, df4h, ["rsi", "trend"], prefix="htf4h")
+    return h.rename(columns={"htf4h_rsi": "rsi_4h", "htf4h_trend": "trend_4h"})
+
+
+def _align_btc_to_15m(btc_df15: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
+    if btc_df15 is None or btc_df15.empty or "close" not in btc_df15.columns:
+        df15["btc_close"] = np.nan
+        return df15
+    try:
+        out = merge_completed_htf(df15, btc_df15, ["close"], prefix="btc")
+        return out.rename(columns={"btc_close": "btc_close"})
+    except Exception:
+        df15["btc_close"] = np.nan
+        return df15
+
+
+def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "btc_close" in df.columns and df["btc_close"].notna().sum() > 30:
+        btc_ret = df["btc_close"].pct_change()
+        coin_ret = df["close"].pct_change()
+        roll_cov = coin_ret.rolling(20, min_periods=10).cov(btc_ret)
+        roll_var = btc_ret.rolling(20, min_periods=10).var()
+        df["btc_corr_20"] = coin_ret.rolling(20, min_periods=10).corr(btc_ret)
+        df["btc_beta_20"] = roll_cov / roll_var.replace(0, np.nan)
+        df["btc_rel_strength"] = (df["close"].pct_change(6) - df["btc_close"].pct_change(6)) * 100
+    else:
+        df["btc_corr_20"] = 0.0
+        df["btc_beta_20"] = 1.0
+        df["btc_rel_strength"] = 0.0
+
+    df["btc_corr_20"] = df["btc_corr_20"].fillna(0.0).clip(-1, 1)
+    df["btc_beta_20"] = df["btc_beta_20"].fillna(1.0).clip(-5, 5)
+    df["btc_rel_strength"] = df["btc_rel_strength"].fillna(0.0).clip(-50, 50)
+    return df
+
+
+def build_production_features(raw15: pd.DataFrame, symbol: str, btc15: pd.DataFrame) -> pd.DataFrame:
+    """Reconstructs the 63-feature matrix expected by locked production v2.0."""
+    now_ms = int(time.time() * 1000)
+    df15 = pd.DataFrame(sanitize_closed_candles(raw15, candle_duration_ms=ENTRY_MS, observation_time_ms=now_ms))
+    if df15.empty:
+        raise RuntimeError(f"{symbol}: empty 15m closed candles")
+
+    taker_col = df15[["open_time", "taker_buy_base_vol"]].copy() if "taker_buy_base_vol" in df15.columns else None
+    df15 = add_current_indicators(df15)
+    if taker_col is not None and "taker_buy_base_vol" not in df15.columns:
+        df15 = df15.merge(taker_col, on="open_time", how="left")
+
+    raw1h = fetch_deribit_1h(symbol)
+    if raw1h.empty or len(raw1h) < 10:
+        raise RuntimeError(f"{symbol}: insufficient 1h candles for production HTF features")
+
+    df1h = pd.DataFrame(sanitize_closed_candles(raw1h, candle_duration_ms=HOUR_MS, observation_time_ms=now_ms))
+    df1h_feat = add_current_indicators(df1h)
+    df15 = _align_1h_to_15m(df1h_feat, df15)
+
+    raw4h = aggregate_1h_to_4h(df1h)
+    if raw4h.empty or len(raw4h) < 5:
+        raise RuntimeError(f"{symbol}: insufficient 4h aggregated candles for production HTF features")
+
+    df4h = pd.DataFrame(sanitize_closed_candles(raw4h, candle_duration_ms=4 * HOUR_MS, observation_time_ms=now_ms))
+    df4h_feat = add_current_indicators(df4h)
+    df15 = _align_4h_to_15m(df4h_feat, df15)
+
+    df15 = _align_btc_to_15m(btc15, df15)
+    df15 = _add_extra_features(df15)
+
+    if "fundingRate" not in df15.columns:
+        df15["fundingRate"] = 0.0
+
+    df15["symbol"] = symbol
+    return df15.reset_index(drop=True)
+
+
+# ── Inference and Resolution ───────────────────────────────────────────────
+
 def model_features(model) -> List[str]:
-    """Return the exact feature set used to fit the trained ensemble."""
     best = model.get("best_features")
     if not best:
-        raise RuntimeError(
-            "Model is missing best_features; refusing to infer the model schema."
-        )
+        raise RuntimeError("Model is missing best_features; refusing to infer the model schema.")
     features = [str(x) for x in best]
     if len(features) != len(set(features)):
         raise RuntimeError("Model best_features contains duplicate feature names.")
@@ -220,9 +312,6 @@ def score_model(model, row: pd.Series) -> dict:
     X = pd.DataFrame([[row[f] for f in active]], columns=active)
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
-    # The ensemble was fitted directly on best_features.
-    # Do not call the serialized selector here; older pickles may not retain
-    # selected_features even though best_features is present in the model dict.
     prob = model["ensemble"].predict_proba(X)[0]
     pred = int(model["ensemble"].predict(X)[0])
 
@@ -377,16 +466,15 @@ def main() -> int:
     print(f"Phase 2D | candidate declared features={len(candidate['all_features'])}")
     print(f"Phase 2D | production declared features={len(production['all_features'])}")
 
-    # Hard compatibility check before any research result is recorded.
     btc15 = fetch_deribit_15m("BTCUSDT")
     if len(btc15) < 80:
         raise RuntimeError("BTCUSDT: insufficient completed 15m candles")
     probe = fetch_deribit_15m("ETHUSDT")
     if len(probe) < 80:
         raise RuntimeError("ETHUSDT: insufficient completed 15m candles")
+
     c_probe = current_features(probe, "ETHUSDT").iloc[-1].copy()
-    btc_probe = fetch_deribit_15m("BTCUSDT")
-    p_probe = build_production_features(probe, "ETHUSDT", btc_probe).iloc[-1].copy()
+    p_probe = build_production_features(probe, "ETHUSDT", btc15).iloc[-1].copy()
     candidate_features = model_features(candidate)
     production_features = model_features(production)
 
@@ -416,17 +504,12 @@ def main() -> int:
             if len(raw15) < 80:
                 raise RuntimeError("insufficient completed 15m candles")
 
-            # Build the complete featured history once. Never discard the
-            # three 15m observations that arrived between hourly runs.
             c_df = current_features(raw15, symbol)
             p_df = build_production_features(raw15, symbol, btc15)
             if len(c_df) != len(p_df):
                 raise RuntimeError(f"candidate/production feature-frame length mismatch: {len(c_df)} != {len(p_df)}")
             current_rows[symbol] = raw15
 
-            # Score only a bounded recent window. The seen ledger makes this
-            # idempotent, while the cap prevents a first-run burst from
-            # backfilling the entire 300-bar history.
             max_offset = min(BACKFILL_BARS, len(c_df), len(p_df))
             for offset in range(1, max_offset + 1):
                 c_row = c_df.iloc[-offset]
