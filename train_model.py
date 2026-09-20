@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# train_model.py — Production Canonical Rebuild Engine, Detailed Logs & Manifest Export
+# train_model.py — Canonical Training Engine, Anti-Leakage Audit & Manifest Pipeline
 
 import os
 import sys
@@ -8,6 +8,7 @@ import time
 import uuid
 import logging
 import hashlib
+import argparse
 import joblib
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -24,12 +25,11 @@ from xgboost import XGBClassifier
 # Scikit-Learn 1.6+ compatibility patch for XGBoost in VotingClassifier
 XGBClassifier._estimator_type = "classifier"
 try:
-    from sklearn.utils._tags import ClassifierTags
+    from sklearn.utils._tags import ClassifierTags, Tags
     def _xgb_sklearn_tags(self):
         try:
             tags = super(XGBClassifier, self).__sklearn_tags__()
         except Exception:
-            from sklearn.utils._tags import Tags
             tags = Tags()
         tags.estimator_type = "classifier"
         tags.classifier_tags = ClassifierTags()
@@ -50,7 +50,14 @@ except ImportError:
     def get_policy_hash(): return hashlib.sha256(b"default_policy").hexdigest()
     def get_feature_code_hash(): return hashlib.sha256(b"default_code").hexdigest()
     def get_feature_schema_hash(features): return hashlib.sha256(json.dumps(sorted(features)).encode()).hexdigest()
-    def build_candidate_config(): return {"target": "3.5/2.5", "friction": 0.12}
+    def build_candidate_config(): return {
+        "evaluation_balance_usd": 10000.0,
+        "risk_mult": 1.0,
+        "atr_stop_mult": 2.5,
+        "atr_target1_mult": 3.5,
+        "atr_target2_mult": 7.5,
+        "friction_r": 0.12
+    }
     def get_config_hash(cfg): return hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()
 
 try:
@@ -68,15 +75,15 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-TEST_SPLIT         = 0.20
-CALIB_SPLIT        = 0.15
-EMBARGO_BARS       = 24
-MODEL_FILE         = "pro_crypto_ai_model.pkl"
-CANDIDATE_MODEL_FILE = "candidate_model.pkl"
-CANDIDATE_MANIFEST = "candidate_manifest.json"
-N_FEATURES         = 30
-MIN_BARS           = 100
-UNDERSAMPLE_RATIO  = 1.0
+TEST_SPLIT          = 0.20
+CALIB_SPLIT         = 0.15
+EMBARGO_BARS        = 24
+MODEL_FILE          = Path("pro_crypto_ai_model.pkl")
+CANDIDATE_MODEL_FILE = Path("candidate_model.pkl")
+CANDIDATE_MANIFEST  = Path("candidate_manifest.json")
+N_FEATURES          = 35
+MIN_BARS            = 100
+UNDERSAMPLE_RATIO   = 1.0
 
 MIN_BUY_THRESHOLD_FLOOR  = 0.36
 MIN_SELL_THRESHOLD_FLOOR = 0.36
@@ -86,15 +93,49 @@ BASE_FEATURES = list(dict.fromkeys(ALL_FEATURES))
 FULL_FEATURES = list(dict.fromkeys(BASE_FEATURES + ["fundingRate", "btc_corr_20", "btc_beta_20", "btc_rel_strength"]))
 
 
+def _write_json_atomic(path: Path, payload: dict):
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+
+
+MAX_MODEL_BYTES = 95 * 1024 * 1024
+
+
+def _dump_model_atomic(model, path: Path, compress: int = 3) -> int:
+    """Write a compressed joblib model atomically and enforce a size guard."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+
+    try:
+        joblib.dump(model, tmp, compress=compress)
+        size_bytes = tmp.stat().st_size
+
+        if size_bytes <= 0:
+            raise ValueError(
+                f"CRITICAL: model artifact is empty: {tmp}"
+            )
+
+        if size_bytes > MAX_MODEL_BYTES:
+            raise ValueError(
+                "CRITICAL: compressed model artifact exceeds the "
+                f"{MAX_MODEL_BYTES / (1024 * 1024):.1f} MiB safety ceiling: "
+                f"{size_bytes / (1024 * 1024):.1f} MiB"
+            )
+
+        os.replace(tmp, path)
+        return int(size_bytes)
+
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
 
 def audit_anti_leakage(ds: pd.DataFrame) -> dict:
-    """Fail-closed provenance audit for every temporal feature source.
-
-    The observation timestamp for a completed 15m row is its close_time.
-    Higher-timeframe/source timestamps must never be later than that observation.
-    This deliberately uses <=, because a source candle that closes at the exact
-    observation boundary is available for the completed observation.
-    """
+    """Fail-closed provenance audit for every temporal feature source."""
     required = ["open_time", "close_time"]
     missing = [c for c in required if c not in ds.columns]
     if missing:
@@ -118,20 +159,17 @@ def audit_anti_leakage(ds: pd.DataFrame) -> dict:
         out["violations"][col] = future
         out["total_violations"] += future
         if future:
-            raise ValueError(
-                f"CRITICAL LEAKAGE: {col} exceeds observation close_time: {future} rows"
-            )
+            raise ValueError(f"CRITICAL LEAKAGE: {col} exceeds observation close_time: {future} rows")
 
-    # Also reject malformed completed 15m chronology.
     opens = pd.to_numeric(ds["open_time"], errors="coerce")
     closes = pd.to_numeric(ds["close_time"], errors="coerce")
     bad_order = int((closes < opens).sum())
     if bad_order:
         raise ValueError(f"CRITICAL LEAKAGE AUDIT: close_time precedes open_time: {bad_order} rows")
 
-    log.info("ANTI-LEAKAGE AUDIT OK | rows=%d | provenance_cols=%d | violations=0",
-             len(ds), len(provenance_cols))
+    log.info("ANTI-LEAKAGE AUDIT OK | rows=%d | provenance_cols=%d | violations=0", len(ds), len(provenance_cols))
     return out
+
 
 def _align_1h_to_15m(df1h: pd.DataFrame, df15: pd.DataFrame) -> pd.DataFrame:
     if df1h.empty or len(df1h) < 5 or df15.empty:
@@ -195,21 +233,9 @@ def _add_extra_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _merge_funding_to_15m(df15: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    """
-    Strict point-in-time funding alignment for Phase 2 research.
-
-    Funding is sourced from data/historical/funding/{symbol}_funding.parquet
-    and attached to each 15m observation using close_time <= funding_time
-    via a backward as-of merge. Missing coverage, invalid values, duplicate
-    funding timestamps, future timestamps, or zero-variance funding all fail
-    closed.
-    """
     funding_path = HISTORICAL_DATA_DIR / "funding" / f"{symbol}_funding.parquet"
-
     if not funding_path.exists():
-        raise FileNotFoundError(
-            f"CRITICAL: Missing funding archive for {symbol}: {funding_path}"
-        )
+        raise FileNotFoundError(f"CRITICAL: Missing funding archive for {symbol}: {funding_path}")
 
     fdf = pd.read_parquet(funding_path)
     if fdf.empty:
@@ -219,62 +245,30 @@ def _merge_funding_to_15m(df15: pd.DataFrame, symbol: str) -> pd.DataFrame:
     rate_col = next((c for c in ("fundingRate", "funding_rate") if c in fdf.columns), None)
 
     if time_col is None or rate_col is None:
-        raise ValueError(
-            f"CRITICAL: Missing expected funding columns for {symbol}. "
-            f"Found: {fdf.columns.tolist()}"
-        )
+        raise ValueError(f"CRITICAL: Missing expected funding columns for {symbol}. Found: {fdf.columns.tolist()}")
 
-    fdf = fdf.rename(
-        columns={time_col: "funding_time", rate_col: "fundingRate"}
-    ).copy()
+    fdf = fdf.rename(columns={time_col: "funding_time", rate_col: "fundingRate"}).copy()
+    fdf["funding_time"] = pd.to_numeric(fdf["funding_time"], errors="coerce")
+    fdf["fundingRate"]  = pd.to_numeric(fdf["fundingRate"], errors="coerce")
 
-    fdf["funding_time"] = pd.to_numeric(
-        fdf["funding_time"], errors="coerce"
-    )
-    fdf["fundingRate"] = pd.to_numeric(
-        fdf["fundingRate"], errors="coerce"
-    )
-
-    if fdf["funding_time"].isna().any():
-        raise ValueError(f"CRITICAL: Invalid funding timestamps for {symbol}")
-
-    if fdf["fundingRate"].isna().any():
-        raise ValueError(f"CRITICAL: NaN funding rates in source for {symbol}")
-
-    if not np.isfinite(fdf["funding_time"].to_numpy(dtype=float)).all():
-        raise ValueError(f"CRITICAL: Non-finite funding timestamps for {symbol}")
-
-    if not np.isfinite(fdf["fundingRate"].to_numpy(dtype=float)).all():
-        raise ValueError(f"CRITICAL: Non-finite funding rates for {symbol}")
+    if fdf["funding_time"].isna().any() or fdf["fundingRate"].isna().any():
+        raise ValueError(f"CRITICAL: Invalid timestamps/rates in funding source for {symbol}")
 
     if fdf["funding_time"].duplicated().any():
         raise ValueError(f"CRITICAL: Duplicate funding timestamps detected for {symbol}")
 
     fdf = fdf.sort_values("funding_time").reset_index(drop=True)
-
     source_std = float(fdf["fundingRate"].std())
     source_unique = int(fdf["fundingRate"].nunique(dropna=True))
 
     if source_unique < 2 or not np.isfinite(source_std) or source_std == 0.0:
-        raise ValueError(
-            f"CRITICAL: Source funding archive for {symbol} has zero variance "
-            f"(N={len(fdf)}, unique={source_unique}, std={source_std})"
-        )
+        raise ValueError(f"CRITICAL: Source funding archive for {symbol} has zero variance")
 
     if "close_time" not in df15.columns:
-        raise ValueError(
-            f"CRITICAL: 15m dataset for {symbol} is missing close_time "
-            "required for funding alignment"
-        )
+        raise ValueError(f"CRITICAL: 15m dataset for {symbol} is missing close_time")
 
     base = df15.copy()
-    base["close_time"] = pd.to_numeric(
-        base["close_time"], errors="coerce"
-    )
-
-    if base["close_time"].isna().any():
-        raise ValueError(f"CRITICAL: Invalid 15m close_time values for {symbol}")
-
+    base["close_time"] = pd.to_numeric(base["close_time"], errors="coerce")
     base = base.sort_values("close_time").reset_index(drop=True)
 
     merged = pd.merge_asof(
@@ -286,41 +280,12 @@ def _merge_funding_to_15m(df15: pd.DataFrame, symbol: str) -> pd.DataFrame:
     )
 
     if merged["fundingRate"].isna().any():
-        missing_count = int(merged["fundingRate"].isna().sum())
-        raise ValueError(
-            f"CRITICAL: Missing funding coverage after merge for {symbol}: "
-            f"{missing_count} rows"
-        )
+        raise ValueError(f"CRITICAL: Missing funding coverage after merge for {symbol}")
 
     if (merged["funding_time"] > merged["close_time"]).any():
-        raise ValueError(
-            f"CRITICAL: Lookahead leakage detected for {symbol}: "
-            "funding timestamp is after observation close_time"
-        )
+        raise ValueError(f"CRITICAL: Lookahead leakage detected for {symbol}")
 
-    merged_std = float(merged["fundingRate"].std())
-    merged_unique = int(merged["fundingRate"].nunique(dropna=True))
-
-    if merged_unique < 2 or not np.isfinite(merged_std) or merged_std == 0.0:
-        raise ValueError(
-            f"CRITICAL: Zero-variance funding after merge for {symbol} "
-            f"(N={len(merged)}, unique={merged_unique}, std={merged_std})"
-        )
-
-    log.info(
-        "Funding source OK | %s | rows=%d | unique=%d | min=%.8g | max=%.8g | std=%.8g",
-        symbol,
-        len(fdf),
-        source_unique,
-        float(fdf["fundingRate"].min()),
-        float(fdf["fundingRate"].max()),
-        source_std,
-    )
-
-    merged = merged.rename(
-        columns={"funding_time": "funding_source_time"}
-    )
-
+    merged = merged.rename(columns={"funding_time": "funding_source_time"})
     return merged.sort_values("open_time").reset_index(drop=True)
 
 
@@ -328,11 +293,7 @@ def _build_features(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: p
     if df15.empty or len(df15) < MIN_BARS:
         return pd.DataFrame()
 
-    # Strict funding attachment. Never use a stale/constant existing
-    # fundingRate column from the candle file and never silently replace
-    # missing funding with zero.
     df15 = _merge_funding_to_15m(df15, symbol)
-
     taker_col = df15[["open_time", "taker_buy_base_vol"]].copy() if "taker_buy_base_vol" in df15.columns else None
 
     df15 = add_indicators(df15)
@@ -356,13 +317,8 @@ def _build_features(symbol: str, df15: pd.DataFrame, df1h: pd.DataFrame, df4h: p
         return pd.DataFrame()
 
     df15 = _add_extra_features(df15)
-
-    # fundingRate must have been attached by _merge_funding_to_15m().
     if "fundingRate" not in df15.columns:
-        raise ValueError(
-            f"CRITICAL: Funding attachment failed for {symbol}; "
-            "fundingRate column is missing"
-        )
+        raise ValueError(f"CRITICAL: Funding attachment failed for {symbol}")
 
     df15["symbol"] = symbol
     df15["regime"] = regime
@@ -466,7 +422,7 @@ def temporal_symbol_split(ds: pd.DataFrame, test_split: float, calib_split: floa
     base = ds.iloc[:0].copy()
     train_df = pd.concat(train_parts, ignore_index=True) if train_parts else base.copy()
     calib_df = pd.concat(calib_parts, ignore_index=True) if calib_parts else base.copy()
-    test_df = pd.concat(test_parts, ignore_index=True) if test_parts else base.copy()
+    test_df  = pd.concat(test_parts, ignore_index=True) if test_parts else base.copy()
     return tuple(x.sort_values(["open_time", "symbol"]).reset_index(drop=True) for x in (train_df, calib_df, test_df))
 
 
@@ -487,19 +443,18 @@ def train(
     active_features: list = None,
     sell_tp_mult: float = 3.5,
     sell_sl_mult: float = 2.5,
-    export_artifact: bool = True,
+    candidate_mode: bool = True,
     reserved_features: list = None
 ):
     ds = ds.loc[:, ~ds.columns.duplicated()].copy()
     audit_anti_leakage(ds)
 
-    # Dynamic Zero-Variance Pruning
     if active_features is None:
         active_features = [f for f in FULL_FEATURES if f in ds.columns]
         if "fundingRate" in active_features:
             fr_series = ds["fundingRate"].dropna()
             if len(fr_series) == 0 or (fr_series == 0).all() or fr_series.std() == 0:
-                log.warning("⚠️ 'fundingRate' is all-zero or unpopulated. Pruning from active features to prevent noise.")
+                log.warning("⚠️ 'fundingRate' is all-zero. Pruning from active features.")
                 active_features = [f for f in active_features if f != "fundingRate"]
             else:
                 log.info("✓ 'fundingRate' contains active variance. Retaining in active features.")
@@ -523,8 +478,8 @@ def train(
 
     X_calib = calib_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_calib = le.transform(calib_df["target"]) if len(calib_df) > 0 else np.array([])
-    X_test = test_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
-    y_test = le.transform(test_df["target"]) if len(test_df) > 0 else np.array([])
+    X_test  = test_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
+    y_test  = le.transform(test_df["target"]) if len(test_df) > 0 else np.array([])
 
     scanner = XGBClassifier(n_estimators=100, max_depth=4, random_state=42, n_jobs=-1, eval_metric="mlogloss")
     scanner.fit(X_train_raw, y_train_raw)
@@ -586,29 +541,20 @@ def train(
     best_thresh_sell, best_score_sell = MIN_SELL_THRESHOLD_FLOOR, 0.0
     friction_r = 0.12
 
-    be_buy = (ATR_STOP_MULT + friction_r) / (ATR_TARGET1_MULT + ATR_STOP_MULT)
+    be_buy  = (ATR_STOP_MULT + friction_r) / (ATR_TARGET1_MULT + ATR_STOP_MULT)
     be_sell = (sell_sl_mult + friction_r) / (sell_tp_mult + sell_sl_mult)
 
     sweep_thresholds = np.round(np.arange(0.32, 0.62, 0.02), 2)
-    raw_sell_candidates = (calib_probas[:, sell_idx] > calib_probas[:, buy_idx]).sum()
-    lowest_thresh = sweep_thresholds[0]
-    p_sell_mask = (calib_probas[:, sell_idx] >= lowest_thresh) & (calib_probas[:, sell_idx] > calib_probas[:, buy_idx])
-    base_sell_prec = float((y_calib[p_sell_mask] == sell_idx).mean()) if p_sell_mask.sum() > 0 else 0.0
-
-    if export_artifact:
-        log.info(f"\n{'='*102}")
-        log.info(f"CALIBRATION THRESHOLD SWEEP (Friction={friction_r}R)")
-        log.info(f"Active Features: {len(selected)} selected | Total Universe: {len(active_features)}")
-        log.info(f"BUY Geometry:  {ATR_TARGET1_MULT}R / {ATR_STOP_MULT}R (Req Prec > {be_buy*100:.1f}%)")
-        log.info(f"SELL Geometry: {sell_tp_mult}R / {sell_sl_mult}R (Req Prec > {be_sell*100:.1f}%)")
-        log.info(f"DIAGNOSTIC: Raw SELL calibration candidates (p_sell > p_buy): {raw_sell_candidates}")
-        log.info(f"DIAGNOSTIC: SELL Precision @ Floor {lowest_thresh:.2f}: {base_sell_prec*100:.1f}% (n={p_sell_mask.sum()})")
-        log.info(f"{'='*102}")
-        log.info(
-            f"{'Thresh':<7} | {'BUY N':<6} {'BUY Prec':<9} {'BUY Rec':<8} {'BUY EV':<8} {'Score':<7} | "
-            f"{'SELL N':<7} {'SELL Prec':<10} {'SELL Rec':<9} {'SELL EV':<8} {'Score':<7}"
-        )
-        log.info(f"{'-'*102}")
+    log.info(f"\n{'='*102}")
+    log.info(f"CALIBRATION THRESHOLD SWEEP (Friction={friction_r}R | Target={ATR_TARGET1_MULT}R | Stop={ATR_STOP_MULT}R)")
+    log.info(f"BUY Geometry:  {ATR_TARGET1_MULT}R / {ATR_STOP_MULT}R (Req Prec > {be_buy*100:.1f}%)")
+    log.info(f"SELL Geometry: {sell_tp_mult}R / {sell_sl_mult}R (Req Prec > {be_sell*100:.1f}%)")
+    log.info(f"{'='*102}")
+    log.info(
+        f"{'Thresh':<7} | {'BUY N':<6} {'BUY Prec':<9} {'BUY Rec':<8} {'BUY EV':<8} {'Score':<7} | "
+        f"{'SELL N':<7} {'SELL Prec':<10} {'SELL Rec':<9} {'SELL EV':<8} {'Score':<7}"
+    )
+    log.info(f"{'-'*102}")
 
     for thresh in sweep_thresholds:
         yp = []
@@ -632,25 +578,23 @@ def train(
         buy_score  = buy_ev * rb * np.sqrt(max(bm.sum(), 1))  if buy_ev > 0 else 0.0
         sell_score = sell_ev * rs * np.sqrt(max(sm.sum(), 1)) if sell_ev > 0 else 0.0
 
-        if export_artifact:
-            log.info(
-                f"{thresh:<7.2f} | {bm.sum():<6} {pb*100:>7.1f}%  {rb*100:>6.1f}%  {buy_ev:>+6.2f}R {buy_score:>7.2f} | "
-                f"{sm.sum():<7} {ps*100:>8.1f}%  {rs*100:>7.1f}%  {sell_ev:>+6.2f}R {sell_score:>7.2f}"
-            )
+        log.info(
+            f"{thresh:<7.2f} | {bm.sum():<6} {pb*100:>7.1f}%  {rb*100:>6.1f}%  {buy_ev:>+6.2f}R {buy_score:>7.2f} | "
+            f"{sm.sum():<7} {ps*100:>8.1f}%  {rs*100:>7.1f}%  {sell_ev:>+6.2f}R {sell_score:>7.2f}"
+        )
 
         if thresh >= MIN_BUY_THRESHOLD_FLOOR and buy_score > best_score_buy and bm.sum() > 15:
             best_score_buy, best_thresh_buy = buy_score, thresh
         if thresh >= MIN_SELL_THRESHOLD_FLOOR and sell_score > best_score_sell and sm.sum() > 15:
             best_score_sell, best_thresh_sell = sell_score, thresh
 
-    # Fail-closed sentinel check (1.01 disables broken sides)
+    # Fail-closed sentinel check (1.01 disables non-viable sides)
     best_thresh_buy = max(MIN_BUY_THRESHOLD_FLOOR, best_thresh_buy) if best_score_buy > 0.0 else 1.01
     best_thresh_sell = max(MIN_SELL_THRESHOLD_FLOOR, best_thresh_sell) if best_score_sell > 0.0 else 1.01
 
-    if export_artifact:
-        log.info(f"{'-'*102}")
-        log.info(f"✅ Selected Optimal Thresholds -> BUY: {best_thresh_buy:.2f} (Score: {best_score_buy:.2f}) | SELL: {best_thresh_sell:.2f} (Score: {best_score_sell:.2f})")
-        log.info(f"{'='*102}\n")
+    log.info(f"{'-'*102}")
+    log.info(f"✅ Selected Optimal Thresholds -> BUY: {best_thresh_buy:.2f} (Score: {best_score_buy:.2f}) | SELL: {best_thresh_sell:.2f} (Score: {best_score_sell:.2f})")
+    log.info(f"{'='*102}\n")
 
     probas = ensemble.predict_proba(Xte)
     y_pred_tuned = []
@@ -662,14 +606,10 @@ def train(
 
     y_pred_tuned = np.array(y_pred_tuned)
     acc = accuracy_score(y_test, y_pred_tuned)
-
-    if not export_artifact:
-        return acc, best_score_buy, best_score_sell
-
     train_acc = accuracy_score(y_train, ensemble.predict(Xtr))
-    report = classification_report(y_test, y_pred_tuned, target_names=classes, output_dict=True, zero_division=0)
+    log.info(f"Generalization Check: In-Sample (Train)={train_acc*100:.1f}% | Out-of-Sample (Test)={acc*100:.1f}%")
 
-    # Resolve safe scalar threshold without sentinel poisoning
+    report = classification_report(y_test, y_pred_tuned, target_names=classes, output_dict=True, zero_division=0)
     active_thresh_list = [t for t in (best_thresh_buy, best_thresh_sell) if t <= 1.0]
     scalar_recommended = min(active_thresh_list) if active_thresh_list else 1.01
 
@@ -695,38 +635,55 @@ def train(
         "sell_sl_mult":               sell_sl_mult,
     }
 
-    joblib.dump(pipeline, MODEL_FILE)
-    joblib.dump(pipeline, CANDIDATE_MODEL_FILE, compress=3)
-    log.info(f"✅ Exported candidate binary: {CANDIDATE_MODEL_FILE}")
+    # Strict file decoupling: Candidate builds NEVER overwrite the production model.
+    target_output_file = (
+        CANDIDATE_MODEL_FILE
+        if candidate_mode
+        else MODEL_FILE
+    )
 
-    # Build and export immutable candidate manifest
-    with open(CANDIDATE_MODEL_FILE, "rb") as f:
+    model_size_bytes = _dump_model_atomic(
+        pipeline,
+        Path(target_output_file),
+        compress=3,
+    )
+
+    log.info(
+        f"✅ Exported compressed model artifact: {target_output_file} "
+        f"({model_size_bytes / (1024 * 1024):.1f} MiB)"
+    )
+
+    with open(target_output_file, "rb") as f:
         model_sha256 = hashlib.sha256(f.read()).hexdigest()
 
+    candidate_cfg = build_candidate_config()
     candidate_id = f"cand_{uuid.uuid4().hex}"
     manifest = {
         "artifact_version": 1,
         "candidate_id": candidate_id,
         "model_sha256": model_sha256,
+        "model_size_bytes": model_size_bytes,
         "feature_schema_hash": get_feature_schema_hash(active_features),
         "feature_code_hash": get_feature_code_hash(),
         "execution_policy_hash": get_policy_hash(),
-        "config_hash": get_config_hash(build_candidate_config()),
+        "config_hash": get_config_hash(candidate_cfg),
+        "config": candidate_cfg,
         "candidate_created_at": now_utc.isoformat(),
         "candidate_expiry_at": (now_utc + timedelta(days=30)).isoformat(),
-        "status": "AWAITING_PROSPECTIVE_EVIDENCE",
+        "status": "AWAITING_PROSPECTIVE_EVIDENCE" if candidate_mode else "ACTIVE_PRODUCTION",
         "recommended_threshold_buy": best_thresh_buy,
         "recommended_threshold_sell": best_thresh_sell,
         "recommended_threshold": scalar_recommended,
         "accuracy": round(acc * 100, 1),
     }
 
-    with open(CANDIDATE_MANIFEST, "w") as f:
-        json.dump(manifest, f, indent=2)
-    log.info(f"✅ Generated candidate manifest: {CANDIDATE_MANIFEST} (ID: {candidate_id})")
+    if candidate_mode:
+        _write_json_atomic(CANDIDATE_MANIFEST, manifest)
+        log.info(f"✅ Generated candidate manifest: {CANDIDATE_MANIFEST} (ID: {candidate_id})")
 
     perf = {
         "candidate_id":               candidate_id,
+        "model_size_bytes":           model_size_bytes,
         "accuracy":                   round(acc * 100, 1),
         "test_accuracy":              f"{round(acc * 100, 1)}%",
         "train_accuracy":             f"{round(train_acc * 100, 1)}%",
@@ -743,21 +700,59 @@ def train(
         "sell_precision":             round(report.get("SELL", {}).get("precision", 0), 4),
         "no_trade_precision":         round(report.get("NO_TRADE", {}).get("precision", 0), 4),
     }
-
-    with open("model_performance.json", "w") as f:
-        json.dump(perf, f, indent=2)
+    _write_json_atomic(Path("model_performance.json"), perf)
 
     return acc, best_score_buy, best_score_sell
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser(
+        description="CryptoBot AI Canonical Model Training Engine."
+    )
+
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--candidate",
+        action="store_true",
+        help="Build a prospective candidate artifact (default).",
+    )
+    mode.add_argument(
+        "--production",
+        action="store_true",
+        help=(
+            "Explicitly export to pro_crypto_ai_model.pkl. "
+            "Use only from the controlled promotion workflow."
+        ),
+    )
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = _parse_args()
+
+    # Safe default: no --production flag means candidate mode.
+    is_candidate = not bool(args.production)
     t0 = time.time()
-    log.info("Starting candidate model training pipeline...")
-    dataset = build_dataset_from_local_parquet(sell_tp_mult=3.5, sell_sl_mult=2.5)
+    run_mode = "CANDIDATE" if is_candidate else "PRODUCTION"
+    export_target = CANDIDATE_MODEL_FILE if is_candidate else MODEL_FILE
+
+    log.info(
+        f"Starting model training pipeline (Mode: {run_mode})..."
+    )
+    log.info(
+        f"Model export target: {export_target}"
+    )
+
+    dataset = build_dataset_from_local_parquet(
+        sell_tp_mult=3.5,
+        sell_sl_mult=2.5,
+    )
     acc, score_b, score_s = train(
         dataset,
         sell_tp_mult=3.5,
         sell_sl_mult=2.5,
-        export_artifact=True
+        candidate_mode=is_candidate
     )
-    log.info(f"✅ Training completed successfully in {(time.time()-t0)/60:.1f} min | Test Accuracy: {acc*100:.1f}%")
+    log.info(f"✅ Training completed in {(time.time()-t0)/60:.1f} min | Test Accuracy: {acc*100:.1f}%")
+
