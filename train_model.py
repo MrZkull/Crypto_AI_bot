@@ -75,15 +75,18 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-TEST_SPLIT          = 0.20
-CALIB_SPLIT         = 0.15
-EMBARGO_BARS        = 24
-MODEL_FILE          = Path("pro_crypto_ai_model.pkl")
-CANDIDATE_MODEL_FILE = Path("candidate_model.pkl")
-CANDIDATE_MANIFEST  = Path("candidate_manifest.json")
-N_FEATURES          = 35
-MIN_BARS            = 100
-UNDERSAMPLE_RATIO   = 1.0
+TEST_SPLIT                 = 0.20
+CALIB_SPLIT                = 0.15
+EMBARGO_BARS               = 24
+MODEL_FILE                 = Path("pro_crypto_ai_model.pkl")
+CANDIDATE_MODEL_FILE       = Path("candidate_model.pkl")
+CANDIDATE_MANIFEST         = Path("candidate_manifest.json")
+N_FEATURES                 = 35
+MIN_BARS                   = 100
+UNDERSAMPLE_RATIO          = 1.0
+THRESHOLD_VALIDATION_SPLIT = 0.40
+THRESHOLD_GATE_SPLIT       = 0.50
+MIN_THRESHOLD_GATE_TRADES  = 30
 
 MIN_BUY_THRESHOLD_FLOOR  = 0.36
 MIN_SELL_THRESHOLD_FLOOR = 0.36
@@ -424,6 +427,166 @@ def temporal_symbol_split(ds: pd.DataFrame, test_split: float, calib_split: floa
     return tuple(x.sort_values(["open_time", "symbol"]).reset_index(drop=True) for x in (train_df, calib_df, test_df))
 
 
+def split_calibration_threshold_validation(
+    calib_df: pd.DataFrame,
+    validation_fraction: float = THRESHOLD_VALIDATION_SPLIT,
+    gate_fraction: float = THRESHOLD_GATE_SPLIT,
+    embargo: int = EMBARGO_BARS,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split the calibration era into calibrator-fit, threshold-tune, and threshold-gate eras.
+
+    The locked test remains untouched. The latest calibration-era slice is reserved as
+    a final threshold-gate holdout: it can reject a tuned threshold, but it is never
+    used to choose among thresholds. This reduces threshold-selection overfitting.
+    """
+    if calib_df.empty:
+        raise ValueError("CRITICAL: Empty calibration era; cannot select thresholds.")
+    if not 0.20 <= validation_fraction <= 0.50:
+        raise ValueError("CRITICAL: validation_fraction must be between 0.20 and 0.50.")
+    if not 0.25 <= gate_fraction <= 0.75:
+        raise ValueError("CRITICAL: gate_fraction must be between 0.25 and 0.75.")
+
+    fit_parts: list[pd.DataFrame] = []
+    tune_parts: list[pd.DataFrame] = []
+    gate_parts: list[pd.DataFrame] = []
+
+    for symbol, grp in calib_df.groupby("symbol", sort=False):
+        grp = grp.sort_values("open_time").reset_index(drop=True)
+        n = len(grp)
+        holdout_n = max(1, int(n * validation_fraction))
+        gate_n = max(1, int(holdout_n * gate_fraction))
+        tune_n = holdout_n - gate_n
+        gate_start = n - gate_n
+        tune_start = gate_start - tune_n
+        fit_end = tune_start - embargo
+
+        if tune_n <= 0 or fit_end <= 0:
+            continue
+
+        fit_parts.append(grp.iloc[:fit_end])
+        tune_parts.append(grp.iloc[tune_start:gate_start])
+        gate_parts.append(grp.iloc[gate_start:])
+
+    if not fit_parts or not tune_parts or not gate_parts:
+        raise ValueError(
+            "CRITICAL: Calibration era too small for chronological threshold "
+            "tuning/gating with embargo."
+        )
+
+    fit_df = pd.concat(fit_parts, ignore_index=True)
+    tune_df = pd.concat(tune_parts, ignore_index=True)
+    gate_df = pd.concat(gate_parts, ignore_index=True)
+
+    fit_df = fit_df.sort_values(["open_time", "symbol"]).reset_index(drop=True)
+    tune_df = tune_df.sort_values(["open_time", "symbol"]).reset_index(drop=True)
+    gate_df = gate_df.sort_values(["open_time", "symbol"]).reset_index(drop=True)
+
+    required = {"BUY", "SELL", "NO_TRADE"}
+    for name, frame in (("fit", fit_df), ("tune", tune_df), ("gate", gate_df)):
+        labels = set(frame["target"].dropna().unique())
+        missing = sorted(required - labels)
+        if missing:
+            raise ValueError(
+                f"CRITICAL: Threshold {name} era missing classes: {missing}"
+            )
+
+    return fit_df, tune_df, gate_df
+
+
+def _wilson_lower_bound(successes: int, trials: int, z: float = 1.96) -> float:
+    """Two-sided 95% Wilson lower confidence bound for a binomial proportion."""
+    if trials <= 0:
+        return 0.0
+    phat = float(successes) / float(trials)
+    zz = z * z
+    denom = 1.0 + zz / trials
+    center = phat + zz / (2.0 * trials)
+    spread = z * np.sqrt((phat * (1.0 - phat) / trials) + (zz / (4.0 * trials * trials)))
+    return float((center - spread) / denom)
+
+
+def _gate_selected_threshold(
+    side: str,
+    threshold: float,
+    probas: np.ndarray,
+    y_true: np.ndarray,
+    buy_idx: int,
+    sell_idx: int,
+    tp_mult: float,
+    sl_mult: float,
+    friction_r: float,
+) -> dict:
+    """Evaluate one pre-selected threshold on the untouched threshold-gate era."""
+    if side == "BUY":
+        signal = (probas[:, buy_idx] >= threshold) & (probas[:, buy_idx] > probas[:, sell_idx])
+        actual_label = buy_idx
+    elif side == "SELL":
+        signal = (probas[:, sell_idx] >= threshold) & (probas[:, sell_idx] > probas[:, buy_idx])
+        actual_label = sell_idx
+    else:
+        raise ValueError(f"Unknown side: {side}")
+
+    n = int(signal.sum())
+    successes = int((y_true[signal] == actual_label).sum()) if n else 0
+    precision = float(successes / n) if n else 0.0
+    ev = (
+        precision * tp_mult
+        - (1.0 - precision) * sl_mult
+        - friction_r
+        if n else -sl_mult - friction_r
+    )
+    lower = _wilson_lower_bound(successes, n)
+    be = (sl_mult + friction_r) / (tp_mult + sl_mult)
+
+    return {
+        "side": side,
+        "threshold": float(threshold),
+        "trades": n,
+        "precision": precision,
+        "ev_r": float(ev),
+        "precision_wilson_lower_95": lower,
+        "break_even_precision": float(be),
+        "passes": bool(
+            n >= MIN_THRESHOLD_GATE_TRADES
+            and ev > 0.0
+            and lower > be
+        ),
+    }
+
+
+def _audit_calibration_directional_preservation(
+    raw_probas: np.ndarray,
+    calibrated_probas: np.ndarray,
+    buy_idx: int,
+    sell_idx: int,
+    min_raw_dominance: int = 100,
+) -> dict:
+    """Fail closed on catastrophic calibration-induced side-ranking collapse."""
+    raw_sell_dom = int((raw_probas[:, sell_idx] > raw_probas[:, buy_idx]).sum())
+    cal_sell_dom = int((calibrated_probas[:, sell_idx] > calibrated_probas[:, buy_idx]).sum())
+
+    raw_buy_dom = int((raw_probas[:, buy_idx] > raw_probas[:, sell_idx]).sum())
+    cal_buy_dom = int((calibrated_probas[:, buy_idx] > calibrated_probas[:, sell_idx]).sum())
+
+    if raw_sell_dom >= min_raw_dominance and cal_sell_dom == 0:
+        raise ValueError(
+            "CRITICAL CALIBRATION COLLAPSE: SELL-vs-BUY ranking vanished after "
+            f"calibration (raw={raw_sell_dom}, calibrated={cal_sell_dom})."
+        )
+    if raw_buy_dom >= min_raw_dominance and cal_buy_dom == 0:
+        raise ValueError(
+            "CRITICAL CALIBRATION COLLAPSE: BUY-vs-SELL ranking vanished after "
+            f"calibration (raw={raw_buy_dom}, calibrated={cal_buy_dom})."
+        )
+
+    return {
+        "raw_sell_dominance": raw_sell_dom,
+        "calibrated_sell_dominance": cal_sell_dom,
+        "raw_buy_dominance": raw_buy_dom,
+        "calibrated_buy_dominance": cal_buy_dom,
+    }
+
+
 def undersample_no_trade(X_train: pd.DataFrame, y_train: np.ndarray, nt_idx: int, ratio: float = UNDERSAMPLE_RATIO) -> tuple:
     signal_mask  = y_train != nt_idx
     signal_idx   = np.where(signal_mask)[0]
@@ -474,8 +637,6 @@ def train(
     X_train_raw = train_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_train_raw = le.transform(train_df["target"])
 
-    X_calib = calib_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
-    y_calib = le.transform(calib_df["target"]) if len(calib_df) > 0 else np.array([])
     X_test  = test_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
     y_test  = le.transform(test_df["target"]) if len(test_df) > 0 else np.array([])
 
@@ -495,8 +656,23 @@ def train(
         if feat not in selected: selected.append(feat)
         if len(selected) >= min(N_FEATURES, len(active_features)): break
 
+    # Calibration split into: Calib-Fit, Threshold-Tune, and Threshold-Gate
+    calib_fit_df, threshold_tune_df, threshold_gate_df = split_calibration_threshold_validation(calib_df)
+
     X_train_raw_sel = X_train_raw[selected]
-    Xte, Xcal = X_test[selected].values, X_calib[selected].values
+    Xte = X_test[selected].values
+    Xcal_fit = calib_fit_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
+    Xtune = threshold_tune_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
+    Xgate = threshold_gate_df[active_features].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    Xcal_fit = Xcal_fit[selected].values
+    Xtune = Xtune[selected].values
+    Xgate = Xgate[selected].values
+
+    y_calib_fit = le.transform(calib_fit_df["target"])
+    y_tune = le.transform(threshold_tune_df["target"])
+    y_gate = le.transform(threshold_gate_df["target"])
+
     X_train_sel, y_train = undersample_no_trade(X_train_raw_sel, y_train_raw, nt_idx)
     Xtr = X_train_sel.values
 
@@ -525,28 +701,55 @@ def train(
     )
     gb.fit(Xtr, y_train)
 
-    ensemble = VotingClassifier(estimators=[("xgb", xgb), ("rf", rf), ("gb", gb)], voting="soft", weights=[3, 2, 1])
-    ensemble.fit(Xtr, y_train)
+    base_ensemble = VotingClassifier(
+        estimators=[("xgb", xgb), ("rf", rf), ("gb", gb)],
+        voting="soft",
+        weights=[3, 2, 1],
+    )
+    base_ensemble.fit(Xtr, y_train)
 
-    calibrated_ensemble = CalibratedClassifierCV(estimator=FrozenEstimator(ensemble), method="isotonic")
-    calibrated_ensemble.fit(Xcal, y_calib)
+    raw_tune_probas = base_ensemble.predict_proba(Xtune)
+
+    calibrated_ensemble = CalibratedClassifierCV(
+        estimator=FrozenEstimator(base_ensemble),
+        method="temperature",
+    )
+    calibrated_ensemble.fit(Xcal_fit, y_calib_fit)
+
+    tune_probas = calibrated_ensemble.predict_proba(Xtune)
+    gate_probas = calibrated_ensemble.predict_proba(Xgate)
+
+    directional_audit = _audit_calibration_directional_preservation(
+        raw_tune_probas,
+        tune_probas,
+        buy_idx,
+        sell_idx,
+    )
+
     ensemble = calibrated_ensemble
 
-    calib_probas = ensemble.predict_proba(Xcal)
-    calib_buy_n, calib_sell_n = (y_calib == buy_idx).sum(), (y_calib == sell_idx).sum()
-
-    best_thresh_buy, best_score_buy   = MIN_BUY_THRESHOLD_FLOOR, 0.0
-    best_thresh_sell, best_score_sell = MIN_SELL_THRESHOLD_FLOOR, 0.0
+    tune_buy_n = int((y_tune == buy_idx).sum())
+    tune_sell_n = int((y_tune == sell_idx).sum())
     friction_r = 0.12
 
     be_buy  = (ATR_STOP_MULT + friction_r) / (ATR_TARGET1_MULT + ATR_STOP_MULT)
     be_sell = (sell_sl_mult + friction_r) / (sell_tp_mult + sell_sl_mult)
 
     sweep_thresholds = np.round(np.arange(0.32, 0.62, 0.02), 2)
+    best_thresh_buy, best_score_buy   = MIN_BUY_THRESHOLD_FLOOR, 0.0
+    best_thresh_sell, best_score_sell = MIN_SELL_THRESHOLD_FLOOR, 0.0
+
     log.info(f"\n{'='*102}")
-    log.info(f"CALIBRATION THRESHOLD SWEEP (Friction={friction_r}R | Target={ATR_TARGET1_MULT}R | Stop={ATR_STOP_MULT}R)")
+    log.info(f"THRESHOLD TUNE + INDEPENDENT GATE (Friction={friction_r}R | Target={ATR_TARGET1_MULT}R | Stop={ATR_STOP_MULT}R)")
     log.info(f"BUY Geometry:  {ATR_TARGET1_MULT}R / {ATR_STOP_MULT}R (Req Prec > {be_buy*100:.1f}%)")
     log.info(f"SELL Geometry: {sell_tp_mult}R / {sell_sl_mult}R (Req Prec > {be_sell*100:.1f}%)")
+    log.info(
+        f"Calibration fit rows: {len(calib_fit_df)} | "
+        f"Threshold tune rows: {len(threshold_tune_df)} | "
+        f"Threshold gate rows: {len(threshold_gate_df)} | "
+        f"Embargo bars: {EMBARGO_BARS}"
+    )
+    log.info(f"Calibration→threshold directional audit: {directional_audit}")
     log.info(f"{'='*102}")
     log.info(
         f"{'Thresh':<7} | {'BUY N':<6} {'BUY Prec':<9} {'BUY Rec':<8} {'BUY EV':<8} {'Score':<7} | "
@@ -556,7 +759,7 @@ def train(
 
     for thresh in sweep_thresholds:
         yp = []
-        for p in calib_probas:
+        for p in tune_probas:
             p_buy, p_sell = p[buy_idx], p[sell_idx]
             if p_buy >= thresh and p_buy > p_sell: yp.append(buy_idx)
             elif p_sell >= thresh and p_sell > p_buy: yp.append(sell_idx)
@@ -565,10 +768,10 @@ def train(
         yp = np.array(yp)
         bm, sm = (yp == buy_idx), (yp == sell_idx)
 
-        pb = float((y_calib[bm] == buy_idx).mean())  if bm.sum() > 0 else 0.0
-        ps = float((y_calib[sm] == sell_idx).mean()) if sm.sum() > 0 else 0.0
-        rb = float((yp[y_calib == buy_idx] == buy_idx).mean())   if calib_buy_n > 0 else 0.0
-        rs = float((yp[y_calib == sell_idx] == sell_idx).mean()) if calib_sell_n > 0 else 0.0
+        pb = float((y_tune[bm] == buy_idx).mean())  if bm.sum() > 0 else 0.0
+        ps = float((y_tune[sm] == sell_idx).mean()) if sm.sum() > 0 else 0.0
+        rb = float((yp[y_tune == buy_idx] == buy_idx).mean())   if tune_buy_n > 0 else 0.0
+        rs = float((yp[y_tune == sell_idx] == sell_idx).mean()) if tune_sell_n > 0 else 0.0
 
         buy_ev  = pb * ATR_TARGET1_MULT - (1.0 - pb) * ATR_STOP_MULT - friction_r
         sell_ev = ps * sell_tp_mult - (1.0 - ps) * sell_sl_mult - friction_r
@@ -585,6 +788,29 @@ def train(
             best_score_buy, best_thresh_buy = buy_score, thresh
         if thresh >= MIN_SELL_THRESHOLD_FLOOR and sell_score > best_score_sell and sm.sum() > 15:
             best_score_sell, best_thresh_sell = sell_score, thresh
+
+    # Independent final threshold gate
+    gate_buy = _gate_selected_threshold(
+        "BUY", best_thresh_buy, gate_probas, y_gate, buy_idx, sell_idx,
+        ATR_TARGET1_MULT, ATR_STOP_MULT, friction_r,
+    ) if best_score_buy > 0 else {"passes": False, "threshold": best_thresh_buy, "trades": 0}
+    gate_sell = _gate_selected_threshold(
+        "SELL", best_thresh_sell, gate_probas, y_gate, buy_idx, sell_idx,
+        sell_tp_mult, sell_sl_mult, friction_r,
+    ) if best_score_sell > 0 else {"passes": False, "threshold": best_thresh_sell, "trades": 0}
+
+    log.info(f"Threshold gate BUY: {gate_buy}")
+    log.info(f"Threshold gate SELL: {gate_sell}")
+
+    if not gate_buy.get("passes", False):
+        log.warning("⚠️ BUY threshold rejected by independent threshold gate; disabling BUY for this candidate.")
+        best_thresh_buy = 1.01
+        best_score_buy = 0.0
+
+    if not gate_sell.get("passes", False):
+        log.warning("⚠️ SELL threshold rejected by independent threshold gate; disabling SELL for this candidate.")
+        best_thresh_sell = 1.01
+        best_score_sell = 0.0
 
     # Fail-closed sentinel check (1.01 disables non-viable sides)
     best_thresh_buy = max(MIN_BUY_THRESHOLD_FLOOR, best_thresh_buy) if best_score_buy > 0.0 else 1.01
@@ -626,6 +852,7 @@ def train(
         "recommended_threshold_buy":  best_thresh_buy,
         "recommended_threshold_sell": best_thresh_sell,
         "recommended_threshold":      scalar_recommended,
+        "threshold_gate":             {"buy": gate_buy, "sell": gate_sell},
         "calibrated":                 True,
         "buy_tp_mult":                ATR_TARGET1_MULT,
         "buy_sl_mult":                ATR_STOP_MULT,
@@ -633,7 +860,6 @@ def train(
         "sell_sl_mult":               sell_sl_mult,
     }
 
-    # Strict file decoupling: Candidate builds NEVER overwrite the production model.
     target_output_file = (
         CANDIDATE_MODEL_FILE
         if candidate_mode
@@ -686,7 +912,10 @@ def train(
         "test_accuracy":              f"{round(acc * 100, 1)}%",
         "train_accuracy":             f"{round(train_acc * 100, 1)}%",
         "n_train":                    int(len(X_train_raw)),
-        "n_calib":                    int(len(X_calib)),
+        "n_calib":                    int(len(calib_df)),
+        "n_calib_fit":                int(len(calib_fit_df)),
+        "n_threshold_tune":           int(len(threshold_tune_df)),
+        "n_threshold_gate":           int(len(threshold_gate_df)),
         "n_train_sampled":            int(len(y_train)),
         "n_test":                     int(len(X_test)),
         "features":                   active_features,
@@ -694,6 +923,7 @@ def train(
         "recommended_threshold_buy":  best_thresh_buy,
         "recommended_threshold_sell": best_thresh_sell,
         "recommended_threshold":      scalar_recommended,
+        "threshold_gate":             {"buy": gate_buy, "sell": gate_sell},
         "buy_precision":              round(report.get("BUY", {}).get("precision", 0), 4),
         "sell_precision":             round(report.get("SELL", {}).get("precision", 0), 4),
         "no_trade_precision":         round(report.get("NO_TRADE", {}).get("precision", 0), 4),

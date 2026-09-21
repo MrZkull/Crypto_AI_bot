@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # train_meta_model.py — Research Pipeline: Direction-Aware Meta-Training & Gate 10
 
 import argparse
@@ -57,7 +57,7 @@ log = logging.getLogger(__name__)
 META_MODEL_FILE = Path("meta_pipeline.pkl")
 CANDIDATE_META_FILE = Path("candidate_meta_model.pkl")
 META_MANIFEST_FILE = Path("meta_model_manifest.json")
-CANDIDATE_META_MANIFEST_FILE = Path("candidate_manifest.json")
+CANDIDATE_META_MANIFEST_FILE = Path("candidate_meta_model_manifest.json")
 N_META_FEATURES = 25
 META_SYSTEM_FEATURES = [
     "meta_primary_conf",

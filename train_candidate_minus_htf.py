@@ -121,7 +121,6 @@ def main():
             active_features=ACTIVE_FEATURES,
             sell_tp_mult=3.5,
             sell_sl_mult=2.5,
-            export_artifact=True,
             reserved_features=None,
         )
 
