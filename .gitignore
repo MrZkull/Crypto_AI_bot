@@ -9,3 +9,11 @@ research/__pycache__/
 # Local backup & temp files
 *.backup
 *.zip
+
+# Local ML model artifacts - stored in GitHub Releases, not Git
+*.pkl
+
+# Local Phase 2D state/results
+research_outputs/phase2d_state.json
+research_outputs/phase2d_results.json
+research_outputs/phase2d_latest_snapshot.json

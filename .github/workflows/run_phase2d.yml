@@ -3,10 +3,10 @@ name: CryptoBot AI — Phase 2D Prospective Validation
 on:
   workflow_dispatch:
     inputs:
-      candidate_run_id:
-        description: "GitHub Actions run ID (leave blank to auto-detect latest candidate artifact)"
-        required: false
-        default: ""
+      candidate_release_tag:
+        description: "Candidate GitHub Release tag"
+        required: true
+        default: "phase2d-htf-removal-candidate-20260921"
         type: string
       production_release_tag:
         description: "Immutable production release tag to evaluate"
@@ -24,7 +24,6 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  CANDIDATE_ARTIFACT_NAME: "htf-removal-candidate"
   CANDIDATE_MODEL_FILE: "candidate_model.pkl"
   PRODUCTION_MODEL_FILE: "pro_crypto_ai_model.pkl"
   STATE_ARTIFACT_NAME: "phase2d-state"
@@ -50,7 +49,7 @@ jobs:
           echo "Commit     : ${GITHUB_SHA}"
           echo "Run        : ${GITHUB_RUN_ID}"
           echo "Event      : ${GITHUB_EVENT_NAME}"
-          echo "Candidate  : ${{ inputs.candidate_run_id || '(auto-resolve latest)' }}"
+          echo "Candidate  : ${{ inputs.candidate_release_tag }}"
           echo "Production : ${{ inputs.production_release_tag }}"
           echo "Python     : ${PYTHON_VERSION}"
           echo "Schedule   : MANUAL ONLY"
@@ -124,45 +123,34 @@ jobs:
             echo "No previous successful standalone Phase 2D state found; starting fresh."
           fi
 
-      - name: Resolve and download candidate model
+      - name: Download candidate Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
 
-          INPUT_RUN_ID="${{ inputs.candidate_run_id }}"
-          CANDIDATE_RUN_ID=""
+          CANDIDATE_RELEASE_TAG="${{ inputs.candidate_release_tag }}"
 
-          if [[ -n "${INPUT_RUN_ID}" ]]; then
-            if ! [[ "${INPUT_RUN_ID}" =~ ^[0-9]+$ ]]; then
-              echo "FATAL: Supplied candidate_run_id must contain only digits: ${INPUT_RUN_ID}"
-              exit 1
-            fi
-            echo "Using manually supplied candidate run ID: ${INPUT_RUN_ID}"
-            CANDIDATE_RUN_ID="${INPUT_RUN_ID}"
-          else
-            echo "Candidate run ID not provided; auto-resolving latest run containing '${CANDIDATE_ARTIFACT_NAME}'..."
-            CANDIDATE_RUN_ID="$(
-              gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" \
-                --paginate \
-                --jq ".artifacts[] | select(.name == \"${CANDIDATE_ARTIFACT_NAME}\" and .expired == false) | .workflow_run.id" \
-                | head -n 1 || true
-            )"
-          fi
-
-          if [[ -z "${CANDIDATE_RUN_ID}" ]]; then
-            echo "FATAL: Could not locate any valid candidate artifact named '${CANDIDATE_ARTIFACT_NAME}'."
+          if [[ -z "${CANDIDATE_RELEASE_TAG}" ]]; then
+            echo "FATAL: candidate_release_tag is required."
             exit 1
           fi
 
-          echo "Target candidate source run ID: ${CANDIDATE_RUN_ID}"
-          gh run download "${CANDIDATE_RUN_ID}" \
-            -n "${CANDIDATE_ARTIFACT_NAME}" \
-            -D phase2d_candidate
+          echo "============================================================"
+          echo " CANDIDATE RELEASE"
+          echo "============================================================"
+          echo "Release tag: ${CANDIDATE_RELEASE_TAG}"
+
+          rm -rf phase2d_candidate
+          mkdir -p phase2d_candidate
+
+          gh release download "${CANDIDATE_RELEASE_TAG}"             --repo "${GITHUB_REPOSITORY}"             --pattern "candidate_model.pkl"             --dir phase2d_candidate             --clobber
 
           test -s "phase2d_candidate/${CANDIDATE_MODEL_FILE}"
           cp "phase2d_candidate/${CANDIDATE_MODEL_FILE}" "./${CANDIDATE_MODEL_FILE}"
+
+          echo "Downloaded candidate Release asset:"
           ls -lh "${CANDIDATE_MODEL_FILE}"
 
       - name: Verify locked candidate
@@ -448,7 +436,7 @@ jobs:
             echo
             echo "- **Run:** ${GITHUB_RUN_ID}"
             echo "- **Commit:** ${GITHUB_SHA}"
-            echo "- **Candidate source input:** ${{ inputs.candidate_run_id || '(auto-resolved)' }}"
+            echo "- **Candidate release tag:** ${{ inputs.candidate_release_tag }}"
             echo "- **Production release:** ${{ inputs.production_release_tag }}"
             echo "- **Cadence:** manual only"
             echo
