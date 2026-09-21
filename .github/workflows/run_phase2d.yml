@@ -8,26 +8,42 @@ on:
         required: true
         default: "phase2d-htf-removal-candidate-20260921"
         type: string
+
       production_release_tag:
         description: "Immutable production release tag to evaluate"
         required: false
         default: "v2.0"
         type: string
 
+  # Run every 2 hours, offset from the top of the hour.
+  # 17 minutes past every even-numbered UTC hour.
+  schedule:
+    - cron: "17 */2 * * *"
+
+
 concurrency:
   group: cryptobot-phase2d
   cancel-in-progress: false
+
 
 permissions:
   contents: read
   actions: read
 
+
 env:
   PYTHON_VERSION: "3.11"
+
   CANDIDATE_MODEL_FILE: "candidate_model.pkl"
   PRODUCTION_MODEL_FILE: "pro_crypto_ai_model.pkl"
+
   STATE_ARTIFACT_NAME: "phase2d-state"
   STATE_DIR: "research_outputs"
+
+  # Locked Release defaults used by scheduled runs.
+  CANDIDATE_RELEASE_TAG_DEFAULT: "phase2d-htf-removal-candidate-20260921"
+  PRODUCTION_RELEASE_TAG_DEFAULT: "v2.0"
+
 
 jobs:
   prospective:
@@ -35,13 +51,25 @@ jobs:
     timeout-minutes: 10
 
     steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
+
+      # ============================================================
+      # RUN CONTEXT
+      # ============================================================
       - name: Run context
         shell: bash
         run: |
           set -euo pipefail
+
+          CANDIDATE_TAG="${{ inputs.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
+          PRODUCTION_TAG="${{ inputs.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
+
           echo "============================================================"
           echo " CryptoBot AI — Phase 2D Prospective Validation"
           echo "============================================================"
@@ -49,39 +77,64 @@ jobs:
           echo "Commit     : ${GITHUB_SHA}"
           echo "Run        : ${GITHUB_RUN_ID}"
           echo "Event      : ${GITHUB_EVENT_NAME}"
-          echo "Candidate  : ${{ inputs.candidate_release_tag }}"
-          echo "Production : ${{ inputs.production_release_tag }}"
+          echo "Candidate  : ${CANDIDATE_TAG}"
+          echo "Production : ${PRODUCTION_TAG}"
           echo "Python     : ${PYTHON_VERSION}"
-          echo "Schedule   : MANUAL ONLY"
+          echo "Cadence    : Manual + every 2 hours"
+          echo "Schedule   : 17 */2 * * * UTC"
           echo "============================================================"
 
+
+      # ============================================================
+      # PYTHON
+      # ============================================================
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
 
+
+      # ============================================================
+      # DEPENDENCIES
+      # ============================================================
       - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
+
           pip install -r requirements.txt
+
           echo "Dependencies installed from requirements.txt."
 
+
+      # ============================================================
+      # WORKSPACE
+      # ============================================================
       - name: Prepare Phase 2D workspace
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p "${STATE_DIR}" phase2d_candidate
-          rm -f "${CANDIDATE_MODEL_FILE}" "${PRODUCTION_MODEL_FILE}"
+
+          rm -f \
+            "${CANDIDATE_MODEL_FILE}" \
+            "${PRODUCTION_MODEL_FILE}"
+
           echo "Workspace ready."
 
+
+      # ============================================================
+      # RESTORE PREVIOUS STATE
+      # ============================================================
       - name: Restore previous Phase 2D state
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+
           echo "============================================================"
           echo " STATE RESTORE"
           echo "============================================================"
@@ -96,33 +149,55 @@ jobs:
           )"
 
           if [[ -n "${RUN_ID}" ]]; then
+
             echo "Latest successful standalone Phase 2D run: ${RUN_ID}"
+
             rm -rf restored_phase2d_state
             mkdir -p restored_phase2d_state
 
             if gh run download "${RUN_ID}" \
                  -n "${STATE_ARTIFACT_NAME}" \
                  -D restored_phase2d_state; then
+
               restored=0
+
               for f in \
                 phase2d_state.json \
                 phase2d_results.json \
                 phase2d_latest_snapshot.json
               do
+
                 if [[ -f "restored_phase2d_state/${f}" ]]; then
-                  cp "restored_phase2d_state/${f}" "${STATE_DIR}/${f}"
+
+                  cp \
+                    "restored_phase2d_state/${f}" \
+                    "${STATE_DIR}/${f}"
+
                   echo "Restored: ${f}"
+
                   restored=$((restored + 1))
                 fi
+
               done
+
               echo "State files restored: ${restored}"
+
             else
+
               echo "No downloadable state artifact; starting fresh."
+
             fi
+
           else
+
             echo "No previous successful standalone Phase 2D state found; starting fresh."
+
           fi
 
+
+      # ============================================================
+      # DOWNLOAD LOCKED CANDIDATE RELEASE
+      # ============================================================
       - name: Download candidate Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -130,10 +205,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          CANDIDATE_RELEASE_TAG="${{ inputs.candidate_release_tag }}"
+          CANDIDATE_RELEASE_TAG="${{ inputs.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
 
           if [[ -z "${CANDIDATE_RELEASE_TAG}" ]]; then
-            echo "FATAL: candidate_release_tag is required."
+            echo "FATAL: candidate release tag is empty."
             exit 1
           fi
 
@@ -145,14 +220,25 @@ jobs:
           rm -rf phase2d_candidate
           mkdir -p phase2d_candidate
 
-          gh release download "${CANDIDATE_RELEASE_TAG}"             --repo "${GITHUB_REPOSITORY}"             --pattern "candidate_model.pkl"             --dir phase2d_candidate             --clobber
+          gh release download "${CANDIDATE_RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "candidate_model.pkl" \
+            --dir phase2d_candidate \
+            --clobber
 
           test -s "phase2d_candidate/${CANDIDATE_MODEL_FILE}"
-          cp "phase2d_candidate/${CANDIDATE_MODEL_FILE}" "./${CANDIDATE_MODEL_FILE}"
+
+          cp \
+            "phase2d_candidate/${CANDIDATE_MODEL_FILE}" \
+            "./${CANDIDATE_MODEL_FILE}"
 
           echo "Downloaded candidate Release asset:"
           ls -lh "${CANDIDATE_MODEL_FILE}"
 
+
+      # ============================================================
+      # VERIFY CANDIDATE SHA
+      # ============================================================
       - name: Verify locked candidate
         shell: bash
         run: |
@@ -167,17 +253,25 @@ jobs:
           )
 
           path = Path("candidate_model.pkl")
-          actual = hashlib.sha256(path.read_bytes()).hexdigest()
+
+          actual = hashlib.sha256(
+              path.read_bytes()
+          ).hexdigest()
 
           print("candidate SHA256:", actual)
           print("candidate size:", path.stat().st_size, "bytes")
 
           if actual != expected:
               raise SystemExit(
-                  "FATAL: candidate SHA does not match locked HTF-removal candidate"
+                  "FATAL: candidate SHA does not match locked "
+                  "HTF-removal candidate"
               )
           PY
 
+
+      # ============================================================
+      # INSPECT CANDIDATE
+      # ============================================================
       - name: Inspect candidate model
         shell: bash
         run: |
@@ -187,9 +281,14 @@ jobs:
           import joblib
           from pathlib import Path
 
-          model = joblib.load(Path("candidate_model.pkl"))
+          model = joblib.load(
+              Path("candidate_model.pkl")
+          )
+
           if not isinstance(model, dict):
-              raise SystemExit("FATAL: unexpected candidate model type")
+              raise SystemExit(
+                  "FATAL: unexpected candidate model type"
+              )
 
           required = {
               "all_features",
@@ -198,28 +297,62 @@ jobs:
               "label_map",
               "best_features",
           }
+
           missing = required - set(model)
+
           if missing:
               raise SystemExit(
-                  f"FATAL: candidate model missing keys: {sorted(missing)}"
+                  f"FATAL: candidate model missing keys: "
+                  f"{sorted(missing)}"
               )
 
-          declared = [str(x) for x in model["all_features"]]
-          selected = [str(x) for x in model["best_features"]]
+          declared = [
+              str(x)
+              for x in model["all_features"]
+          ]
 
-          print("candidate trained_at:", model.get("trained_at"))
-          print("candidate declared features:", len(declared))
-          print("candidate selected features:", len(selected))
-          print("candidate selected feature list:", selected)
+          selected = [
+              str(x)
+              for x in model["best_features"]
+          ]
 
-          missing_from_declared = [x for x in selected if x not in declared]
+          print(
+              "candidate trained_at:",
+              model.get("trained_at")
+          )
+
+          print(
+              "candidate declared features:",
+              len(declared)
+          )
+
+          print(
+              "candidate selected features:",
+              len(selected)
+          )
+
+          print(
+              "candidate selected feature list:",
+              selected
+          )
+
+          missing_from_declared = [
+              x for x in selected
+              if x not in declared
+          ]
+
           if missing_from_declared:
               raise SystemExit(
-                  "FATAL: candidate best_features contains undeclared features: "
+                  "FATAL: candidate best_features "
+                  "contains undeclared features: "
                   f"{missing_from_declared}"
               )
           PY
 
+
+      # ============================================================
+      # DOWNLOAD LOCKED PRODUCTION RELEASE
+      # ============================================================
       - name: Download locked production model
         env:
           GH_TOKEN: ${{ github.token }}
@@ -227,7 +360,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          RELEASE_TAG="${{ inputs.production_release_tag }}"
+          RELEASE_TAG="${{ inputs.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
+
+          if [[ -z "${RELEASE_TAG}" ]]; then
+            echo "FATAL: production release tag is empty."
+            exit 1
+          fi
+
+          echo "============================================================"
+          echo " PRODUCTION RELEASE"
+          echo "============================================================"
+          echo "Release tag: ${RELEASE_TAG}"
+
           gh release download "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --pattern "${PRODUCTION_MODEL_FILE}" \
@@ -235,8 +379,13 @@ jobs:
             --clobber
 
           test -s "${PRODUCTION_MODEL_FILE}"
+
           ls -lh "${PRODUCTION_MODEL_FILE}"
 
+
+      # ============================================================
+      # VERIFY PRODUCTION SHA + SCHEMA
+      # ============================================================
       - name: Verify locked production
         shell: bash
         run: |
@@ -251,20 +400,37 @@ jobs:
               "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
           )
 
-          path = Path("pro_crypto_ai_model.pkl")
-          actual = hashlib.sha256(path.read_bytes()).hexdigest()
+          path = Path(
+              "pro_crypto_ai_model.pkl"
+          )
 
-          print("production SHA256:", actual)
-          print("production size:", path.stat().st_size, "bytes")
+          actual = hashlib.sha256(
+              path.read_bytes()
+          ).hexdigest()
+
+          print(
+              "production SHA256:",
+              actual
+          )
+
+          print(
+              "production size:",
+              path.stat().st_size,
+              "bytes"
+          )
 
           if actual != expected:
               raise SystemExit(
-                  "FATAL: production SHA does not match locked production model"
+                  "FATAL: production SHA does not match "
+                  "locked production model"
               )
 
           model = joblib.load(path)
+
           if not isinstance(model, dict):
-              raise SystemExit("FATAL: unexpected production model type")
+              raise SystemExit(
+                  "FATAL: unexpected production model type"
+              )
 
           required = {
               "all_features",
@@ -273,42 +439,79 @@ jobs:
               "label_map",
               "best_features",
           }
+
           missing = required - set(model)
+
           if missing:
               raise SystemExit(
-                  f"FATAL: production model missing keys: {sorted(missing)}"
+                  f"FATAL: production model missing keys: "
+                  f"{sorted(missing)}"
               )
 
-          declared = [str(x) for x in model["all_features"]]
-          selected = [str(x) for x in model["best_features"]]
+          declared = [
+              str(x)
+              for x in model["all_features"]
+          ]
 
-          print("production trained_at:", model.get("trained_at"))
-          print("production declared features:", len(declared))
-          print("production selected features:", len(selected))
-          print("production selected feature list:", selected)
+          selected = [
+              str(x)
+              for x in model["best_features"]
+          ]
+
+          print(
+              "production trained_at:",
+              model.get("trained_at")
+          )
+
+          print(
+              "production declared features:",
+              len(declared)
+          )
+
+          print(
+              "production selected features:",
+              len(selected)
+          )
+
+          print(
+              "production selected feature list:",
+              selected
+          )
 
           if len(declared) != 63:
               raise SystemExit(
-                  f"FATAL: expected 63 production declared features, got {len(declared)}"
+                  f"FATAL: expected 63 production declared "
+                  f"features, got {len(declared)}"
               )
 
           if len(selected) != 35:
               raise SystemExit(
-                  f"FATAL: expected 35 production selected features, got {len(selected)}"
+                  f"FATAL: expected 35 production selected "
+                  f"features, got {len(selected)}"
               )
 
-          missing_from_declared = [x for x in selected if x not in declared]
+          missing_from_declared = [
+              x for x in selected
+              if x not in declared
+          ]
+
           if missing_from_declared:
               raise SystemExit(
-                  "FATAL: production best_features contains features not present "
-                  f"in all_features: {missing_from_declared}"
+                  "FATAL: production best_features contains "
+                  "features not present in all_features: "
+                  f"{missing_from_declared}"
               )
           PY
 
+
+      # ============================================================
+      # VALIDATE SOURCE DEPENDENCIES
+      # ============================================================
       - name: Validate Phase 2D source dependencies
         shell: bash
         run: |
           set -euo pipefail
+
           required_files=(
             "phase2d_prospective_validator.py"
             "phase2d_promotion_gate.py"
@@ -317,11 +520,14 @@ jobs:
           )
 
           for f in "${required_files[@]}"; do
+
             test -s "${f}" || {
               echo "FATAL: missing required Phase 2D source file: ${f}"
               exit 1
             }
+
             echo "PASS: ${f}"
+
           done
 
           python -m py_compile \
@@ -330,6 +536,10 @@ jobs:
             feature_engineering.py \
             market_data_integrity.py
 
+
+      # ============================================================
+      # RUN PROSPECTIVE VALIDATOR
+      # ============================================================
       - name: Run Phase 2D validator
         shell: bash
         env:
@@ -341,13 +551,18 @@ jobs:
           echo " PHASE 2D VALIDATOR — FULL LIVE LOG"
           echo "============================================================"
 
-          python phase2d_prospective_validator.py 2>&1 | tee phase2d_validator.log
+          python phase2d_prospective_validator.py \
+            2>&1 | tee phase2d_validator.log
 
           echo
           echo "============================================================"
           echo " PHASE 2D VALIDATOR COMPLETE"
           echo "============================================================"
 
+
+      # ============================================================
+      # PRINT RESULT SUMMARY
+      # ============================================================
       - name: Print Phase 2D result summary
         if: always()
         shell: bash
@@ -363,44 +578,102 @@ jobs:
           from pathlib import Path
 
           files = [
-              Path("research_outputs/phase2d_state.json"),
-              Path("research_outputs/phase2d_results.json"),
-              Path("research_outputs/phase2d_latest_snapshot.json"),
+              Path(
+                  "research_outputs/phase2d_state.json"
+              ),
+              Path(
+                  "research_outputs/phase2d_results.json"
+              ),
+              Path(
+                  "research_outputs/phase2d_latest_snapshot.json"
+              ),
           ]
 
           for path in files:
+
               print()
               print(f"FILE: {path}")
+
               if not path.exists():
                   print("STATUS: MISSING")
                   continue
 
               try:
-                  data = json.loads(path.read_text())
+                  data = json.loads(
+                      path.read_text(
+                          encoding="utf-8"
+                      )
+                  )
+
               except Exception as exc:
-                  print("STATUS: INVALID JSON:", exc)
+                  print(
+                      "STATUS: INVALID JSON:",
+                      exc
+                  )
                   continue
 
               print("STATUS: PRESENT")
+
               if isinstance(data, dict):
-                  print("top-level keys:", sorted(data.keys()))
 
-                  resolved = data.get("resolved")
-                  pending = data.get("pending")
-                  seen = data.get("seen")
+                  print(
+                      "top-level keys:",
+                      sorted(data.keys())
+                  )
 
-                  if isinstance(resolved, dict):
+                  resolved = data.get(
+                      "resolved"
+                  )
+
+                  pending = data.get(
+                      "pending"
+                  )
+
+                  seen = data.get(
+                      "seen"
+                  )
+
+                  if isinstance(
+                      resolved,
+                      dict
+                  ):
+
                       for k, v in resolved.items():
+
                           if isinstance(v, list):
-                              print(f"resolved.{k}: {len(v)}")
-                  if isinstance(pending, dict):
+
+                              print(
+                                  f"resolved.{k}: "
+                                  f"{len(v)}"
+                              )
+
+                  if isinstance(
+                      pending,
+                      dict
+                  ):
+
                       for k, v in pending.items():
+
                           if isinstance(v, list):
-                              print(f"pending.{k}: {len(v)}")
-                  if isinstance(seen, dict):
+
+                              print(
+                                  f"pending.{k}: "
+                                  f"{len(v)}"
+                              )
+
+                  if isinstance(
+                      seen,
+                      dict
+                  ):
+
                       for k, v in seen.items():
+
                           if isinstance(v, list):
-                              print(f"seen.{k}: {len(v)}")
+
+                              print(
+                                  f"seen.{k}: "
+                                  f"{len(v)}"
+                              )
 
                   for key in (
                       "promotion_gate",
@@ -409,52 +682,108 @@ jobs:
                       "summary",
                       "methodology",
                   ):
-                      if key in data:
-                          value = data[key]
-                          if isinstance(value, dict):
-                              print(f"{key}: dict_keys={sorted(value.keys())}")
-                          elif isinstance(value, list):
-                              print(f"{key}: list_length={len(value)}")
-                          else:
-                              print(f"{key}: {value}")
+
+                      if key not in data:
+                          continue
+
+                      value = data[key]
+
+                      if isinstance(
+                          value,
+                          dict
+                      ):
+
+                          print(
+                              f"{key}: "
+                              f"dict_keys="
+                              f"{sorted(value.keys())}"
+                          )
+
+                      elif isinstance(
+                          value,
+                          list
+                      ):
+
+                          print(
+                              f"{key}: "
+                              f"list_length="
+                              f"{len(value)}"
+                          )
+
+                      else:
+
+                          print(
+                              f"{key}: {value}"
+                          )
+
               else:
-                  print("JSON type:", type(data).__name__)
+
+                  print(
+                      "JSON type:",
+                      type(data).__name__
+                  )
+
           PY
 
           echo
           echo "Recent validator log:"
-          tail -n 120 phase2d_validator.log 2>/dev/null || true
 
+          tail -n 120 \
+            phase2d_validator.log \
+            2>/dev/null || true
+
+
+      # ============================================================
+      # GITHUB ACTIONS SUMMARY
+      # ============================================================
       - name: Write GitHub Actions summary
         if: always()
         shell: bash
         run: |
           set -u
 
+          CANDIDATE_TAG="${{ inputs.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
+          PRODUCTION_TAG="${{ inputs.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
+
           {
             echo "# CryptoBot AI — Phase 2D Prospective Validation"
             echo
             echo "- **Run:** ${GITHUB_RUN_ID}"
             echo "- **Commit:** ${GITHUB_SHA}"
-            echo "- **Candidate release tag:** ${{ inputs.candidate_release_tag }}"
-            echo "- **Production release:** ${{ inputs.production_release_tag }}"
-            echo "- **Cadence:** manual only"
+            echo "- **Event:** ${GITHUB_EVENT_NAME}"
+            echo "- **Candidate release tag:** ${CANDIDATE_TAG}"
+            echo "- **Production release:** ${PRODUCTION_TAG}"
+            echo "- **Cadence:** Manual + every 2 hours"
+            echo "- **Schedule:** 17 */2 * * * UTC"
+            echo
+            echo "## Locked model identities"
+            echo
+            echo "- **Candidate SHA:** 7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
+            echo "- **Production SHA:** f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
             echo
             echo "## Artifacts"
+
             for f in \
               research_outputs/phase2d_state.json \
               research_outputs/phase2d_results.json \
               research_outputs/phase2d_latest_snapshot.json \
               phase2d_validator.log
             do
+
               if [[ -f "${f}" ]]; then
                 echo "- \`${f}\`: present"
               else
                 echo "- \`${f}\`: missing"
               fi
+
             done
+
           } >> "${GITHUB_STEP_SUMMARY}"
 
+
+      # ============================================================
+      # UPLOAD PHASE 2D STATE
+      # ============================================================
       - name: Upload Phase 2D research artifacts
         if: always()
         uses: actions/upload-artifact@v4
