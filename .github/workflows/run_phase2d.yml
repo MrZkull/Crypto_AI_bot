@@ -16,20 +16,17 @@ on:
         type: string
 
   # Run every 2 hours, offset from the top of the hour.
-  # 17 minutes past every even-numbered UTC hour.
+  # 17 minutes past every even-numbered UTC hour (conserves GitHub Actions quota).
   schedule:
     - cron: "17 */2 * * *"
-
 
 concurrency:
   group: cryptobot-phase2d
   cancel-in-progress: false
 
-
 permissions:
   contents: read
   actions: read
-
 
 env:
   PYTHON_VERSION: "3.11"
@@ -44,20 +41,17 @@ env:
   CANDIDATE_RELEASE_TAG_DEFAULT: "phase2d-htf-removal-candidate-20260921"
   PRODUCTION_RELEASE_TAG_DEFAULT: "v2.0"
 
-
 jobs:
   prospective:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-
       # ============================================================
       # CHECKOUT
       # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
-
 
       # ============================================================
       # RUN CONTEXT
@@ -84,7 +78,6 @@ jobs:
           echo "Schedule   : 17 */2 * * * UTC"
           echo "============================================================"
 
-
       # ============================================================
       # PYTHON
       # ============================================================
@@ -93,7 +86,6 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
 
       # ============================================================
       # DEPENDENCIES
@@ -106,7 +98,6 @@ jobs:
           pip install -r requirements.txt
 
           echo "Dependencies installed from requirements.txt."
-
 
       # ============================================================
       # WORKSPACE
@@ -124,9 +115,8 @@ jobs:
 
           echo "Workspace ready."
 
-
       # ============================================================
-      # RESTORE PREVIOUS STATE
+      # RESTORE PREVIOUS STATE (RECURSIVE & FAILS LOUD)
       # ============================================================
       - name: Restore previous Phase 2D state
         env:
@@ -149,8 +139,7 @@ jobs:
           )"
 
           if [[ -n "${RUN_ID}" ]]; then
-
-            echo "Latest successful standalone Phase 2D run: ${RUN_ID}"
+            echo "Latest successful Phase 2D run: ${RUN_ID}"
 
             rm -rf restored_phase2d_state
             mkdir -p restored_phase2d_state
@@ -166,34 +155,32 @@ jobs:
                 phase2d_results.json \
                 phase2d_latest_snapshot.json
               do
+                src="$(find "restored_phase2d_state" -type f -name "${f}" -print -quit)"
 
-                if [[ -f "restored_phase2d_state/${f}" ]]; then
-
-                  cp \
-                    "restored_phase2d_state/${f}" \
-                    "${STATE_DIR}/${f}"
-
-                  echo "Restored: ${f}"
-
+                if [[ -n "${src}" ]]; then
+                  cp "${src}" "${STATE_DIR}/${f}"
+                  echo "Restored: ${f} from${src}"
                   restored=$((restored + 1))
+                else
+                  echo "FATAL: downloaded state artifact is missing expected file: ${f}"
+                  exit 1
                 fi
-
               done
 
               echo "State files restored: ${restored}"
 
+              if [[ "${restored}" -ne 3 ]]; then
+                echo "FATAL: expected all 3 Phase 2D state files to restore."
+                exit 1
+              fi
+
+              echo "State restore verification: PASS"
             else
-
-              echo "No downloadable state artifact; starting fresh."
-
+              echo "No downloadable state artifact found; starting fresh initial state."
             fi
-
           else
-
-            echo "No previous successful standalone Phase 2D state found; starting fresh."
-
+            echo "No previous successful Phase 2D state found; starting fresh initial state."
           fi
-
 
       # ============================================================
       # DOWNLOAD LOCKED CANDIDATE RELEASE
@@ -235,7 +222,6 @@ jobs:
           echo "Downloaded candidate Release asset:"
           ls -lh "${CANDIDATE_MODEL_FILE}"
 
-
       # ============================================================
       # VERIFY CANDIDATE SHA
       # ============================================================
@@ -248,26 +234,16 @@ jobs:
           import hashlib
           from pathlib import Path
 
-          expected = (
-              "7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
-          )
-
+          expected = "7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
           path = Path("candidate_model.pkl")
-
-          actual = hashlib.sha256(
-              path.read_bytes()
-          ).hexdigest()
+          actual = hashlib.sha256(path.read_bytes()).hexdigest()
 
           print("candidate SHA256:", actual)
           print("candidate size:", path.stat().st_size, "bytes")
 
           if actual != expected:
-              raise SystemExit(
-                  "FATAL: candidate SHA does not match locked "
-                  "HTF-removal candidate"
-              )
+              raise SystemExit("FATAL: candidate SHA does not match locked HTF-removal candidate")
           PY
-
 
       # ============================================================
       # INSPECT CANDIDATE
@@ -281,14 +257,10 @@ jobs:
           import joblib
           from pathlib import Path
 
-          model = joblib.load(
-              Path("candidate_model.pkl")
-          )
+          model = joblib.load(Path("candidate_model.pkl"))
 
           if not isinstance(model, dict):
-              raise SystemExit(
-                  "FATAL: unexpected candidate model type"
-              )
+              raise SystemExit("FATAL: unexpected candidate model type")
 
           required = {
               "all_features",
@@ -299,56 +271,21 @@ jobs:
           }
 
           missing = required - set(model)
-
           if missing:
-              raise SystemExit(
-                  f"FATAL: candidate model missing keys: "
-                  f"{sorted(missing)}"
-              )
+              raise SystemExit(f"FATAL: candidate model missing keys: {sorted(missing)}")
 
-          declared = [
-              str(x)
-              for x in model["all_features"]
-          ]
+          declared = [str(x) for x in model["all_features"]]
+          selected = [str(x) for x in model["best_features"]]
 
-          selected = [
-              str(x)
-              for x in model["best_features"]
-          ]
+          print("candidate trained_at:", model.get("trained_at"))
+          print("candidate declared features:", len(declared))
+          print("candidate selected features:", len(selected))
+          print("candidate selected feature list:", selected)
 
-          print(
-              "candidate trained_at:",
-              model.get("trained_at")
-          )
-
-          print(
-              "candidate declared features:",
-              len(declared)
-          )
-
-          print(
-              "candidate selected features:",
-              len(selected)
-          )
-
-          print(
-              "candidate selected feature list:",
-              selected
-          )
-
-          missing_from_declared = [
-              x for x in selected
-              if x not in declared
-          ]
-
+          missing_from_declared = [x for x in selected if x not in declared]
           if missing_from_declared:
-              raise SystemExit(
-                  "FATAL: candidate best_features "
-                  "contains undeclared features: "
-                  f"{missing_from_declared}"
-              )
+              raise SystemExit(f"FATAL: candidate best_features contains undeclared features: {missing_from_declared}")
           PY
-
 
       # ============================================================
       # DOWNLOAD LOCKED PRODUCTION RELEASE
@@ -379,9 +316,7 @@ jobs:
             --clobber
 
           test -s "${PRODUCTION_MODEL_FILE}"
-
           ls -lh "${PRODUCTION_MODEL_FILE}"
-
 
       # ============================================================
       # VERIFY PRODUCTION SHA + SCHEMA
@@ -396,41 +331,19 @@ jobs:
           import joblib
           from pathlib import Path
 
-          expected = (
-              "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
-          )
+          expected = "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
+          path = Path("pro_crypto_ai_model.pkl")
+          actual = hashlib.sha256(path.read_bytes()).hexdigest()
 
-          path = Path(
-              "pro_crypto_ai_model.pkl"
-          )
-
-          actual = hashlib.sha256(
-              path.read_bytes()
-          ).hexdigest()
-
-          print(
-              "production SHA256:",
-              actual
-          )
-
-          print(
-              "production size:",
-              path.stat().st_size,
-              "bytes"
-          )
+          print("production SHA256:", actual)
+          print("production size:", path.stat().st_size, "bytes")
 
           if actual != expected:
-              raise SystemExit(
-                  "FATAL: production SHA does not match "
-                  "locked production model"
-              )
+              raise SystemExit("FATAL: production SHA does not match locked production model")
 
           model = joblib.load(path)
-
           if not isinstance(model, dict):
-              raise SystemExit(
-                  "FATAL: unexpected production model type"
-              )
+              raise SystemExit("FATAL: unexpected production model type")
 
           required = {
               "all_features",
@@ -441,68 +354,27 @@ jobs:
           }
 
           missing = required - set(model)
-
           if missing:
-              raise SystemExit(
-                  f"FATAL: production model missing keys: "
-                  f"{sorted(missing)}"
-              )
+              raise SystemExit(f"FATAL: production model missing keys: {sorted(missing)}")
 
-          declared = [
-              str(x)
-              for x in model["all_features"]
-          ]
+          declared = [str(x) for x in model["all_features"]]
+          selected = [str(x) for x in model["best_features"]]
 
-          selected = [
-              str(x)
-              for x in model["best_features"]
-          ]
-
-          print(
-              "production trained_at:",
-              model.get("trained_at")
-          )
-
-          print(
-              "production declared features:",
-              len(declared)
-          )
-
-          print(
-              "production selected features:",
-              len(selected)
-          )
-
-          print(
-              "production selected feature list:",
-              selected
-          )
+          print("production trained_at:", model.get("trained_at"))
+          print("production declared features:", len(declared))
+          print("production selected features:", len(selected))
+          print("production selected feature list:", selected)
 
           if len(declared) != 63:
-              raise SystemExit(
-                  f"FATAL: expected 63 production declared "
-                  f"features, got {len(declared)}"
-              )
+              raise SystemExit(f"FATAL: expected 63 production declared features, got {len(declared)}")
 
           if len(selected) != 35:
-              raise SystemExit(
-                  f"FATAL: expected 35 production selected "
-                  f"features, got {len(selected)}"
-              )
+              raise SystemExit(f"FATAL: expected 35 production selected features, got {len(selected)}")
 
-          missing_from_declared = [
-              x for x in selected
-              if x not in declared
-          ]
-
+          missing_from_declared = [x for x in selected if x not in declared]
           if missing_from_declared:
-              raise SystemExit(
-                  "FATAL: production best_features contains "
-                  "features not present in all_features: "
-                  f"{missing_from_declared}"
-              )
+              raise SystemExit(f"FATAL: production best_features contains features not present in all_features: {missing_from_declared}")
           PY
-
 
       # ============================================================
       # VALIDATE SOURCE DEPENDENCIES
@@ -520,14 +392,11 @@ jobs:
           )
 
           for f in "${required_files[@]}"; do
-
             test -s "${f}" || {
               echo "FATAL: missing required Phase 2D source file: ${f}"
               exit 1
             }
-
             echo "PASS: ${f}"
-
           done
 
           python -m py_compile \
@@ -535,7 +404,6 @@ jobs:
             phase2d_promotion_gate.py \
             feature_engineering.py \
             market_data_integrity.py
-
 
       # ============================================================
       # RUN PROSPECTIVE VALIDATOR
@@ -559,7 +427,6 @@ jobs:
           echo " PHASE 2D VALIDATOR COMPLETE"
           echo "============================================================"
 
-
       # ============================================================
       # PRINT RESULT SUMMARY
       # ============================================================
@@ -578,19 +445,12 @@ jobs:
           from pathlib import Path
 
           files = [
-              Path(
-                  "research_outputs/phase2d_state.json"
-              ),
-              Path(
-                  "research_outputs/phase2d_results.json"
-              ),
-              Path(
-                  "research_outputs/phase2d_latest_snapshot.json"
-              ),
+              Path("research_outputs/phase2d_state.json"),
+              Path("research_outputs/phase2d_results.json"),
+              Path("research_outputs/phase2d_latest_snapshot.json"),
           ]
 
           for path in files:
-
               print()
               print(f"FILE: {path}")
 
@@ -599,81 +459,33 @@ jobs:
                   continue
 
               try:
-                  data = json.loads(
-                      path.read_text(
-                          encoding="utf-8"
-                      )
-                  )
-
+                  data = json.loads(path.read_text(encoding="utf-8"))
               except Exception as exc:
-                  print(
-                      "STATUS: INVALID JSON:",
-                      exc
-                  )
+                  print("STATUS: INVALID JSON:", exc)
                   continue
 
               print("STATUS: PRESENT")
 
               if isinstance(data, dict):
+                  print("top-level keys:", sorted(data.keys()))
+                  resolved = data.get("resolved")
+                  pending = data.get("pending")
+                  seen = data.get("seen")
 
-                  print(
-                      "top-level keys:",
-                      sorted(data.keys())
-                  )
-
-                  resolved = data.get(
-                      "resolved"
-                  )
-
-                  pending = data.get(
-                      "pending"
-                  )
-
-                  seen = data.get(
-                      "seen"
-                  )
-
-                  if isinstance(
-                      resolved,
-                      dict
-                  ):
-
+                  if isinstance(resolved, dict):
                       for k, v in resolved.items():
-
                           if isinstance(v, list):
+                              print(f"resolved.{k}: {len(v)}")
 
-                              print(
-                                  f"resolved.{k}: "
-                                  f"{len(v)}"
-                              )
-
-                  if isinstance(
-                      pending,
-                      dict
-                  ):
-
+                  if isinstance(pending, dict):
                       for k, v in pending.items():
-
                           if isinstance(v, list):
+                              print(f"pending.{k}: {len(v)}")
 
-                              print(
-                                  f"pending.{k}: "
-                                  f"{len(v)}"
-                              )
-
-                  if isinstance(
-                      seen,
-                      dict
-                  ):
-
+                  if isinstance(seen, dict):
                       for k, v in seen.items():
-
                           if isinstance(v, list):
-
-                              print(
-                                  f"seen.{k}: "
-                                  f"{len(v)}"
-                              )
+                              print(f"seen.{k}: {len(v)}")
 
                   for key in (
                       "promotion_gate",
@@ -682,56 +494,23 @@ jobs:
                       "summary",
                       "methodology",
                   ):
-
                       if key not in data:
                           continue
 
                       value = data[key]
-
-                      if isinstance(
-                          value,
-                          dict
-                      ):
-
-                          print(
-                              f"{key}: "
-                              f"dict_keys="
-                              f"{sorted(value.keys())}"
-                          )
-
-                      elif isinstance(
-                          value,
-                          list
-                      ):
-
-                          print(
-                              f"{key}: "
-                              f"list_length="
-                              f"{len(value)}"
-                          )
-
+                      if isinstance(value, dict):
+                          print(f"{key}: dict_keys={sorted(value.keys())}")
+                      elif isinstance(value, list):
+                          print(f"{key}: list_length={len(value)}")
                       else:
-
-                          print(
-                              f"{key}: {value}"
-                          )
-
+                          print(f"{key}: {value}")
               else:
-
-                  print(
-                      "JSON type:",
-                      type(data).__name__
-                  )
-
+                  print("JSON type:", type(data).__name__)
           PY
 
           echo
           echo "Recent validator log:"
-
-          tail -n 120 \
-            phase2d_validator.log \
-            2>/dev/null || true
-
+          tail -n 120 phase2d_validator.log 2>/dev/null || true
 
       # ============================================================
       # GITHUB ACTIONS SUMMARY
@@ -769,17 +548,13 @@ jobs:
               research_outputs/phase2d_latest_snapshot.json \
               phase2d_validator.log
             do
-
               if [[ -f "${f}" ]]; then
                 echo "- \`${f}\`: present"
               else
                 echo "- \`${f}\`: missing"
               fi
-
             done
-
           } >> "${GITHUB_STEP_SUMMARY}"
-
 
       # ============================================================
       # UPLOAD PHASE 2D STATE
