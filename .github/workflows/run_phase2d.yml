@@ -168,7 +168,7 @@ jobs:
                     src="$(find inspect_state -type f -name "${f}" -print -quit)"
                     if [[ -n "${src}" ]]; then
                       cp "${src}" "${STATE_DIR}/${f}"
-                      echo "Restored: ${f} from${src}"
+                      echo "Restored: ${f} from ${src}"
                       restored=$((restored + 1))
                     fi
                   done
