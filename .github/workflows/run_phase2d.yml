@@ -15,10 +15,10 @@ on:
         default: "v2.0"
         type: string
 
-  # Run every 2 hours, offset from the top of the hour.
-  # 17 minutes past every even-numbered UTC hour (conserves GitHub Actions quota).
-  schedule:
-    - cron: "17 */2 * * *"
+  # Disabled to eliminate dual-scheduler collisions.
+  # Authoritative trigger handled externally via workflow_dispatch REST API every 2 hours.
+  # schedule:
+  #   - cron: "17 */2 * * *"
 
 concurrency:
   group: cryptobot-phase2d
@@ -74,8 +74,7 @@ jobs:
           echo "Candidate  : ${CANDIDATE_TAG}"
           echo "Production : ${PRODUCTION_TAG}"
           echo "Python     : ${PYTHON_VERSION}"
-          echo "Cadence    : Manual + every 2 hours"
-          echo "Schedule   : 17 */2 * * * UTC"
+          echo "Cadence    : External Dispatch every 2 hours"
           echo "============================================================"
 
       # ============================================================
@@ -168,7 +167,7 @@ jobs:
                     src="$(find inspect_state -type f -name "${f}" -print -quit)"
                     if [[ -n "${src}" ]]; then
                       cp "${src}" "${STATE_DIR}/${f}"
-                      echo "Restored: ${f} from ${src}"
+                      echo "Restored: ${f} from${src}"
                       restored=$((restored + 1))
                     fi
                   done
@@ -544,8 +543,7 @@ jobs:
             echo "- **Event:** ${GITHUB_EVENT_NAME}"
             echo "- **Candidate release tag:** ${CANDIDATE_TAG}"
             echo "- **Production release:** ${PRODUCTION_TAG}"
-            echo "- **Cadence:** Manual + every 2 hours"
-            echo "- **Schedule:** 17 */2 * * * UTC"
+            echo "- **Cadence:** External Dispatch every 2 hours"
             echo
             echo "## Locked model identities"
             echo
