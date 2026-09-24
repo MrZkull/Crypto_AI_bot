@@ -265,13 +265,36 @@ jobs:
             fi
 
             echo "STATE RESTORE STATUS      : EXPLICIT FRESH START"
-            exit 0
+
+            # Clear every live state/output file so stale workspace files
+            # can never be mistaken for the new experiment.
+            rm -f \
+              "${STATE_DIR}/phase2d_state.json" \
+              "${STATE_DIR}/phase2d_results.json" \
+              "${STATE_DIR}/phase2d_latest_snapshot.json" \
+              "${STATE_DIR}/experiment_ledger.jsonl" \
+              "phase2d_validator.log"
+
+            mkdir -p "${STATE_DIR}"
+            echo "Live state cleared."
+            echo "Fresh-start mode will continue into the validator."
           fi
 
           # --------------------------------------------------------
           # Normal scheduled/continuation mode: find an exactly
           # compatible state. Never silently start fresh.
           # --------------------------------------------------------
+          # Prevent checkout leftovers or a prior failed step from
+          # masquerading as current experiment state.
+          rm -f \
+            "${STATE_DIR}/phase2d_state.json" \
+            "${STATE_DIR}/phase2d_results.json" \
+            "${STATE_DIR}/phase2d_latest_snapshot.json" \
+            "${STATE_DIR}/experiment_ledger.jsonl" \
+            "phase2d_validator.log"
+
+          mkdir -p "${STATE_DIR}"
+
           RUN_IDS="$(
             gh run list \
               --workflow="run_phase2d.yml" \
@@ -296,15 +319,6 @@ jobs:
               continue
             fi
 
-            # Restore the most recent lineage ledger if present.
-            if [[ "${LEDGER_RESTORED}" != "true" ]]; then
-              ledger_src="$(find inspect_state -type f -name "experiment_ledger.jsonl" -print -quit || true)"
-
-              if [[ -n "${ledger_src}" ]]; then
-                cp "${ledger_src}" "${STATE_DIR}/experiment_ledger.jsonl"
-                LEDGER_RESTORED="true"
-                echo "Lineage ledger restored from Run #${rid}"
-              fi
             fi
 
             state_file="$(find inspect_state -type f -name "phase2d_state.json" -print -quit || true)"
@@ -404,7 +418,8 @@ jobs:
               for f in \
                 phase2d_state.json \
                 phase2d_results.json \
-                phase2d_latest_snapshot.json
+                phase2d_latest_snapshot.json \
+                experiment_ledger.jsonl
               do
                 src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
 
@@ -414,6 +429,7 @@ jobs:
                 fi
               done
 
+              LEDGER_RESTORED="true"
               RESTORED_RUN_ID="${rid}"
 
               rm -rf inspect_state
@@ -1050,7 +1066,7 @@ jobs:
       # UPLOAD PHASE 2D STATE + AUDIT ARTIFACTS
       # ============================================================
       - name: Upload Phase 2D research artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: phase2d-state
@@ -1062,4 +1078,18 @@ jobs:
             research_outputs/pre_reset_archive/**
             phase2d_validator.log
           if-no-files-found: warn
+          retention-days: 14
+
+      # ============================================================
+      # UPLOAD FAILURE DIAGNOSTICS (NEVER USED FOR STATE RESTORE)
+      # ============================================================
+      - name: Upload Phase 2D failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2d-failure-diagnostics
+          path: |
+            phase2d_validator.log
+            research_outputs/pre_reset_archive/**
+          if-no-files-found: ignore
           retention-days: 14
