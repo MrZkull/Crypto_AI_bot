@@ -159,4 +159,22 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["hour_sin"] = df["hour_cos"] = df["dow_sin"] = df["dow_cos"] = 0.0
 
+        # Phase 2D integrity marker:
+    # Record whether any currently available canonical model feature was
+    # still NaN/invalid BEFORE the final blanket fill. Phase 2D uses this
+    # marker to exclude missing-input observations symmetrically instead
+    # of silently converting missing inputs into valid-looking zeroes.
+    tracked_features = [f for f in ALL_FEATURES if f in df.columns]
+
+    if tracked_features:
+        df["_had_missing_inputs"] = (
+            df[tracked_features]
+            .replace([np.inf, -np.inf], np.nan)
+            .isna()
+            .any(axis=1)
+            .astype(bool)
+        )
+    else:
+        df["_had_missing_inputs"] = False
+
     return df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
