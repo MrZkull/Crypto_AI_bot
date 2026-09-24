@@ -18,7 +18,7 @@ on:
       experiment_id:
         description: "Explicit Phase 2D experiment identity"
         required: false
-        default: "PHASE2D-HARDENED-20260924"
+        default: "PHASE2D-HARDENED-20260924-F08"
         type: string
 
       allow_fresh_start:
@@ -56,7 +56,7 @@ env:
 
   CANDIDATE_RELEASE_TAG_DEFAULT: "phase2d-htf-removal-candidate-20260921"
   PRODUCTION_RELEASE_TAG_DEFAULT: "v2.0"
-  PHASE2D_EXPERIMENT_ID_DEFAULT: "PHASE2D-HARDENED-20260924"
+  PHASE2D_EXPERIMENT_ID_DEFAULT: "PHASE2D-HARDENED-20260924-F08"
 
 jobs:
   prospective:
@@ -776,7 +776,7 @@ jobs:
           echo " FULL REGRESSION TEST SUITE"
           echo "============================================================"
 
-          python -m pytest tests/ -v
+          python -m pytest -v
 
           echo "============================================================"
           echo " FULL REGRESSION TEST STATUS: PASS"
