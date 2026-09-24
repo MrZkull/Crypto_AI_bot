@@ -35,7 +35,7 @@ required = {
 missing = required - funcs
 assert not missing, f"function regression: {sorted(missing)}"
 
-assert "N_FEATURES          = 35" in src
+assert any("".join(line.split()) == "N_FEATURES=35" for line in src.splitlines())
 assert 'joblib.dump(pipeline, MODEL_FILE)' not in src
 assert 'joblib.dump(pipeline, CANDIDATE_MODEL_FILE' not in src
 assert "_dump_model_atomic(" in src
