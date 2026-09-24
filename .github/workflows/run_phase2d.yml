@@ -15,7 +15,7 @@ on:
         default: "v2.0"
         type: string
 
-        experiment_id:
+      experiment_id:
         description: "Explicit Phase 2D experiment identity"
         required: false
         default: "PHASE2D-HARDENED-20260924"
@@ -26,11 +26,11 @@ on:
         required: false
         default: false
         type: boolean
-        
-  # Disabled to eliminate dual-scheduler collisions.
-  # Authoritative trigger handled externally via workflow_dispatch REST API every 2 hours.
-  # schedule:
-  #   - cron: "17 */2 * * *"
+
+  # Native GitHub Actions cadence: one run every 2 hours.
+  # This avoids requiring an external dispatcher and remains free-tier controlled.
+  schedule:
+    - cron: "17 */2 * * *"
 
 concurrency:
   group: cryptobot-phase2d
@@ -49,10 +49,8 @@ env:
   STATE_ARTIFACT_NAME: "phase2d-state"
   STATE_DIR: "research_outputs"
 
-  # Locked Release defaults used by scheduled runs.
   CANDIDATE_RELEASE_TAG_DEFAULT: "phase2d-htf-removal-candidate-20260921"
   PRODUCTION_RELEASE_TAG_DEFAULT: "v2.0"
-
   PHASE2D_EXPERIMENT_ID_DEFAULT: "PHASE2D-HARDENED-20260924"
 
 jobs:
@@ -77,18 +75,24 @@ jobs:
 
           CANDIDATE_TAG="${{ inputs.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
           PRODUCTION_TAG="${{ inputs.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
+          EXPERIMENT_ID="${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
+          ALLOW_FRESH_START="${{ inputs.allow_fresh_start }}"
 
           echo "============================================================"
-          echo " CryptoBot AI — Phase 2D Prospective Validation"
+          echo " CRYPTOBOT AI — PHASE 2D PROSPECTIVE VALIDATION"
           echo "============================================================"
-          echo "Repository : ${GITHUB_REPOSITORY}"
-          echo "Commit     : ${GITHUB_SHA}"
-          echo "Run        : ${GITHUB_RUN_ID}"
-          echo "Event      : ${GITHUB_EVENT_NAME}"
-          echo "Candidate  : ${CANDIDATE_TAG}"
-          echo "Production : ${PRODUCTION_TAG}"
-          echo "Python     : ${PYTHON_VERSION}"
-          echo "Cadence    : External Dispatch every 2 hours"
+          echo "Repository             : ${GITHUB_REPOSITORY}"
+          echo "Commit                 : ${GITHUB_SHA}"
+          echo "Run                    : ${GITHUB_RUN_ID}"
+          echo "Attempt                : ${GITHUB_RUN_ATTEMPT}"
+          echo "Event                  : ${GITHUB_EVENT_NAME}"
+          echo "Ref                    : ${GITHUB_REF}"
+          echo "Candidate Release      : ${CANDIDATE_TAG}"
+          echo "Production Release     : ${PRODUCTION_TAG}"
+          echo "Experiment ID          : ${EXPERIMENT_ID}"
+          echo "Fresh-start authorized : ${ALLOW_FRESH_START}"
+          echo "Python                 : ${PYTHON_VERSION}"
+          echo "Cadence                : Native GitHub schedule every 2 hours"
           echo "============================================================"
 
       # ============================================================
@@ -110,7 +114,11 @@ jobs:
 
           pip install -r requirements.txt
 
-          echo "Dependencies installed from requirements.txt."
+          echo "============================================================"
+          echo " DEPENDENCY STATUS"
+          echo "============================================================"
+          python --version
+          python -c "import numpy, pandas, sklearn, xgboost, joblib, requests; print('Core dependencies: PASS')"
 
       # ============================================================
       # WORKSPACE
@@ -126,30 +134,15 @@ jobs:
             "${CANDIDATE_MODEL_FILE}" \
             "${PRODUCTION_MODEL_FILE}"
 
-          echo "Workspace ready."
+          echo "Workspace prepared."
 
       # ============================================================
-      # RESTORE PREVIOUS STATE (COMPATIBILITY-AWARE SEARCH)
+      # SOURCE INTEGRITY — HASHES
       # ============================================================
-            # ============================================================
-      # RESTORE PREVIOUS PHASE 2D STATE
-      # FAIL CLOSED UNLESS AN EXPLICIT FRESH START IS AUTHORIZED
-      # ============================================================
-      - name: Restore previous Phase 2D state
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ALLOW_FRESH_START: ${{ inputs.allow_fresh_start }}
-          EXPECTED_EXPERIMENT_ID: ${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}
+      - name: Calculate experiment source hashes
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "============================================================"
-          echo " STATE RESTORE — FAIL-CLOSED COMPATIBILITY CHECK"
-          echo "============================================================"
-
-          EXPECTED_CAND_SHA="7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
-          EXPECTED_PROD_SHA="f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
 
           EXPECTED_FEATURE_CODE_SHA="$(sha256sum feature_engineering.py | awk '{print $1}')"
           EXPECTED_VALIDATOR_CODE_SHA="$(sha256sum phase2d_prospective_validator.py | awk '{print $1}')"
@@ -170,15 +163,115 @@ jobs:
           PY
           )"
 
-          echo "Expected experiment:"
-          echo " - experiment ID       : ${EXPECTED_EXPERIMENT_ID}"
-          echo " - candidate SHA        : ${EXPECTED_CAND_SHA}"
-          echo " - production SHA       : ${EXPECTED_PROD_SHA}"
-          echo " - feature code SHA     : ${EXPECTED_FEATURE_CODE_SHA}"
-          echo " - feature schema SHA   : ${EXPECTED_FEATURE_SCHEMA_SHA}"
-          echo " - validator code SHA   : ${EXPECTED_VALIDATOR_CODE_SHA}"
-          echo " - explicit fresh start : ${ALLOW_FRESH_START}"
+          {
+            echo "EXPECTED_FEATURE_CODE_SHA=${EXPECTED_FEATURE_CODE_SHA}"
+            echo "EXPECTED_VALIDATOR_CODE_SHA=${EXPECTED_VALIDATOR_CODE_SHA}"
+            echo "EXPECTED_FEATURE_SCHEMA_SHA=${EXPECTED_FEATURE_SCHEMA_SHA}"
+          } >> "${GITHUB_ENV}"
 
+          echo "============================================================"
+          echo " EXPERIMENT SOURCE HASHES"
+          echo "============================================================"
+          echo "Feature code SHA     : ${EXPECTED_FEATURE_CODE_SHA}"
+          echo "Feature schema SHA   : ${EXPECTED_FEATURE_SCHEMA_SHA}"
+          echo "Validator code SHA   : ${EXPECTED_VALIDATOR_CODE_SHA}"
+          echo "============================================================"
+
+      # ============================================================
+      # RESTORE / RESET POLICY
+      # ============================================================
+      - name: Restore previous Phase 2D state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CANDIDATE_SHA="7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
+          PRODUCTION_SHA="f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
+          EXPERIMENT_ID="${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
+          ALLOW_FRESH_START="${{ inputs.allow_fresh_start }}"
+
+          echo "============================================================"
+          echo " STATE RESTORE / EXPERIMENT CONTINUITY"
+          echo "============================================================"
+          echo "Experiment ID          : ${EXPERIMENT_ID}"
+          echo "Candidate SHA          : ${CANDIDATE_SHA}"
+          echo "Production SHA         : ${PRODUCTION_SHA}"
+          echo "Feature code SHA       : ${EXPECTED_FEATURE_CODE_SHA}"
+          echo "Feature schema SHA     : ${EXPECTED_FEATURE_SCHEMA_SHA}"
+          echo "Validator code SHA     : ${EXPECTED_VALIDATOR_CODE_SHA}"
+          echo "Fresh-start authorized : ${ALLOW_FRESH_START}"
+          echo "============================================================"
+
+          # --------------------------------------------------------
+          # Explicit fresh start: archive the latest successful state
+          # and intentionally do not restore it.
+          # --------------------------------------------------------
+          if [[ "${ALLOW_FRESH_START}" == "true" ]]; then
+            echo "Explicit fresh-start mode is ACTIVE."
+            echo "No prior Phase 2D state will be reused."
+
+            LATEST_RUN_ID="$(
+              gh run list \
+                --workflow="run_phase2d.yml" \
+                --branch main \
+                --limit 20 \
+                --json databaseId,conclusion \
+                --jq '.[] | select(.conclusion == "success") | .databaseId' \
+                | head -n 1 || true
+            )"
+
+            if [[ -n "${LATEST_RUN_ID}" ]]; then
+              rm -rf inspect_state
+              mkdir -p inspect_state
+
+              if gh run download \
+                  "${LATEST_RUN_ID}" \
+                  -n "${STATE_ARTIFACT_NAME}" \
+                  -D inspect_state \
+                  2>/dev/null; then
+
+                ARCHIVE_DIR="${STATE_DIR}/pre_reset_archive/run_${LATEST_RUN_ID}"
+                mkdir -p "${ARCHIVE_DIR}"
+
+                archived=0
+
+                for f in \
+                  phase2d_state.json \
+                  phase2d_results.json \
+                  phase2d_latest_snapshot.json \
+                  experiment_ledger.jsonl \
+                  phase2d_validator.log
+                do
+                  src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
+
+                  if [[ -n "${src}" ]]; then
+                    cp "${src}" "${ARCHIVE_DIR}/${f}"
+                    echo "Archived: ${f}"
+                    archived=$((archived + 1))
+                  fi
+                done
+
+                rm -rf inspect_state
+
+                echo "Historical archive status : ${archived} file(s) archived"
+                echo "Historical source run     : ${LATEST_RUN_ID}"
+              else
+                echo "No prior state artifact available to archive."
+              fi
+            else
+              echo "No prior successful Phase 2D run exists."
+            fi
+
+            echo "STATE RESTORE STATUS      : EXPLICIT FRESH START"
+            exit 0
+          fi
+
+          # --------------------------------------------------------
+          # Normal scheduled/continuation mode: find an exactly
+          # compatible state. Never silently start fresh.
+          # --------------------------------------------------------
           RUN_IDS="$(
             gh run list \
               --workflow="run_phase2d.yml" \
@@ -203,14 +296,13 @@ jobs:
               continue
             fi
 
-            # Restore the lineage ledger independently of state compatibility.
+            # Restore the most recent lineage ledger if present.
             if [[ "${LEDGER_RESTORED}" != "true" ]]; then
               ledger_src="$(find inspect_state -type f -name "experiment_ledger.jsonl" -print -quit || true)"
 
               if [[ -n "${ledger_src}" ]]; then
                 cp "${ledger_src}" "${STATE_DIR}/experiment_ledger.jsonl"
                 LEDGER_RESTORED="true"
-
                 echo "Lineage ledger restored from Run #${rid}"
               fi
             fi
@@ -222,57 +314,51 @@ jobs:
               continue
             fi
 
+            set +e
+
             python - "${state_file}" \
-              "${EXPECTED_CAND_SHA}" \
-              "${EXPECTED_PROD_SHA}" \
+              "${CANDIDATE_SHA}" \
+              "${PRODUCTION_SHA}" \
               "${EXPECTED_FEATURE_CODE_SHA}" \
               "${EXPECTED_FEATURE_SCHEMA_SHA}" \
               "${EXPECTED_VALIDATOR_CODE_SHA}" \
-              "${EXPECTED_EXPERIMENT_ID}" <<'PY'
-
+              "${EXPERIMENT_ID}" <<'PY'
           import json
           import sys
 
           (
               state_file,
-              expected_cand,
-              expected_prod,
+              expected_candidate,
+              expected_production,
               expected_feature_code,
               expected_feature_schema,
               expected_validator_code,
-              expected_experiment,
+              expected_experiment_id,
           ) = sys.argv[1:]
 
-          state = json.load(
-              open(
-                  state_file,
-                  encoding="utf-8",
-              )
-          )
+          with open(state_file, encoding="utf-8") as handle:
+              state = json.load(handle)
 
-          locked = state.get(
-              "locked_models",
-              {},
-          )
+          locked = state.get("locked_models", {})
 
           expected = {
-              "candidate_sha256": expected_cand,
-              "production_sha256": expected_prod,
+              "candidate_sha256": expected_candidate,
+              "production_sha256": expected_production,
               "feature_code_hash": expected_feature_code,
               "feature_schema_hash": expected_feature_schema,
               "validator_code_hash": expected_validator_code,
-              "experiment_id": expected_experiment,
+              "experiment_id": expected_experiment_id,
           }
 
           mismatches = {}
 
-          for key, value in expected.items():
-              actual = locked.get(key)
+          for key, expected_value in expected.items():
+              actual_value = locked.get(key)
 
-              if actual != value:
+              if actual_value != expected_value:
                   mismatches[key] = {
-                      "expected": value,
-                      "actual": actual,
+                      "expected": expected_value,
+                      "actual": actual_value,
                   }
 
           if state.get("schema_version") != 5:
@@ -282,40 +368,36 @@ jobs:
               }
 
           if mismatches:
-              print("INCOMPATIBLE")
-              print(json.dumps(
-                  mismatches,
-                  indent=2,
-                  sort_keys=True,
-              ))
+              print("STATE_IDENTITY: INCOMPATIBLE")
+              print(json.dumps(mismatches, indent=2, sort_keys=True))
               raise SystemExit(2)
 
-          print("COMPATIBLE")
-          print(
-              json.dumps(
-                  {
-                      "candidate_resolved": len(
-                          state.get("resolved", {}).get(
-                              "candidate",
-                              [],
-                          )
-                      ),
-                      "production_resolved": len(
-                          state.get("resolved", {}).get(
-                              "production",
-                              [],
-                          )
-                      ),
-                  },
-                  indent=2,
-              )
+          candidate_resolved = len(
+              state.get("resolved", {}).get("candidate", [])
           )
+          production_resolved = len(
+              state.get("resolved", {}).get("production", [])
+          )
+
+          candidate_pending = len(
+              state.get("pending", {}).get("candidate", [])
+          )
+          production_pending = len(
+              state.get("pending", {}).get("production", [])
+          )
+
+          print("STATE_IDENTITY: COMPATIBLE")
+          print(f"candidate_resolved={candidate_resolved}")
+          print(f"production_resolved={production_resolved}")
+          print(f"candidate_pending={candidate_pending}")
+          print(f"production_pending={production_pending}")
           PY
 
             status=$?
+            set -e
 
             if [[ "${status}" -eq 0 ]]; then
-              echo "Compatible Phase 2D state found in Run #${rid}"
+              echo "Compatible Phase 2D state found in Run #${rid}."
 
               mkdir -p "${STATE_DIR}"
 
@@ -335,32 +417,10 @@ jobs:
               RESTORED_RUN_ID="${rid}"
 
               rm -rf inspect_state
-
               break
             fi
 
-            echo "Run #${rid} state identity mismatch."
-
-            if [[ "${ALLOW_FRESH_START}" == "true" && -z "${RESTORED_RUN_ID}" ]]; then
-              mkdir -p \
-                "${STATE_DIR}/pre_reset_archive/run_${rid}"
-
-              for f in \
-                phase2d_state.json \
-                phase2d_results.json \
-                phase2d_latest_snapshot.json
-              do
-                src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
-
-                if [[ -n "${src}" ]]; then
-                  cp \
-                    "${src}" \
-                    "${STATE_DIR}/pre_reset_archive/run_${rid}/${f}"
-                fi
-              done
-
-              echo "Pre-reset state archived from Run #${rid}"
-            fi
+            echo "Run #${rid}: incompatible state skipped."
 
             rm -rf inspect_state
           done
@@ -370,11 +430,6 @@ jobs:
             echo " STATE RESTORE STATUS: PASS"
             echo " Restored from Run #${RESTORED_RUN_ID}"
             echo "============================================================"
-          elif [[ "${ALLOW_FRESH_START}" == "true" ]]; then
-            echo "============================================================"
-            echo " STATE RESTORE STATUS: EXPLICIT FRESH START AUTHORIZED"
-            echo " No compatible prior state will be reused."
-            echo "============================================================"
           else
             echo "============================================================"
             echo " STATE RESTORE STATUS: BLOCKED"
@@ -383,6 +438,7 @@ jobs:
             echo "============================================================"
             exit 1
           fi
+
       # ============================================================
       # DOWNLOAD LOCKED CANDIDATE RELEASE
       # ============================================================
@@ -410,7 +466,7 @@ jobs:
 
           gh release download "${CANDIDATE_RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --pattern "candidate_model.pkl" \
+            --pattern "${CANDIDATE_MODEL_FILE}" \
             --dir phase2d_candidate \
             --clobber
 
@@ -424,7 +480,7 @@ jobs:
           ls -lh "${CANDIDATE_MODEL_FILE}"
 
       # ============================================================
-      # VERIFY CANDIDATE SHA
+      # VERIFY LOCKED CANDIDATE
       # ============================================================
       - name: Verify locked candidate
         shell: bash
@@ -439,11 +495,19 @@ jobs:
           path = Path("candidate_model.pkl")
           actual = hashlib.sha256(path.read_bytes()).hexdigest()
 
-          print("candidate SHA256:", actual)
-          print("candidate size:", path.stat().st_size, "bytes")
+          print("============================================================")
+          print(" CANDIDATE MODEL IDENTITY")
+          print("============================================================")
+          print("Expected SHA256:", expected)
+          print("Actual SHA256  :", actual)
+          print("Size (bytes)   :", path.stat().st_size)
 
           if actual != expected:
-              raise SystemExit("FATAL: candidate SHA does not match locked HTF-removal candidate")
+              raise SystemExit(
+                  "FATAL: candidate SHA does not match locked candidate."
+              )
+
+          print("STATUS         : PASS")
           PY
 
       # ============================================================
@@ -458,10 +522,14 @@ jobs:
           import joblib
           from pathlib import Path
 
-          model = joblib.load(Path("candidate_model.pkl"))
+          model = joblib.load(
+              Path("candidate_model.pkl")
+          )
 
           if not isinstance(model, dict):
-              raise SystemExit("FATAL: unexpected candidate model type")
+              raise SystemExit(
+                  "FATAL: unexpected candidate model type."
+              )
 
           required = {
               "all_features",
@@ -472,20 +540,45 @@ jobs:
           }
 
           missing = required - set(model)
+
           if missing:
-              raise SystemExit(f"FATAL: candidate model missing keys: {sorted(missing)}")
+              raise SystemExit(
+                  f"FATAL: candidate model missing keys: {sorted(missing)}"
+              )
 
-          declared = [str(x) for x in model["all_features"]]
-          selected = [str(x) for x in model["best_features"]]
+          declared = [
+              str(x)
+              for x in model["all_features"]
+          ]
 
-          print("candidate trained_at:", model.get("trained_at"))
-          print("candidate declared features:", len(declared))
-          print("candidate selected features:", len(selected))
-          print("candidate selected feature list:", selected)
+          selected = [
+              str(x)
+              for x in model["best_features"]
+          ]
 
-          missing_from_declared = [x for x in selected if x not in declared]
+          print("============================================================")
+          print(" CANDIDATE MODEL SCHEMA")
+          print("============================================================")
+          print("trained_at          :", model.get("trained_at"))
+          print("declared features   :", len(declared))
+          print("selected features   :", len(selected))
+          print("selected feature list:")
+          for feature in selected:
+              print(f"  - {feature}")
+
+          missing_from_declared = [
+              x
+              for x in selected
+              if x not in declared
+          ]
+
           if missing_from_declared:
-              raise SystemExit(f"FATAL: candidate best_features contains undeclared features: {missing_from_declared}")
+              raise SystemExit(
+                  "FATAL: candidate best_features contains "
+                  f"undeclared features: {missing_from_declared}"
+              )
+
+          print("STATUS              : PASS")
           PY
 
       # ============================================================
@@ -517,10 +610,11 @@ jobs:
             --clobber
 
           test -s "${PRODUCTION_MODEL_FILE}"
+
           ls -lh "${PRODUCTION_MODEL_FILE}"
 
       # ============================================================
-      # VERIFY PRODUCTION SHA + SCHEMA
+      # VERIFY LOCKED PRODUCTION + SCHEMA
       # ============================================================
       - name: Verify locked production
         shell: bash
@@ -533,18 +627,33 @@ jobs:
           from pathlib import Path
 
           expected = "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
-          path = Path("pro_crypto_ai_model.pkl")
-          actual = hashlib.sha256(path.read_bytes()).hexdigest()
 
-          print("production SHA256:", actual)
-          print("production size:", path.stat().st_size, "bytes")
+          path = Path(
+              "pro_crypto_ai_model.pkl"
+          )
+
+          actual = hashlib.sha256(
+              path.read_bytes()
+          ).hexdigest()
+
+          print("============================================================")
+          print(" PRODUCTION MODEL IDENTITY / SCHEMA")
+          print("============================================================")
+          print("Expected SHA256:", expected)
+          print("Actual SHA256  :", actual)
+          print("Size (bytes)   :", path.stat().st_size)
 
           if actual != expected:
-              raise SystemExit("FATAL: production SHA does not match locked production model")
+              raise SystemExit(
+                  "FATAL: production SHA does not match locked production."
+              )
 
           model = joblib.load(path)
+
           if not isinstance(model, dict):
-              raise SystemExit("FATAL: unexpected production model type")
+              raise SystemExit(
+                  "FATAL: unexpected production model type."
+              )
 
           required = {
               "all_features",
@@ -555,30 +664,60 @@ jobs:
           }
 
           missing = required - set(model)
+
           if missing:
-              raise SystemExit(f"FATAL: production model missing keys: {sorted(missing)}")
+              raise SystemExit(
+                  f"FATAL: production model missing keys: {sorted(missing)}"
+              )
 
-          declared = [str(x) for x in model["all_features"]]
-          selected = [str(x) for x in model["best_features"]]
+          declared = [
+              str(x)
+              for x in model["all_features"]
+          ]
 
-          print("production trained_at:", model.get("trained_at"))
-          print("production declared features:", len(declared))
-          print("production selected features:", len(selected))
-          print("production selected feature list:", selected)
+          selected = [
+              str(x)
+              for x in model["best_features"]
+          ]
+
+          print("trained_at          :", model.get("trained_at"))
+          print("declared features   :", len(declared))
+          print("selected features   :", len(selected))
+          print("selected feature list:")
+
+          for feature in selected:
+              print(f"  - {feature}")
 
           if len(declared) != 63:
-              raise SystemExit(f"FATAL: expected 63 production declared features, got {len(declared)}")
+              raise SystemExit(
+                  "FATAL: expected 63 production declared "
+                  f"features, got {len(declared)}"
+              )
 
           if len(selected) != 35:
-              raise SystemExit(f"FATAL: expected 35 production selected features, got {len(selected)}")
+              raise SystemExit(
+                  "FATAL: expected 35 production selected "
+                  f"features, got {len(selected)}"
+              )
 
-          missing_from_declared = [x for x in selected if x not in declared]
+          missing_from_declared = [
+              x
+              for x in selected
+              if x not in declared
+          ]
+
           if missing_from_declared:
-              raise SystemExit(f"FATAL: production best_features contains features not present in all_features: {missing_from_declared}")
+              raise SystemExit(
+                  "FATAL: production best_features contains "
+                  "features not present in all_features: "
+                  f"{missing_from_declared}"
+              )
+
+          print("STATUS              : PASS")
           PY
 
       # ============================================================
-      # VALIDATE SOURCE DEPENDENCIES
+      # SOURCE DEPENDENCY VALIDATION
       # ============================================================
       - name: Validate Phase 2D source dependencies
         shell: bash
@@ -592,11 +731,16 @@ jobs:
             "market_data_integrity.py"
           )
 
+          echo "============================================================"
+          echo " PHASE 2D SOURCE DEPENDENCY CHECK"
+          echo "============================================================"
+
           for f in "${required_files[@]}"; do
             test -s "${f}" || {
               echo "FATAL: missing required Phase 2D source file: ${f}"
               exit 1
             }
+
             echo "PASS: ${f}"
           done
 
@@ -606,6 +750,28 @@ jobs:
             feature_engineering.py \
             market_data_integrity.py
 
+          echo "============================================================"
+          echo " PYCOMPILE STATUS: PASS"
+          echo "============================================================"
+
+      # ============================================================
+      # TEST SUITE
+      # ============================================================
+      - name: Run full regression test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "============================================================"
+          echo " FULL REGRESSION TEST SUITE"
+          echo "============================================================"
+
+          python -m pytest tests/ -v
+
+          echo "============================================================"
+          echo " FULL REGRESSION TEST STATUS: PASS"
+          echo "============================================================"
+
       # ============================================================
       # RUN PROSPECTIVE VALIDATOR
       # ============================================================
@@ -613,14 +779,25 @@ jobs:
         shell: bash
         env:
           PYTHONUNBUFFERED: "1"
+          PHASE2D_EXPERIMENT_ID: ${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}
         run: |
           set -euo pipefail
 
+          FRESH_START_ARG=""
+
+          if [[ "${{ inputs.allow_fresh_start }}" == "true" ]]; then
+            FRESH_START_ARG="--allow-fresh-start"
+          fi
+
           echo "============================================================"
-          echo " PHASE 2D VALIDATOR — FULL LIVE LOG"
+          echo " PHASE 2D VALIDATOR — FULL STRUCTURED LIVE LOG"
+          echo "============================================================"
+          echo "Experiment ID          : ${PHASE2D_EXPERIMENT_ID}"
+          echo "Fresh-start authorized : ${{ inputs.allow_fresh_start }}"
           echo "============================================================"
 
           python phase2d_prospective_validator.py \
+            ${FRESH_START_ARG} \
             2>&1 | tee phase2d_validator.log
 
           echo
@@ -660,58 +837,72 @@ jobs:
                   continue
 
               try:
-                  data = json.loads(path.read_text(encoding="utf-8"))
+                  data = json.loads(
+                      path.read_text(
+                          encoding="utf-8"
+                      )
+                  )
               except Exception as exc:
-                  print("STATUS: INVALID JSON:", exc)
+                  print(
+                      "STATUS: INVALID JSON:",
+                      exc,
+                  )
                   continue
 
               print("STATUS: PRESENT")
 
               if isinstance(data, dict):
-                  print("top-level keys:", sorted(data.keys()))
-                  resolved = data.get("resolved")
-                  pending = data.get("pending")
-                  seen = data.get("seen")
-
-                  if isinstance(resolved, dict):
-                      for k, v in resolved.items():
-                          if isinstance(v, list):
-                              print(f"resolved.{k}: {len(v)}")
-
-                  if isinstance(pending, dict):
-                      for k, v in pending.items():
-                          if isinstance(v, list):
-                              print(f"pending.{k}: {len(v)}")
-
-                  if isinstance(seen, dict):
-                      for k, v in seen.items():
-                          if isinstance(v, list):
-                              print(f"seen.{k}: {len(v)}")
+                  print(
+                      "top-level keys:",
+                      sorted(data.keys()),
+                  )
 
                   for key in (
-                      "promotion_gate",
+                      "overall_status",
+                      "next_action",
                       "candidate",
                       "production",
-                      "summary",
-                      "methodology",
+                      "promotion_gate",
+                      "side_breakdowns",
+                      "integrity",
+                      "run_metrics",
+                      "resolution_metrics",
                   ):
                       if key not in data:
                           continue
 
                       value = data[key]
-                      if isinstance(value, dict):
-                          print(f"{key}: dict_keys={sorted(value.keys())}")
-                      elif isinstance(value, list):
-                          print(f"{key}: list_length={len(value)}")
+
+                      if isinstance(
+                          value,
+                          dict,
+                      ):
+                          print(
+                              f"{key}:"
+                          )
+                          print(
+                              json.dumps(
+                                  value,
+                                  indent=2,
+                                  sort_keys=True,
+                              )
+                          )
                       else:
-                          print(f"{key}: {value}")
+                          print(
+                              f"{key}: {value}"
+                          )
               else:
-                  print("JSON type:", type(data).__name__)
+                  print(
+                      "JSON type:",
+                      type(data).__name__,
+                  )
           PY
 
           echo
           echo "Recent validator log:"
-          tail -n 120 phase2d_validator.log 2>/dev/null || true
+          tail -n 160 \
+            phase2d_validator.log \
+            2>/dev/null || true
 
       # ============================================================
       # GITHUB ACTIONS SUMMARY
@@ -724,21 +915,119 @@ jobs:
 
           CANDIDATE_TAG="${{ inputs.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
           PRODUCTION_TAG="${{ inputs.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
+          EXPERIMENT_ID="${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
 
           {
             echo "# CryptoBot AI — Phase 2D Prospective Validation"
             echo
+            echo "## Run Context"
+            echo
             echo "- **Run:** ${GITHUB_RUN_ID}"
+            echo "- **Attempt:** ${GITHUB_RUN_ATTEMPT}"
             echo "- **Commit:** ${GITHUB_SHA}"
             echo "- **Event:** ${GITHUB_EVENT_NAME}"
-            echo "- **Candidate release tag:** ${CANDIDATE_TAG}"
-            echo "- **Production release:** ${PRODUCTION_TAG}"
-            echo "- **Cadence:** External Dispatch every 2 hours"
+            echo "- **Experiment ID:** ${EXPERIMENT_ID}"
+            echo "- **Candidate Release:** ${CANDIDATE_TAG}"
+            echo "- **Production Release:** ${PRODUCTION_TAG}"
+            echo "- **Fresh-start authorized:** ${{ inputs.allow_fresh_start }}"
+            echo "- **Cadence:** Native GitHub Actions schedule every 2 hours"
             echo
-            echo "## Locked model identities"
+            echo "## Locked identities"
             echo
-            echo "- **Candidate SHA:** 7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
-            echo "- **Production SHA:** f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
+            echo "- **Candidate model SHA:** \`7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3\`"
+            echo "- **Production model SHA:** \`f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21\`"
+            echo "- **Feature code SHA:** \`${EXPECTED_FEATURE_CODE_SHA:-not-computed}\`"
+            echo "- **Feature schema SHA:** \`${EXPECTED_FEATURE_SCHEMA_SHA:-not-computed}\`"
+            echo "- **Validator code SHA:** \`${EXPECTED_VALIDATOR_CODE_SHA:-not-computed}\`"
+            echo
+            echo "## Phase 2D result"
+
+            if [[ -f "research_outputs/phase2d_results.json" ]]; then
+              python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path(
+              "research_outputs/phase2d_results.json"
+          )
+
+          data = json.loads(
+              path.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          gate = data.get(
+              "promotion_gate",
+              {},
+          )
+
+          candidate = data.get(
+              "candidate",
+              {},
+          )
+
+          production = data.get(
+              "production",
+              {},
+          )
+
+          print(
+              f"- **Overall status:** {data.get('overall_status')}"
+          )
+
+          print(
+              f"- **Next action:** {data.get('next_action')}"
+          )
+
+          print(
+              f"- **Candidate clean N:** {gate.get('n_candidate')}"
+          )
+
+          print(
+              f"- **Production clean N:** {gate.get('n_production')}"
+          )
+
+          print(
+              f"- **Candidate unique blocks:** {gate.get('unique_blocks_candidate')}"
+          )
+
+          print(
+              f"- **Production unique blocks:** {gate.get('unique_blocks_production')}"
+          )
+
+          print(
+              f"- **Candidate precision:** {candidate.get('precision_excluding_ambiguous')}"
+          )
+
+          print(
+              f"- **Candidate mean Net-R:** {candidate.get('mean_net_r')}"
+          )
+
+          print(
+              f"- **Production precision:** {production.get('precision_excluding_ambiguous')}"
+          )
+
+          print(
+              f"- **Production mean Net-R:** {production.get('mean_net_r')}"
+          )
+
+          print(
+              f"- **Promotion gate:** {gate.get('gate_status')}"
+          )
+
+          print(
+              f"- **Candidate profitable:** {gate.get('candidate_profitable')}"
+          )
+
+          print(
+              f"- **Candidate beats production:** {gate.get('candidate_beats_production')}"
+          )
+          PY
+            else
+              echo "- **Result JSON:** MISSING"
+            fi
+
             echo
             echo "## Artifacts"
 
@@ -746,18 +1035,19 @@ jobs:
               research_outputs/phase2d_state.json \
               research_outputs/phase2d_results.json \
               research_outputs/phase2d_latest_snapshot.json \
+              research_outputs/experiment_ledger.jsonl \
               phase2d_validator.log
             do
               if [[ -f "${f}" ]]; then
-                echo "- \`${f}\`: present"
+                echo "- \`${f}\`: PRESENT"
               else
-                echo "- \`${f}\`: missing"
+                echo "- \`${f}\`: MISSING"
               fi
             done
           } >> "${GITHUB_STEP_SUMMARY}"
 
       # ============================================================
-      # UPLOAD PHASE 2D STATE
+      # UPLOAD PHASE 2D STATE + AUDIT ARTIFACTS
       # ============================================================
       - name: Upload Phase 2D research artifacts
         if: always()
@@ -768,6 +1058,8 @@ jobs:
             research_outputs/phase2d_state.json
             research_outputs/phase2d_results.json
             research_outputs/phase2d_latest_snapshot.json
+            research_outputs/experiment_ledger.jsonl
+            research_outputs/pre_reset_archive/**
             phase2d_validator.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
