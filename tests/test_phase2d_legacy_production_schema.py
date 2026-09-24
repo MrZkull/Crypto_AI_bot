@@ -77,3 +77,5 @@ def test_legacy_feature_builder_reproduces_locked_selected_fields():
 
     missing = [f for f in EXPECTED if f not in frame.columns]
     assert not missing, f"Missing legacy production features: {missing}"
+    assert "_had_missing_inputs" in frame.columns
+    assert frame["_had_missing_inputs"].dtype == bool
