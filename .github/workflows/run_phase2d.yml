@@ -27,10 +27,15 @@ on:
         default: false
         type: boolean
 
-  # Native GitHub Actions cadence: one run every 2 hours.
-  # This avoids requiring an external dispatcher and remains free-tier controlled.
-  schedule:
-    - cron: "17 */2 * * *"
+  # External scheduler contract:
+  # cron-job.org is the 2-hour scheduler for this workflow.
+  #
+  # It may call the GitHub Actions workflow-dispatch endpoint directly
+  # (preferred) or send a repository_dispatch event.
+  #
+  # IMPORTANT: there is intentionally NO native GitHub schedule here.
+  # This prevents duplicate Phase 2D executions.
+  repository_dispatch:
 
 concurrency:
   group: cryptobot-phase2d
@@ -73,10 +78,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          CANDIDATE_TAG="${{ inputs.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
-          PRODUCTION_TAG="${{ inputs.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
-          EXPERIMENT_ID="${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
-          ALLOW_FRESH_START="${{ inputs.allow_fresh_start }}"
+          CANDIDATE_TAG="${{ inputs.candidate_release_tag || github.event.client_payload.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
+          PRODUCTION_TAG="${{ inputs.production_release_tag || github.event.client_payload.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
+          EXPERIMENT_ID="${{ inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
+          ALLOW_FRESH_START="${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}"
 
           echo "============================================================"
           echo " CRYPTOBOT AI — PHASE 2D PROSPECTIVE VALIDATION"
@@ -92,7 +97,7 @@ jobs:
           echo "Experiment ID          : ${EXPERIMENT_ID}"
           echo "Fresh-start authorized : ${ALLOW_FRESH_START}"
           echo "Python                 : ${PYTHON_VERSION}"
-          echo "Cadence                : Native GitHub schedule every 2 hours"
+          echo "Cadence                : External cron-job.org every 2 hours"
           echo "============================================================"
 
       # ============================================================
@@ -189,8 +194,8 @@ jobs:
 
           CANDIDATE_SHA="7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
           PRODUCTION_SHA="f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
-          EXPERIMENT_ID="${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
-          ALLOW_FRESH_START="${{ inputs.allow_fresh_start }}"
+          EXPERIMENT_ID="${{ inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
+          ALLOW_FRESH_START="${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}"
 
           echo "============================================================"
           echo " STATE RESTORE / EXPERIMENT CONTINUITY"
@@ -204,10 +209,6 @@ jobs:
           echo "Fresh-start authorized : ${ALLOW_FRESH_START}"
           echo "============================================================"
 
-          # --------------------------------------------------------
-          # Explicit fresh start: archive the latest successful state
-          # and intentionally do not restore it.
-          # --------------------------------------------------------
           if [[ "${ALLOW_FRESH_START}" == "true" ]]; then
             echo "Explicit fresh-start mode is ACTIVE."
             echo "No prior Phase 2D state will be reused."
@@ -234,7 +235,6 @@ jobs:
 
                 ARCHIVE_DIR="${STATE_DIR}/pre_reset_archive/run_${LATEST_RUN_ID}"
                 mkdir -p "${ARCHIVE_DIR}"
-
                 archived=0
 
                 for f in \
@@ -254,20 +254,17 @@ jobs:
                 done
 
                 rm -rf inspect_state
-
                 echo "Historical archive status : ${archived} file(s) archived"
                 echo "Historical source run     : ${LATEST_RUN_ID}"
               else
+                rm -rf inspect_state
                 echo "No prior state artifact available to archive."
               fi
             else
               echo "No prior successful Phase 2D run exists."
             fi
 
-            echo "STATE RESTORE STATUS      : EXPLICIT FRESH START"
-
-            # Clear every live state/output file so stale workspace files
-            # can never be mistaken for the new experiment.
+            # Explicit reset: nothing from the previous experiment remains live.
             rm -f \
               "${STATE_DIR}/phase2d_state.json" \
               "${STATE_DIR}/phase2d_results.json" \
@@ -275,68 +272,67 @@ jobs:
               "${STATE_DIR}/experiment_ledger.jsonl" \
               "phase2d_validator.log"
 
-            mkdir -p "${STATE_DIR}"
-            echo "Live state cleared."
-            echo "Fresh-start mode will continue into the validator."
-          fi
-
-          # --------------------------------------------------------
-          # Normal scheduled/continuation mode: find an exactly
-          # compatible state. Never silently start fresh.
-          # --------------------------------------------------------
-          # Prevent checkout leftovers or a prior failed step from
-          # masquerading as current experiment state.
-          rm -f \
-            "${STATE_DIR}/phase2d_state.json" \
-            "${STATE_DIR}/phase2d_results.json" \
-            "${STATE_DIR}/phase2d_latest_snapshot.json" \
-            "${STATE_DIR}/experiment_ledger.jsonl" \
-            "phase2d_validator.log"
-
-          mkdir -p "${STATE_DIR}"
-
-          RUN_IDS="$(
-            gh run list \
-              --workflow="run_phase2d.yml" \
-              --branch main \
-              --limit 20 \
-              --json databaseId,conclusion \
-              --jq '.[] | select(.conclusion == "success") | .databaseId'
-          )"
-
-          RESTORED_RUN_ID=""
-          LEDGER_RESTORED="false"
-
-          for rid in ${RUN_IDS}; do
             rm -rf inspect_state
-            mkdir -p inspect_state
+            mkdir -p "${STATE_DIR}"
 
-            if ! gh run download \
-                "${rid}" \
-                -n "${STATE_ARTIFACT_NAME}" \
-                -D inspect_state \
-                2>/dev/null; then
-              continue
-            fi
+            echo "STATE RESTORE STATUS      : EXPLICIT FRESH START"
+            echo "Live Phase 2D state      : CLEARED"
+            echo "Validator will continue  : YES"
 
-            fi
+          else
+            echo "Normal continuation mode is ACTIVE."
+            echo "Searching only for an exactly compatible successful state."
 
-            state_file="$(find inspect_state -type f -name "phase2d_state.json" -print -quit || true)"
+            rm -f \
+              "${STATE_DIR}/phase2d_state.json" \
+              "${STATE_DIR}/phase2d_results.json" \
+              "${STATE_DIR}/phase2d_latest_snapshot.json" \
+              "${STATE_DIR}/experiment_ledger.jsonl" \
+              "phase2d_validator.log"
 
-            if [[ -z "${state_file}" ]]; then
+            rm -rf inspect_state
+            mkdir -p "${STATE_DIR}"
+
+            RUN_IDS="$(
+              gh run list \
+                --workflow="run_phase2d.yml" \
+                --branch main \
+                --limit 20 \
+                --json databaseId,conclusion \
+                --jq '.[] | select(.conclusion == "success") | .databaseId'
+            )"
+
+            RESTORED_RUN_ID=""
+
+            for rid in ${RUN_IDS}; do
               rm -rf inspect_state
-              continue
-            fi
+              mkdir -p inspect_state
 
-            set +e
+              if ! gh run download \
+                  "${rid}" \
+                  -n "${STATE_ARTIFACT_NAME}" \
+                  -D inspect_state \
+                  2>/dev/null; then
+                rm -rf inspect_state
+                continue
+              fi
 
-            python - "${state_file}" \
-              "${CANDIDATE_SHA}" \
-              "${PRODUCTION_SHA}" \
-              "${EXPECTED_FEATURE_CODE_SHA}" \
-              "${EXPECTED_FEATURE_SCHEMA_SHA}" \
-              "${EXPECTED_VALIDATOR_CODE_SHA}" \
-              "${EXPERIMENT_ID}" <<'PY'
+              state_file="$(find inspect_state -type f -name "phase2d_state.json" -print -quit || true)"
+
+              if [[ -z "${state_file}" ]]; then
+                rm -rf inspect_state
+                continue
+              fi
+
+              set +e
+
+              python - "${state_file}" \
+                "${CANDIDATE_SHA}" \
+                "${PRODUCTION_SHA}" \
+                "${EXPECTED_FEATURE_CODE_SHA}" \
+                "${EXPECTED_FEATURE_SCHEMA_SHA}" \
+                "${EXPECTED_VALIDATOR_CODE_SHA}" \
+                "${EXPERIMENT_ID}" <<'PY'
           import json
           import sys
 
@@ -389,6 +385,7 @@ jobs:
           candidate_resolved = len(
               state.get("resolved", {}).get("candidate", [])
           )
+
           production_resolved = len(
               state.get("resolved", {}).get("production", [])
           )
@@ -396,6 +393,7 @@ jobs:
           candidate_pending = len(
               state.get("pending", {}).get("candidate", [])
           )
+
           production_pending = len(
               state.get("pending", {}).get("production", [])
           )
@@ -406,53 +404,49 @@ jobs:
           print(f"candidate_pending={candidate_pending}")
           print(f"production_pending={production_pending}")
           PY
+              status=$?
 
-            status=$?
-            set -e
+              set -e
 
-            if [[ "${status}" -eq 0 ]]; then
-              echo "Compatible Phase 2D state found in Run #${rid}."
+              if [[ "${status}" -eq 0 ]]; then
+                echo "Compatible Phase 2D state found in Run #${rid}."
 
-              mkdir -p "${STATE_DIR}"
+                for f in \
+                  phase2d_state.json \
+                  phase2d_results.json \
+                  phase2d_latest_snapshot.json \
+                  experiment_ledger.jsonl
+                do
+                  src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
 
-              for f in \
-                phase2d_state.json \
-                phase2d_results.json \
-                phase2d_latest_snapshot.json \
-                experiment_ledger.jsonl
-              do
-                src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
+                  if [[ -n "${src}" ]]; then
+                    cp "${src}" "${STATE_DIR}/${f}"
+                    echo "Restored: ${f}"
+                  fi
+                done
 
-                if [[ -n "${src}" ]]; then
-                  cp "${src}" "${STATE_DIR}/${f}"
-                  echo "Restored: ${f}"
-                fi
-              done
+                RESTORED_RUN_ID="${rid}"
+                rm -rf inspect_state
+                break
+              fi
 
-              LEDGER_RESTORED="true"
-              RESTORED_RUN_ID="${rid}"
-
+              echo "Run #${rid}: incompatible state skipped."
               rm -rf inspect_state
-              break
+            done
+
+            if [[ -n "${RESTORED_RUN_ID}" ]]; then
+              echo "============================================================"
+              echo " STATE RESTORE STATUS: PASS"
+              echo " Restored from Run #${RESTORED_RUN_ID}"
+              echo "============================================================"
+            else
+              echo "============================================================"
+              echo " STATE RESTORE STATUS: BLOCKED"
+              echo " No compatible prior state exists."
+              echo " Fresh start is NOT authorized."
+              echo "============================================================"
+              exit 1
             fi
-
-            echo "Run #${rid}: incompatible state skipped."
-
-            rm -rf inspect_state
-          done
-
-          if [[ -n "${RESTORED_RUN_ID}" ]]; then
-            echo "============================================================"
-            echo " STATE RESTORE STATUS: PASS"
-            echo " Restored from Run #${RESTORED_RUN_ID}"
-            echo "============================================================"
-          else
-            echo "============================================================"
-            echo " STATE RESTORE STATUS: BLOCKED"
-            echo " No compatible prior state exists."
-            echo " Fresh start is NOT authorized."
-            echo "============================================================"
-            exit 1
           fi
 
       # ============================================================
@@ -465,7 +459,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          CANDIDATE_RELEASE_TAG="${{ inputs.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
+          CANDIDATE_RELEASE_TAG="${{ inputs.candidate_release_tag || github.event.client_payload.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
 
           if [[ -z "${CANDIDATE_RELEASE_TAG}" ]]; then
             echo "FATAL: candidate release tag is empty."
@@ -607,7 +601,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          RELEASE_TAG="${{ inputs.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
+          RELEASE_TAG="${{ inputs.production_release_tag || github.event.client_payload.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
 
           if [[ -z "${RELEASE_TAG}" ]]; then
             echo "FATAL: production release tag is empty."
@@ -795,13 +789,13 @@ jobs:
         shell: bash
         env:
           PYTHONUNBUFFERED: "1"
-          PHASE2D_EXPERIMENT_ID: ${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}
+          PHASE2D_EXPERIMENT_ID: ${{ inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}
         run: |
           set -euo pipefail
 
           FRESH_START_ARG=""
 
-          if [[ "${{ inputs.allow_fresh_start }}" == "true" ]]; then
+          if [[ "${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}" == "true" ]]; then
             FRESH_START_ARG="--allow-fresh-start"
           fi
 
@@ -809,7 +803,7 @@ jobs:
           echo " PHASE 2D VALIDATOR — FULL STRUCTURED LIVE LOG"
           echo "============================================================"
           echo "Experiment ID          : ${PHASE2D_EXPERIMENT_ID}"
-          echo "Fresh-start authorized : ${{ inputs.allow_fresh_start }}"
+          echo "Fresh-start authorized : ${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}"
           echo "============================================================"
 
           python phase2d_prospective_validator.py \
@@ -929,9 +923,9 @@ jobs:
         run: |
           set -u
 
-          CANDIDATE_TAG="${{ inputs.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
-          PRODUCTION_TAG="${{ inputs.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
-          EXPERIMENT_ID="${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
+          CANDIDATE_TAG="${{ inputs.candidate_release_tag || github.event.client_payload.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
+          PRODUCTION_TAG="${{ inputs.production_release_tag || github.event.client_payload.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
+          EXPERIMENT_ID="${{ inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
 
           {
             echo "# CryptoBot AI — Phase 2D Prospective Validation"
@@ -945,8 +939,8 @@ jobs:
             echo "- **Experiment ID:** ${EXPERIMENT_ID}"
             echo "- **Candidate Release:** ${CANDIDATE_TAG}"
             echo "- **Production Release:** ${PRODUCTION_TAG}"
-            echo "- **Fresh-start authorized:** ${{ inputs.allow_fresh_start }}"
-            echo "- **Cadence:** Native GitHub Actions schedule every 2 hours"
+            echo "- **Fresh-start authorized:** ${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}"
+            echo "- **Cadence:** External cron-job.org every 2 hours"
             echo
             echo "## Locked identities"
             echo
