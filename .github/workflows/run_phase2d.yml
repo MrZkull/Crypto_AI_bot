@@ -15,6 +15,18 @@ on:
         default: "v2.0"
         type: string
 
+        experiment_id:
+        description: "Explicit Phase 2D experiment identity"
+        required: false
+        default: "PHASE2D-HARDENED-20260924"
+        type: string
+
+      allow_fresh_start:
+        description: "Explicitly authorize a new Phase 2D state when no compatible state exists"
+        required: false
+        default: false
+        type: boolean
+        
   # Disabled to eliminate dual-scheduler collisions.
   # Authoritative trigger handled externally via workflow_dispatch REST API every 2 hours.
   # schedule:
