@@ -131,19 +131,53 @@ jobs:
       # ============================================================
       # RESTORE PREVIOUS STATE (COMPATIBILITY-AWARE SEARCH)
       # ============================================================
+            # ============================================================
+      # RESTORE PREVIOUS PHASE 2D STATE
+      # FAIL CLOSED UNLESS AN EXPLICIT FRESH START IS AUTHORIZED
+      # ============================================================
       - name: Restore previous Phase 2D state
         env:
           GH_TOKEN: ${{ github.token }}
+          ALLOW_FRESH_START: ${{ inputs.allow_fresh_start }}
+          EXPECTED_EXPERIMENT_ID: ${{ inputs.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}
         shell: bash
         run: |
           set -euo pipefail
 
           echo "============================================================"
-          echo " STATE RESTORE (COMPATIBILITY-AWARE)"
+          echo " STATE RESTORE — FAIL-CLOSED COMPATIBILITY CHECK"
           echo "============================================================"
 
           EXPECTED_CAND_SHA="7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
           EXPECTED_PROD_SHA="f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
+
+          EXPECTED_FEATURE_CODE_SHA="$(sha256sum feature_engineering.py | awk '{print $1}')"
+          EXPECTED_VALIDATOR_CODE_SHA="$(sha256sum phase2d_prospective_validator.py | awk '{print $1}')"
+
+          EXPECTED_FEATURE_SCHEMA_SHA="$(
+            python - <<'PY'
+          import hashlib
+          import json
+          from feature_engineering import ALL_FEATURES
+
+          payload = json.dumps(
+              {"all_features": list(ALL_FEATURES)},
+              ensure_ascii=True,
+              separators=(",", ":"),
+          ).encode("utf-8")
+
+          print(hashlib.sha256(payload).hexdigest())
+          PY
+          )"
+
+          echo "Expected experiment:"
+          echo " - experiment ID       : ${EXPECTED_EXPERIMENT_ID}"
+          echo " - candidate SHA        : ${EXPECTED_CAND_SHA}"
+          echo " - production SHA       : ${EXPECTED_PROD_SHA}"
+          echo " - feature code SHA     : ${EXPECTED_FEATURE_CODE_SHA}"
+          echo " - feature schema SHA   : ${EXPECTED_FEATURE_SCHEMA_SHA}"
+          echo " - validator code SHA   : ${EXPECTED_VALIDATOR_CODE_SHA}"
+          echo " - explicit fresh start : ${ALLOW_FRESH_START}"
 
           RUN_IDS="$(
             gh run list \
@@ -155,58 +189,200 @@ jobs:
           )"
 
           RESTORED_RUN_ID=""
+          LEDGER_RESTORED="false"
 
           for rid in ${RUN_IDS}; do
             rm -rf inspect_state
             mkdir -p inspect_state
 
-            if gh run download "${rid}" -n "${STATE_ARTIFACT_NAME}" -D inspect_state 2>/dev/null; then
-              state_file="$(find inspect_state -type f -name "phase2d_state.json" -print -quit)"
+            if ! gh run download \
+                "${rid}" \
+                -n "${STATE_ARTIFACT_NAME}" \
+                -D inspect_state \
+                2>/dev/null; then
+              continue
+            fi
 
-              if [[ -n "${state_file}" && -f "${state_file}" ]]; then
-                cand_sha="$(python -c "import json; d=json.load(open('${state_file}', encoding='utf-8')); print(d.get('locked_models', {}).get('candidate_sha256', ''))" 2>/dev/null || true)"
-                prod_sha="$(python -c "import json; d=json.load(open('${state_file}', encoding='utf-8')); print(d.get('locked_models', {}).get('production_sha256', ''))" 2>/dev/null || true)"
+            # Restore the lineage ledger independently of state compatibility.
+            if [[ "${LEDGER_RESTORED}" != "true" ]]; then
+              ledger_src="$(find inspect_state -type f -name "experiment_ledger.jsonl" -print -quit || true)"
 
-                if [[ "${cand_sha}" == "${EXPECTED_CAND_SHA}" && "${prod_sha}" == "${EXPECTED_PROD_SHA}" ]]; then
-                  echo "Found compatible state in Run #${rid}:"
-                  echo " - candidate SHA: ${cand_sha:0:16}..."
-                  echo " - production SHA: ${prod_sha:0:16}..."
+              if [[ -n "${ledger_src}" ]]; then
+                cp "${ledger_src}" "${STATE_DIR}/experiment_ledger.jsonl"
+                LEDGER_RESTORED="true"
 
-                  restored=0
-                  for f in \
-                    phase2d_state.json \
-                    phase2d_results.json \
-                    phase2d_latest_snapshot.json
-                  do
-                    src="$(find inspect_state -type f -name "${f}" -print -quit)"
-                    if [[ -n "${src}" ]]; then
-                      cp "${src}" "${STATE_DIR}/${f}"
-                      echo "Restored: ${f} from${src}"
-                      restored=$((restored + 1))
-                    fi
-                  done
-
-                  rm -rf inspect_state
-
-                  if [[ "${restored}" -eq 3 ]]; then
-                    RESTORED_RUN_ID="${rid}"
-                    echo "State restore verification: PASS (all 3 files restored from Run #${rid})"
-                    break
-                  else
-                    echo "Run #${rid} matched SHAs but was incomplete (${restored}/3 files). Checking older runs..."
-                  fi
-                else
-                  echo "Skipping Run #${rid}: identity mismatch (cand=${cand_sha:0:8}..., prod=${prod_sha:0:8}...)"
-                fi
+                echo "Lineage ledger restored from Run #${rid}"
               fi
             fi
+
+            state_file="$(find inspect_state -type f -name "phase2d_state.json" -print -quit || true)"
+
+            if [[ -z "${state_file}" ]]; then
+              rm -rf inspect_state
+              continue
+            fi
+
+            python - "${state_file}" \
+              "${EXPECTED_CAND_SHA}" \
+              "${EXPECTED_PROD_SHA}" \
+              "${EXPECTED_FEATURE_CODE_SHA}" \
+              "${EXPECTED_FEATURE_SCHEMA_SHA}" \
+              "${EXPECTED_VALIDATOR_CODE_SHA}" \
+              "${EXPECTED_EXPERIMENT_ID}" <<'PY'
+
+          import json
+          import sys
+
+          (
+              state_file,
+              expected_cand,
+              expected_prod,
+              expected_feature_code,
+              expected_feature_schema,
+              expected_validator_code,
+              expected_experiment,
+          ) = sys.argv[1:]
+
+          state = json.load(
+              open(
+                  state_file,
+                  encoding="utf-8",
+              )
+          )
+
+          locked = state.get(
+              "locked_models",
+              {},
+          )
+
+          expected = {
+              "candidate_sha256": expected_cand,
+              "production_sha256": expected_prod,
+              "feature_code_hash": expected_feature_code,
+              "feature_schema_hash": expected_feature_schema,
+              "validator_code_hash": expected_validator_code,
+              "experiment_id": expected_experiment,
+          }
+
+          mismatches = {}
+
+          for key, value in expected.items():
+              actual = locked.get(key)
+
+              if actual != value:
+                  mismatches[key] = {
+                      "expected": value,
+                      "actual": actual,
+                  }
+
+          if state.get("schema_version") != 5:
+              mismatches["state_schema_version"] = {
+                  "expected": 5,
+                  "actual": state.get("schema_version"),
+              }
+
+          if mismatches:
+              print("INCOMPATIBLE")
+              print(json.dumps(
+                  mismatches,
+                  indent=2,
+                  sort_keys=True,
+              ))
+              raise SystemExit(2)
+
+          print("COMPATIBLE")
+          print(
+              json.dumps(
+                  {
+                      "candidate_resolved": len(
+                          state.get("resolved", {}).get(
+                              "candidate",
+                              [],
+                          )
+                      ),
+                      "production_resolved": len(
+                          state.get("resolved", {}).get(
+                              "production",
+                              [],
+                          )
+                      ),
+                  },
+                  indent=2,
+              )
+          )
+          PY
+
+            status=$?
+
+            if [[ "${status}" -eq 0 ]]; then
+              echo "Compatible Phase 2D state found in Run #${rid}"
+
+              mkdir -p "${STATE_DIR}"
+
+              for f in \
+                phase2d_state.json \
+                phase2d_results.json \
+                phase2d_latest_snapshot.json
+              do
+                src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
+
+                if [[ -n "${src}" ]]; then
+                  cp "${src}" "${STATE_DIR}/${f}"
+                  echo "Restored: ${f}"
+                fi
+              done
+
+              RESTORED_RUN_ID="${rid}"
+
+              rm -rf inspect_state
+
+              break
+            fi
+
+            echo "Run #${rid} state identity mismatch."
+
+            if [[ "${ALLOW_FRESH_START}" == "true" && -z "${RESTORED_RUN_ID}" ]]; then
+              mkdir -p \
+                "${STATE_DIR}/pre_reset_archive/run_${rid}"
+
+              for f in \
+                phase2d_state.json \
+                phase2d_results.json \
+                phase2d_latest_snapshot.json
+              do
+                src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
+
+                if [[ -n "${src}" ]]; then
+                  cp \
+                    "${src}" \
+                    "${STATE_DIR}/pre_reset_archive/run_${rid}/${f}"
+                fi
+              done
+
+              echo "Pre-reset state archived from Run #${rid}"
+            fi
+
             rm -rf inspect_state
           done
 
-          if [[ -z "${RESTORED_RUN_ID}" ]]; then
-            echo "No prior run found with compatible locked model SHAs; starting fresh initial state."
+          if [[ -n "${RESTORED_RUN_ID}" ]]; then
+            echo "============================================================"
+            echo " STATE RESTORE STATUS: PASS"
+            echo " Restored from Run #${RESTORED_RUN_ID}"
+            echo "============================================================"
+          elif [[ "${ALLOW_FRESH_START}" == "true" ]]; then
+            echo "============================================================"
+            echo " STATE RESTORE STATUS: EXPLICIT FRESH START AUTHORIZED"
+            echo " No compatible prior state will be reused."
+            echo "============================================================"
+          else
+            echo "============================================================"
+            echo " STATE RESTORE STATUS: BLOCKED"
+            echo " No compatible prior state exists."
+            echo " Fresh start is NOT authorized."
+            echo "============================================================"
+            exit 1
           fi
-
       # ============================================================
       # DOWNLOAD LOCKED CANDIDATE RELEASE
       # ============================================================
