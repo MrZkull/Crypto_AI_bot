@@ -242,6 +242,7 @@ jobs:
                   phase2d_results.json \
                   phase2d_latest_snapshot.json \
                   experiment_ledger.jsonl \
+                  phase2d_observations.jsonl \
                   phase2d_validator.log
                 do
                   src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
@@ -270,6 +271,7 @@ jobs:
               "${STATE_DIR}/phase2d_results.json" \
               "${STATE_DIR}/phase2d_latest_snapshot.json" \
               "${STATE_DIR}/experiment_ledger.jsonl" \
+              "${STATE_DIR}/phase2d_observations.jsonl" \
               "phase2d_validator.log"
 
             rm -rf inspect_state
@@ -428,7 +430,7 @@ jobs:
                   phase2d_state.json \
                   phase2d_results.json \
                   phase2d_latest_snapshot.json \
-                  experiment_ledger.jsonl
+                  experiment_ledger.jsonl \
                   phase2d_observations.jsonl
                 do
                   src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
