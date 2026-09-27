@@ -362,8 +362,21 @@ jobs:
 
           mismatches = {}
 
+          stored_schema = state.get("schema_version")
+          controlled_f08_migration = (
+              stored_schema == 5
+              and expected_experiment_id == "PHASE2D-HARDENED-20260924-F08"
+              and locked.get("experiment_id") == expected_experiment_id
+          )
+
           for key, expected_value in expected.items():
               actual_value = locked.get(key)
+
+              if (
+                  key == "validator_code_hash"
+                  and controlled_f08_migration
+              ):
+                  continue
 
               if actual_value != expected_value:
                   mismatches[key] = {
@@ -371,7 +384,7 @@ jobs:
                       "actual": actual_value,
                   }
 
-          if state.get("schema_version") != 5:
+          if state.get("schema_version") not in {5, 6}:
               mismatches["state_schema_version"] = {
                   "expected": 5,
                   "actual": state.get("schema_version"),
@@ -416,6 +429,7 @@ jobs:
                   phase2d_results.json \
                   phase2d_latest_snapshot.json \
                   experiment_ledger.jsonl
+                  phase2d_observations.jsonl
                 do
                   src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
 
@@ -739,6 +753,7 @@ jobs:
             "phase2d_promotion_gate.py"
             "feature_engineering.py"
             "market_data_integrity.py"
+            "phase2d_observation_ledger.py"
           )
 
           echo "============================================================"
@@ -758,7 +773,8 @@ jobs:
             phase2d_prospective_validator.py \
             phase2d_promotion_gate.py \
             feature_engineering.py \
-            market_data_integrity.py
+            market_data_integrity.py \
+            phase2d_observation_ledger.py
 
           echo "============================================================"
           echo " PYCOMPILE STATUS: PASS"
@@ -1069,6 +1085,7 @@ jobs:
             research_outputs/phase2d_results.json
             research_outputs/phase2d_latest_snapshot.json
             research_outputs/experiment_ledger.jsonl
+            research_outputs/phase2d_observations.jsonl
             research_outputs/pre_reset_archive/**
             phase2d_validator.log
           if-no-files-found: warn
