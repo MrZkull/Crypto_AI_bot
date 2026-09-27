@@ -1555,6 +1555,7 @@ def load_compatible_state(
     )
 
     definition_for_compare = stored_definition
+    expected_definition_for_compare = experiment_definition
 
     if controlled_f08_migration and isinstance(
         stored_definition,
@@ -1578,9 +1579,7 @@ def load_compatible_state(
             dict,
         ):
             stored_definition_identity["validator_code_hash"] = (
-                expected_definition_identity.get(
-                    "validator_code_hash"
-                )
+                identity["validator_code_hash"]
             )
 
         legacy_methodology_keys = (
@@ -1611,34 +1610,28 @@ def load_compatible_state(
         )
 
         if is_known_legacy_f08_definition:
-            definition_for_compare = json.loads(
+            definition_for_compare = normalized_stored_definition
+
+            expected_definition_for_compare = json.loads(
                 json.dumps(
                     experiment_definition
                 )
             )
 
             for key in legacy_methodology_keys:
-                definition_for_compare.pop(
+                expected_definition_for_compare.pop(
                     key,
                     None,
                 )
 
-            definition_for_compare["bootstrap_method"] = (
+            expected_definition_for_compare["bootstrap_method"] = (
                 "independent_block_bootstrap"
             )
-            definition_for_compare["confidence_level"] = 0.95
-
-            expected_definition_identity = definition_for_compare.get(
-                "identity"
-            )
-            if isinstance(expected_definition_identity, dict):
-                expected_definition_identity["validator_code_hash"] = (
-                    identity["validator_code_hash"]
-                )
+            expected_definition_for_compare["confidence_level"] = 0.95
         else:
             definition_for_compare = normalized_stored_definition
 
-    if definition_for_compare != experiment_definition:
+    if definition_for_compare != expected_definition_for_compare:
         identity_mismatches[
             "experiment_definition"
         ] = {
