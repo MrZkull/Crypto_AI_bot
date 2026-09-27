@@ -1273,7 +1273,7 @@ jobs:
           state_entries = []
 
           for state_path in sorted(
-              ROOT.glob("run_*/phase2d_state.json"),
+              ROOT.glob("run_*/**/phase2d_state.json"),
               key=lambda p: int(
                   re.search(r"run_(\d+)", str(p)).group(1)
               ),
