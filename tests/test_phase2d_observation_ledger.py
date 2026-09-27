@@ -120,5 +120,163 @@ class TestPhase2DObservationLedger(unittest.TestCase):
         self.assertEqual(summary["max_drawdown_r"], 3.0)
 
 
+    def test_reconcile_appends_missing_observations_without_mutation(self):
+        base = {
+            "id": "candidate:ETHUSDT:123",
+            "model": "candidate",
+            "symbol": "ETHUSDT",
+            "open_time": 123,
+            "signal": "BUY",
+            "status": "TP",
+            "net_r": 3.38,
+        }
+
+        recovered = {
+            "id": "production:BTCUSDT:456",
+            "model": "production",
+            "symbol": "BTCUSDT",
+            "open_time": 456,
+            "signal": "BUY",
+            "status": "SL",
+            "net_r": -2.62,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "phase2d_observations.jsonl"
+
+            self.assertTrue(
+                ledger.append_observation(
+                    path,
+                    "TEST-PHASE2D",
+                    base,
+                )
+            )
+
+            result = ledger.reconcile_resolved_observations(
+                path,
+                "TEST-PHASE2D",
+                [base, recovered, recovered],
+            )
+
+            self.assertEqual(result["added"], 1)
+            self.assertEqual(
+                result["added_by_model"]["production"],
+                1,
+            )
+            self.assertEqual(result["conflicts"], 0)
+
+            observations = ledger.load_observations(
+                path,
+                "TEST-PHASE2D",
+            )
+
+            self.assertEqual(len(observations), 2)
+
+            second = ledger.reconcile_resolved_observations(
+                path,
+                "TEST-PHASE2D",
+                [base, recovered, recovered],
+            )
+
+            self.assertEqual(second["added"], 0)
+            self.assertEqual(second["existing_before"], 2)
+            self.assertEqual(second["historical_unique"], 2)
+
+    def test_reconcile_fails_closed_on_conflicting_historical_duplicate(self):
+        record = {
+            "id": "candidate:ETHUSDT:123",
+            "model": "candidate",
+            "symbol": "ETHUSDT",
+            "open_time": 123,
+            "signal": "BUY",
+            "status": "TP",
+            "net_r": 3.38,
+        }
+
+        conflict = dict(record)
+        conflict["net_r"] = 0.5
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "phase2d_observations.jsonl"
+
+            with self.assertRaises(ValueError):
+                ledger.reconcile_resolved_observations(
+                    path,
+                    "TEST-PHASE2D",
+                    [record, conflict],
+                )
+
+    def test_f08_migration_records_source_schema_5(self):
+        identity = {
+            "experiment_id": "PHASE2D-HARDENED-20260924-F08",
+            "candidate_sha256": "candidate",
+            "production_sha256": "production",
+            "feature_code_hash": "feature-code",
+            "feature_schema_hash": "feature-schema",
+            "validator_code_hash": "validator-code-old",
+        }
+
+        definition = {
+            "experiment_id": identity["experiment_id"],
+            "lookahead_bars": 24,
+            "buy_tp_r": 3.5,
+            "buy_sl_r": 2.5,
+            "sell_tp_r": 3.5,
+            "sell_sl_r": 2.5,
+            "friction_r": 0.12,
+            "candidate_thresholds": {"buy": 0.40, "sell": 1.01},
+            "production_thresholds": {"buy": 0.40, "sell": 0.45},
+        }
+
+        state = validator.empty_state(
+            identity,
+            definition,
+        )
+
+        state["schema_version"] = 5
+        state["resolved"]["candidate"] = [{
+            "id": "candidate:ETHUSDT:123",
+            "model": "candidate",
+            "symbol": "ETHUSDT",
+            "open_time": 123,
+            "signal": "BUY",
+            "status": "TP",
+            "net_r": 3.38,
+        }]
+        state["seen"]["candidate"] = ["ETHUSDT:123"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "phase2d_state.json"
+            observation_path = root / "phase2d_observations.jsonl"
+            audit_path = root / "experiment_ledger.jsonl"
+
+            state_path.write_text(
+                json.dumps(state),
+                encoding="utf-8",
+            )
+
+            with patch.object(validator, "STATE_FILE", state_path), \
+                 patch.object(validator, "OBSERVATION_LEDGER_FILE", observation_path), \
+                 patch.object(validator, "LEDGER_FILE", audit_path):
+
+                restored, fresh, _ = validator.load_compatible_state(
+                    identity,
+                    definition,
+                    allow_fresh_start=False,
+                )
+
+            self.assertFalse(fresh)
+
+            migration = (
+                restored["observation_ledger"]["migration"]
+            )
+
+            self.assertEqual(
+                migration["legacy_state_schema"],
+                5,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -27,6 +27,12 @@ on:
         default: false
         type: boolean
 
+      reconcile_f08_ledger:
+        description: "One-time F08 historical observation-ledger reconciliation; must be run on main"
+        required: false
+        default: false
+        type: boolean
+
   # External scheduler contract:
   # cron-job.org is the 2-hour scheduler for this workflow.
   #
@@ -60,6 +66,7 @@ env:
 
 jobs:
   prospective:
+    if: ${{ inputs.reconcile_f08_ledger != true && github.event.client_payload.reconcile_f08_ledger != true && github.event.client_payload.reconcile_f08_ledger != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -1105,4 +1112,866 @@ jobs:
             phase2d_validator.log
             research_outputs/pre_reset_archive/**
           if-no-files-found: ignore
+          retention-days: 14
+  # ============================================================
+  # ONE-TIME F08 HISTORICAL LEDGER RECONCILIATION
+  # ============================================================
+  reconcile_f08_ledger:
+    if: ${{ inputs.reconcile_f08_ledger == true || github.event.client_payload.reconcile_f08_ledger == true || github.event.client_payload.reconcile_f08_ledger == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # MAIN-BRANCH GUARD
+      # ============================================================
+      - name: Require main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Repository ref: ${GITHUB_REF}"
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "FATAL: F08 ledger reconciliation must run on main."
+            echo "The resulting phase2d-state artifact is consumed by normal"
+            echo "Phase 2D restore logic only from successful runs on main."
+            exit 1
+          fi
+
+      # ============================================================
+      # PYTHON
+      # ============================================================
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # ============================================================
+      # DEPENDENCIES
+      # ============================================================
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pip install -r requirements.txt
+
+          python --version
+          python -c "import numpy, pandas, sklearn, xgboost, joblib, requests; print('Core dependencies: PASS')"
+
+      # ============================================================
+      # CODE VALIDATION
+      # ============================================================
+      - name: Validate reconciliation code
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m py_compile \
+            phase2d_observation_ledger.py \
+            phase2d_f08_reconciliation.py \
+            phase2d_prospective_validator.py
+
+          python -m pytest -q
+
+      # ============================================================
+      # DOWNLOAD ALL SUCCESSFUL PHASE 2D STATE ARTIFACTS
+      # ============================================================
+      - name: Collect historical successful Phase 2D state artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf historical_phase2d
+          mkdir -p historical_phase2d
+
+          echo "============================================================"
+          echo " COLLECTING SUCCESSFUL PHASE 2D STATE ARTIFACTS"
+          echo "============================================================"
+
+          RUN_IDS="$(
+            gh run list \
+              --workflow="run_phase2d.yml" \
+              --branch main \
+              --limit 1000 \
+              --json databaseId,conclusion \
+              --jq '.[] | select(.conclusion == "success") | .databaseId'
+          )"
+
+          if [[ -z "${RUN_IDS}" ]]; then
+            echo "FATAL: no successful Phase 2D runs found on main."
+            exit 1
+          fi
+
+          downloaded=0
+          skipped=0
+
+          for rid in ${RUN_IDS}; do
+            out="historical_phase2d/run_${rid}"
+            mkdir -p "${out}"
+
+            if gh run download \
+                "${rid}" \
+                -n "phase2d-state" \
+                -D "${out}" \
+                2>/dev/null; then
+              echo "Downloaded state artifact from Run #${rid}"
+              downloaded=$((downloaded + 1))
+            else
+              echo "Run #${rid}: no phase2d-state artifact; skipping."
+              rm -rf "${out}"
+              skipped=$((skipped + 1))
+            fi
+          done
+
+          echo
+          echo "State artifacts downloaded : ${downloaded}"
+          echo "Runs without state artifact: ${skipped}"
+
+          if [[ "${downloaded}" -eq 0 ]]; then
+            echo "FATAL: no phase2d-state artifacts could be downloaded."
+            exit 1
+          fi
+
+      # ============================================================
+      # RECONCILE
+      # ============================================================
+      - name: Reconcile F08 historical observation ledger
+        shell: bash
+        env:
+          EXPECTED_EXPERIMENT_ID: "PHASE2D-HARDENED-20260924-F08"
+        run: |
+          set -euo pipefail
+
+          rm -rf research_outputs
+          mkdir -p research_outputs
+          rm -rf research_outputs/pre_reconciliation_archive
+
+          python - <<'PY'
+          import json
+          import re
+          import shutil
+          from pathlib import Path
+
+          import phase2d_f08_reconciliation as reconciliation
+          import phase2d_observation_ledger as ledger
+
+          ROOT = Path("historical_phase2d")
+          OUT = Path("research_outputs")
+          EXPERIMENT_ID = "PHASE2D-HARDENED-20260924-F08"
+
+          state_entries = []
+
+          for state_path in sorted(
+              ROOT.glob("run_*/phase2d_state.json"),
+              key=lambda p: int(
+                  re.search(r"run_(\d+)", str(p)).group(1)
+              ),
+          ):
+              run_match = re.search(
+                  r"run_(\d+)",
+                  str(state_path),
+              )
+
+              if not run_match:
+                  continue
+
+              run_id = int(run_match.group(1))
+
+              state = reconciliation.load_state(state_path)
+
+              actual_experiment = (
+                  state.get("experiment_definition", {})
+                  .get("experiment_id")
+                  or state.get("locked_models", {})
+                  .get("experiment_id")
+              )
+
+              if actual_experiment != EXPERIMENT_ID:
+                  continue
+
+              state_entries.append(
+                  {
+                      "run_id": run_id,
+                      "state_path": state_path,
+                      "state": state,
+                  }
+              )
+
+          if not state_entries:
+              raise SystemExit(
+                  "FATAL: no successful F08 state artifacts found."
+              )
+
+          state_entries.sort(
+              key=lambda item: item["run_id"]
+          )
+
+          baseline = state_entries[-1]
+          baseline_run = baseline["run_id"]
+          baseline_state = baseline["state"]
+
+          baseline_ledger_path = (
+              baseline["state_path"].parent /
+              "phase2d_observations.jsonl"
+          )
+
+          if not baseline_ledger_path.exists():
+              raise SystemExit(
+                  f"FATAL: baseline Run #{baseline_run} is missing "
+                  "phase2d_observations.jsonl."
+              )
+
+          print(
+              f"Selected latest successful F08 baseline: "
+              f"Run #{baseline_run}"
+          )
+
+          migration = (
+              baseline_state
+              .get("observation_ledger", {})
+              .get("migration")
+          )
+
+          if not isinstance(migration, dict):
+              raise SystemExit(
+                  "FATAL: baseline state is missing "
+                  "observation_ledger.migration."
+              )
+
+          initialization_events = [
+              event
+              for event in ledger.load_events(
+                  baseline_ledger_path,
+                  experiment_id=EXPERIMENT_ID,
+              )
+              if event.get("event")
+              == reconciliation.MIGRATION_EVENT
+          ]
+
+          if not initialization_events:
+              raise SystemExit(
+                  "FATAL: baseline observation ledger does not contain "
+                  "F08_LEDGER_INITIALIZED_FROM_STATE."
+              )
+
+          current_schema = migration.get(
+              "legacy_state_schema"
+          )
+
+          if current_schema not in (5, 6):
+              raise SystemExit(
+                  "FATAL: unexpected baseline legacy_state_schema: "
+                  f"{current_schema!r}"
+              )
+
+          # Preserve the untouched baseline before mutation.
+          archive = (
+              OUT /
+              "pre_reconciliation_archive" /
+              f"run_{baseline_run}"
+          )
+          archive.mkdir(
+              parents=True,
+              exist_ok=True,
+          )
+
+          for src_name in (
+              "phase2d_state.json",
+              "phase2d_results.json",
+              "phase2d_latest_snapshot.json",
+              "experiment_ledger.jsonl",
+              "phase2d_observations.jsonl",
+          ):
+              src = baseline["state_path"].parent / src_name
+
+              if not src.exists():
+                  raise SystemExit(
+                      f"FATAL: baseline is missing required artifact: {src_name}"
+                  )
+
+              shutil.copy2(
+                  src,
+                  archive / src_name,
+              )
+
+              shutil.copy2(
+                  src,
+                  OUT / src_name,
+              )
+
+          state_path = OUT / "phase2d_state.json"
+          observation_path = OUT / "phase2d_observations.jsonl"
+
+          historical_records, historical_summary = (
+              reconciliation.collect_historical_resolved(
+                  [
+                      entry["state_path"]
+                      for entry in state_entries
+                  ],
+                  experiment_id=EXPERIMENT_ID,
+              )
+          )
+
+          # Independent audit of the successful F08 state snapshots established
+          # the following recoverable historical union before this maintenance
+          # workflow was implemented. Fail closed rather than silently accepting
+          # an incomplete artifact set.
+          EXPECTED_HISTORICAL_COUNTS = {
+              "candidate": 542,
+              "production": 1676,
+              "total": 2218,
+          }
+
+          historical_candidate = sum(
+              1
+              for result in historical_records
+              if result.get("model") == "candidate"
+          )
+
+          historical_production = sum(
+              1
+              for result in historical_records
+              if result.get("model") == "production"
+          )
+
+          historical_total = len(historical_records)
+
+          if {
+              "candidate": historical_candidate,
+              "production": historical_production,
+              "total": historical_total,
+          } != EXPECTED_HISTORICAL_COUNTS:
+              raise SystemExit(
+                  "FATAL: historical F08 artifact coverage is incomplete "
+                  "or unexpected. "
+                  f"observed_candidate={historical_candidate}, "
+                  f"observed_production={historical_production}, "
+                  f"observed_total={historical_total}; "
+                  f"expected={EXPECTED_HISTORICAL_COUNTS}"
+              )
+
+          existing_before = len(
+              ledger.load_observations(
+                  observation_path,
+                  experiment_id=EXPERIMENT_ID,
+              )
+          )
+
+          if existing_before > len(historical_records):
+              raise SystemExit(
+                  "FATAL: baseline ledger contains more observations "
+                  "than the union of successful F08 state artifacts."
+              )
+
+          correction = (
+              reconciliation.correct_migration_metadata(
+                  baseline_state,
+                  observation_path,
+                  source_schema=5,
+                  experiment_id=EXPERIMENT_ID,
+              )
+          )
+
+          if not correction.get("corrected") and current_schema != 5:
+              raise SystemExit(
+                  "FATAL: migration provenance was not corrected."
+              )
+
+          reconciliation_result = (
+              reconciliation.reconcile_ledger(
+                  observation_path,
+                  historical_records,
+                  experiment_id=EXPERIMENT_ID,
+              )
+          )
+
+          final_records = ledger.load_observations(
+              observation_path,
+              experiment_id=EXPERIMENT_ID,
+          )
+
+          final_counts = {
+              "candidate": sum(
+                  1
+                  for record in final_records
+                  if record.get("model") == "candidate"
+              ),
+              "production": sum(
+                  1
+                  for record in final_records
+                  if record.get("model") == "production"
+              ),
+          }
+
+          if (
+              len(final_records)
+              != len(historical_records)
+          ):
+              raise SystemExit(
+                  "FATAL: final ledger count does not equal "
+                  "historical F08 unique observation count."
+              )
+
+          expected_added = (
+              len(historical_records)
+              - existing_before
+          )
+
+          if reconciliation_result["added"] != expected_added:
+              raise SystemExit(
+                  "FATAL: reconciliation accounting mismatch: "
+                  f"added={reconciliation_result['added']} "
+                  f"expected={expected_added}"
+              )
+
+          if reconciliation_result["remaining_missing"] != 0:
+              raise SystemExit(
+                  "FATAL: reconciliation reports remaining missing "
+                  "observations."
+              )
+
+          expected_recovered = 1169
+          expected_candidate_recovered = 32
+          expected_production_recovered = 1137
+
+          if (
+              reconciliation_result["added"]
+              != expected_recovered
+          ):
+              raise SystemExit(
+                  "FATAL: recovered observation count mismatch: "
+                  f"observed={reconciliation_result['added']} "
+                  f"expected={expected_recovered}"
+              )
+
+          if (
+              reconciliation_result["added_by_model"]["candidate"]
+              != expected_candidate_recovered
+          ):
+              raise SystemExit(
+                  "FATAL: candidate historical recovery mismatch: "
+                  f"observed={reconciliation_result['added_by_model']['candidate']} "
+                  f"expected={expected_candidate_recovered}"
+              )
+
+          if (
+              reconciliation_result["added_by_model"]["production"]
+              != expected_production_recovered
+          ):
+              raise SystemExit(
+                  "FATAL: production historical recovery mismatch: "
+                  f"observed={reconciliation_result['added_by_model']['production']} "
+                  f"expected={expected_production_recovered}"
+              )
+
+          # The validator source changed after Run #145 only to preserve
+          # the original schema-5 provenance during the controlled F08
+          # ledger migration. The repaired state remains schema 6, so its
+          # locked validator identity must be refreshed explicitly rather
+          # than relying on the schema-5 compatibility exception.
+          import hashlib
+
+          validator_path = Path(
+              "phase2d_prospective_validator.py"
+          )
+
+          current_validator_hash = hashlib.sha256(
+              validator_path.read_bytes()
+          ).hexdigest()
+
+          locked_models = baseline_state.get(
+              "locked_models"
+          )
+
+          if not isinstance(locked_models, dict):
+              raise SystemExit(
+                  "FATAL: baseline state has no locked_models object."
+              )
+
+          previous_validator_hash = locked_models.get(
+              "validator_code_hash"
+          )
+
+          definition = baseline_state.get(
+              "experiment_definition"
+          )
+
+          if not isinstance(definition, dict):
+              raise SystemExit(
+                  "FATAL: baseline state has no experiment_definition object."
+              )
+
+          definition_identity = definition.get(
+              "identity"
+          )
+
+          if not isinstance(definition_identity, dict):
+              raise SystemExit(
+                  "FATAL: baseline experiment_definition has no identity object."
+              )
+
+          locked_models["validator_code_hash"] = (
+              current_validator_hash
+          )
+
+          definition_identity["validator_code_hash"] = (
+              current_validator_hash
+          )
+
+          validator_identity_refresh = {
+              "event": "F08_VALIDATOR_CODE_IDENTITY_REFRESHED",
+              "previous_validator_code_hash": (
+                  previous_validator_hash
+              ),
+              "current_validator_code_hash": (
+                  current_validator_hash
+              ),
+              "reason": (
+                  "Phase 2D validator code changed only for the "
+                  "controlled F08 ledger provenance migration; "
+                  "the repaired schema-6 state must carry the exact "
+                  "validator identity used by subsequent normal runs."
+              ),
+          }
+
+          ledger_path = OUT / "experiment_ledger.jsonl"
+
+          with ledger_path.open(
+              "a",
+              encoding="utf-8",
+          ) as handle:
+              handle.write(
+                  json.dumps(
+                      {
+                          "event": (
+                              "F08_VALIDATOR_CODE_IDENTITY_REFRESHED"
+                          ),
+                          "experiment_id": EXPERIMENT_ID,
+                          "previous_validator_code_hash": (
+                              previous_validator_hash
+                          ),
+                          "current_validator_code_hash": (
+                              current_validator_hash
+                          ),
+                          "reason": (
+                              "Phase 2D validator code changed only "
+                              "for the controlled F08 ledger provenance "
+                              "migration; repaired schema-6 state must "
+                              "carry the current validator identity."
+                          ),
+                      },
+                      sort_keys=True,
+                  )
+                  + "\n"
+              )
+
+          migration_metadata = baseline_state[
+              "observation_ledger"
+          ]["migration"]
+
+          migration_metadata[
+              "historical_reconciliation"
+          ] = {
+              "event": (
+                  "F08_LEDGER_HISTORICAL_RECONCILIATION"
+              ),
+              "baseline_run_id": baseline_run,
+              "historical_unique_observations": (
+                  len(historical_records)
+              ),
+              "observations_recovered_from_historical_states": (
+                  reconciliation_result["added"]
+              ),
+              "candidate_recovered": (
+                  reconciliation_result[
+                      "added_by_model"
+                  ]["candidate"]
+              ),
+              "production_recovered": (
+                  reconciliation_result[
+                      "added_by_model"
+                  ]["production"]
+              ),
+              "remaining_missing": (
+                  reconciliation_result[
+                      "remaining_missing"
+                  ]
+              ),
+          }
+
+          # The migration metadata correction is intentionally stored
+          # in state and the immutable correction event is stored in
+          # the observation ledger. Never rewrite historical event lines.
+          state_path.write_text(
+              json.dumps(
+                  baseline_state,
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+
+          report = {
+              "experiment_id": EXPERIMENT_ID,
+              "baseline_run_id": baseline_run,
+              "f08_state_runs": [
+                  entry["run_id"]
+                  for entry in state_entries
+              ],
+              "baseline_legacy_state_schema_before": current_schema,
+              "baseline_legacy_state_schema_after": (
+                  baseline_state
+                  .get("observation_ledger", {})
+                  .get("migration", {})
+                  .get("legacy_state_schema")
+              ),
+              "historical_summary": historical_summary,
+              "correction": correction,
+              "reconciliation": reconciliation_result,
+              "validator_identity_refresh": (
+                  validator_identity_refresh
+              ),
+              "final_counts": final_counts,
+              "final_ledger_count": len(final_records),
+          }
+
+          (OUT / "phase2d_f08_reconciliation_report.json").write_text(
+              json.dumps(
+                  report,
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+
+          manifest = {
+              "experiment_id": EXPERIMENT_ID,
+              "baseline_run_id": baseline_run,
+              "state_runs_used": [
+                  entry["run_id"]
+                  for entry in state_entries
+              ],
+              "state_files_examined": len(
+                  state_entries
+              ),
+          }
+
+          (OUT / "phase2d_f08_reconciliation_manifest.json").write_text(
+              json.dumps(
+                  manifest,
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+
+          print()
+          print("============================================================")
+          print(" F08 HISTORICAL LEDGER RECONCILIATION COMPLETE")
+          print("============================================================")
+          print(f"Baseline run             : #{baseline_run}")
+          print(
+              "F08 state snapshots      : "
+              f"{len(state_entries)}"
+          )
+          print(
+              "Historical unique        : "
+              f"{len(historical_records)}"
+          )
+          print(
+              "Existing before          : "
+              f"{existing_before}"
+          )
+          print(
+              "Added                    : "
+              f"{reconciliation_result['added']}"
+          )
+          print(
+              "Candidate added          : "
+              f"{reconciliation_result['added_by_model']['candidate']}"
+          )
+          print(
+              "Production added         : "
+              f"{reconciliation_result['added_by_model']['production']}"
+          )
+          print(
+              "Final candidate ledger   : "
+              f"{final_counts['candidate']}"
+          )
+          print(
+              "Final production ledger  : "
+              f"{final_counts['production']}"
+          )
+          print(
+              "Final total              : "
+              f"{len(final_records)}"
+          )
+          print(
+              "Legacy schema corrected  : "
+              f"{baseline_state['observation_ledger']['migration'].get('legacy_state_schema')}"
+          )
+          print(
+              "Historical observations  : "
+              f"{baseline_state['observation_ledger']['migration'].get('historical_reconciliation', {}).get('historical_unique_observations')}"
+          )
+          print(
+              "Recovered from history  : "
+              f"{baseline_state['observation_ledger']['migration'].get('historical_reconciliation', {}).get('observations_recovered_from_historical_states')}"
+          )
+          print("============================================================")
+          PY
+
+      # ============================================================
+      # VERIFY IMMUTABILITY / ARTIFACT CONTENTS
+      # ============================================================
+      - name: Verify reconciled F08 state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          import phase2d_observation_ledger as ledger
+
+          state_path = Path(
+              "research_outputs/phase2d_state.json"
+          )
+          observation_path = Path(
+              "research_outputs/phase2d_observations.jsonl"
+          )
+
+          state = json.loads(
+              state_path.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          experiment_id = (
+              state["experiment_definition"]
+              ["experiment_id"]
+          )
+
+          if experiment_id != "PHASE2D-HARDENED-20260924-F08":
+              raise SystemExit(
+                  "FATAL: reconciled state experiment ID mismatch."
+              )
+
+          migration = (
+              state["observation_ledger"]
+              ["migration"]
+          )
+
+          import hashlib
+
+          current_validator_hash = hashlib.sha256(
+              Path(
+                  "phase2d_prospective_validator.py"
+              ).read_bytes()
+          ).hexdigest()
+
+          if state["locked_models"].get(
+              "validator_code_hash"
+          ) != current_validator_hash:
+              raise SystemExit(
+                  "FATAL: reconciled state validator code hash "
+                  "does not match the current validator."
+              )
+
+          if state["experiment_definition"]["identity"].get(
+              "validator_code_hash"
+          ) != current_validator_hash:
+              raise SystemExit(
+                  "FATAL: reconciled experiment definition validator "
+                  "hash does not match the current validator."
+              )
+
+          if migration.get("legacy_state_schema") != 5:
+              raise SystemExit(
+                  "FATAL: reconciled state does not record "
+                  "legacy source schema 5."
+              )
+
+          events = ledger.load_events(
+              observation_path,
+              experiment_id=experiment_id,
+          )
+
+          event_names = [
+              event.get("event")
+              for event in events
+          ]
+
+          if "F08_LEDGER_INITIALIZED_FROM_STATE" not in event_names:
+              raise SystemExit(
+                  "FATAL: initialization event missing."
+              )
+
+          if (
+              "F08_LEDGER_MIGRATION_METADATA_CORRECTED"
+              not in event_names
+          ):
+              raise SystemExit(
+                  "FATAL: metadata-correction event missing."
+              )
+
+          if (
+              "F08_LEDGER_HISTORICAL_RECONCILIATION"
+              not in event_names
+          ):
+              raise SystemExit(
+                  "FATAL: historical-reconciliation event missing."
+              )
+
+          observations = ledger.load_observations(
+              observation_path,
+              experiment_id=experiment_id,
+          )
+
+          if not observations:
+              raise SystemExit(
+                  "FATAL: reconciled observation ledger is empty."
+              )
+
+          print(
+              f"Verified {len(observations)} immutable F08 observations."
+          )
+          print("Required immutable events: PASS")
+          print("State experiment identity: PASS")
+          print("Source schema provenance  : PASS")
+          PY
+
+      # ============================================================
+      # UPLOAD RECONCILED STATE UNDER STANDARD RESTORE NAME
+      # ============================================================
+      - name: Upload reconciled Phase 2D state
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2d-state
+          path: |
+            research_outputs/phase2d_state.json
+            research_outputs/phase2d_results.json
+            research_outputs/phase2d_latest_snapshot.json
+            research_outputs/experiment_ledger.jsonl
+            research_outputs/phase2d_observations.jsonl
+            research_outputs/phase2d_f08_reconciliation_report.json
+            research_outputs/phase2d_f08_reconciliation_manifest.json
+            research_outputs/pre_reconciliation_archive/**
+          if-no-files-found: error
           retention-days: 14
