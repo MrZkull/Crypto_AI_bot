@@ -162,6 +162,7 @@ def initialize_observation_ledger_from_state(
     *,
     experiment_id: str,
     event_name: str,
+    legacy_state_schema: int | None = None,
 ) -> dict:
     if _event_exists(path, event_name, experiment_id):
         return {
@@ -214,7 +215,11 @@ def initialize_observation_ledger_from_state(
         "initialized": True,
         "event": event_name,
         "experiment_id": experiment_id,
-        "legacy_state_schema": state.get("schema_version"),
+        "legacy_state_schema": (
+            state.get("schema_version")
+            if legacy_state_schema is None
+            else legacy_state_schema
+        ),
         "migrated_resolved": resolved_total,
         "migrated_by_model": migrated_by_model,
         "seen_total": seen_total,
@@ -229,3 +234,123 @@ def initialize_observation_ledger_from_state(
         payload,
     )
     return payload
+
+def reconcile_resolved_observations(
+    path: Path,
+    experiment_id: str,
+    historical_records: list[dict],
+) -> dict:
+    """Reconcile immutable resolved observations from historical F08 states.
+
+    Existing records are never modified. Missing records are appended.
+    Any conflicting payload for the same immutable observation key fails closed.
+    """
+
+    existing_records = load_observations(
+        path,
+        experiment_id=experiment_id,
+    )
+
+    existing_by_key = {
+        record["observation_key"]: record
+        for record in existing_records
+    }
+
+    historical_by_key: dict[str, dict] = {}
+
+    for result in historical_records:
+        if result.get("status") not in RESOLVED_STATUSES:
+            continue
+
+        key = observation_key(
+            experiment_id,
+            result,
+        )
+
+        existing_historical = historical_by_key.get(key)
+
+        if (
+            existing_historical is not None
+            and existing_historical != result
+        ):
+            raise ValueError(
+                "Historical observation conflict for immutable key: "
+                f"{key}"
+            )
+
+        historical_by_key[key] = dict(result)
+
+    missing: list[dict] = []
+    conflicts: list[str] = []
+
+    for key, result in historical_by_key.items():
+        existing = existing_by_key.get(key)
+
+        if existing is None:
+            missing.append(result)
+            continue
+
+        metadata = {
+            "record_type",
+            "ledger_schema_version",
+            "experiment_id",
+            "observation_key",
+        }
+
+        existing_payload = {
+            k: v
+            for k, v in existing.items()
+            if k not in metadata
+        }
+
+        if existing_payload != result:
+            conflicts.append(key)
+
+    if conflicts:
+        raise ValueError(
+            "Observation ledger conflicts detected: "
+            + ", ".join(sorted(conflicts))
+        )
+
+    missing.sort(
+        key=lambda r: (
+            int(r["open_time"]),
+            str(r.get("model")),
+            str(r.get("symbol")),
+        )
+    )
+
+    for result in missing:
+        record = dict(result)
+        record.update(
+            {
+                "record_type": OBSERVATION_RECORD_TYPE,
+                "ledger_schema_version": LEDGER_SCHEMA_VERSION,
+                "experiment_id": experiment_id,
+                "observation_key": observation_key(
+                    experiment_id,
+                    result,
+                ),
+            }
+        )
+        _append_jsonl(path, record)
+
+    added_by_model: dict[str, int] = {
+        "candidate": 0,
+        "production": 0,
+    }
+
+    for result in missing:
+        model = str(result.get("model"))
+        if model in added_by_model:
+            added_by_model[model] += 1
+
+    return {
+        "experiment_id": experiment_id,
+        "historical_unique": len(historical_by_key),
+        "existing_before": len(existing_records),
+        "added": len(missing),
+        "added_by_model": added_by_model,
+        "conflicts": len(conflicts),
+        "remaining_missing": 0,
+    }

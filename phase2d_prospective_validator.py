@@ -1503,6 +1503,7 @@ def load_compatible_state(
     stored_schema_version = raw.get(
         "schema_version"
     )
+    source_state_schema_version = stored_schema_version
 
     controlled_f08_migration = (
         stored_schema_version == 5
@@ -1681,6 +1682,11 @@ def load_compatible_state(
         raw,
         OBSERVATION_LEDGER_FILE,
         experiment_id=identity["experiment_id"],
+        legacy_state_schema=(
+            source_state_schema_version
+            if controlled_f08_migration
+            else None
+        ),
         event_name=(
             "F08_LEDGER_INITIALIZED_FROM_STATE"
             if identity["experiment_id"]
