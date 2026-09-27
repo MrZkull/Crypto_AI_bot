@@ -1,0 +1,61 @@
+{
+  "reference_type": "RECONSTRUCTED_PRODUCTION_TRAINING_REGIME",
+  "status": "FROZEN_RECONSTRUCTED_REFERENCE",
+  "experiment_id": "PHASE2D-HARDENED-20260924-F08",
+  "reference_version": 1,
+
+  "model_sha256": "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21",
+  "training_commit": "893a79e554029d4a62a0cbeafa17dac2d8ca6257",
+  "github_training_run": 32660128586,
+  "trained_at": "2026-08-23T19:30:12.136077+00:00",
+
+  "data_source": "Binance public 15m klines",
+  "reference_basis": "Reconstructed production training dataset",
+  "recent_data_anchor": "model trained_at",
+  "data_reconstruction_note": "Recent 15m data is anchored at model trained_at because the original fetch-time logs/raw dataset were not preserved.",
+
+  "quantile_method": "pandas_default_linear",
+  "training_rows_verified": 266803,
+
+  "atr_pct_tercile_cutoffs": [
+    0.456749443111475,
+    0.7998676866544822
+  ],
+
+  "adx_tercile_cutoffs": [
+    26.02955652599114,
+    37.3693860528105
+  ],
+
+  "gate_consumes": [
+    "atr_pct_tercile_cutoffs"
+  ],
+
+  "symbols": [
+    "ETHUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "NEARUSDT",
+    "LTCUSDT",
+    "UNIUSDT",
+    "BCHUSDT",
+    "DOTUSDT",
+    "ALGOUSDT",
+    "ENAUSDT",
+    "DOGEUSDT",
+    "TRUMPUSDT",
+    "PUMPUSDT",
+    "AAVEUSDT",
+    "LINKUSDT",
+    "SUIUSDT",
+    "AVAXUSDT",
+    "ADAUSDT",
+    "TRXUSDT",
+    "XLMUSDT",
+    "ZECUSDT",
+    "HBARUSDT",
+    "CRVUSDT",
+    "FILUSDT"
+  ]
+}
