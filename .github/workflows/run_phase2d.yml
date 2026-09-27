@@ -1427,10 +1427,15 @@ jobs:
           # the following recoverable historical union before this maintenance
           # workflow was implemented. Fail closed rather than silently accepting
           # an incomplete artifact set.
+          # The original audit ended at Run #145 with
+          # 542 candidate + 1676 production = 2218.
+          # Subsequent successful F08 runs added 3 candidate and
+          # 8 production observations. The missing-from-baseline
+          # recovery remains 1169 (32 candidate + 1137 production).
           EXPECTED_HISTORICAL_COUNTS = {
-              "candidate": 542,
-              "production": 1676,
-              "total": 2218,
+              "candidate": 545,
+              "production": 1684,
+              "total": 2229,
           }
 
           historical_candidate = sum(
