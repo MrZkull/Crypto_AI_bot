@@ -326,12 +326,20 @@ jobs:
                 continue
               fi
 
-              state_file="$(find inspect_state -type f -name "phase2d_state.json" -print -quit || true)"
+              state_file="$(find inspect_state -type f -name "phase2d_state.json" ! -path '*/pre_reconciliation_archive/*' -print -quit || true)"
 
               if [[ -z "${state_file}" ]]; then
                 rm -rf inspect_state
                 continue
               fi
+
+              observation_ledger_file="$(
+                find inspect_state \
+                  -type f \
+                  -name "phase2d_observations.jsonl" \
+                  ! -path '*/pre_reconciliation_archive/*' \
+                  -print -quit || true
+              )"
 
               set +e
 
@@ -341,7 +349,8 @@ jobs:
                 "${EXPECTED_FEATURE_CODE_SHA}" \
                 "${EXPECTED_FEATURE_SCHEMA_SHA}" \
                 "${EXPECTED_VALIDATOR_CODE_SHA}" \
-                "${EXPERIMENT_ID}" <<'PY'
+                "${EXPERIMENT_ID}" \
+                "${observation_ledger_file}" <<'PY'
           import json
           import sys
 
@@ -353,6 +362,7 @@ jobs:
               expected_feature_schema,
               expected_validator_code,
               expected_experiment_id,
+              observation_ledger_file,
           ) = sys.argv[1:]
 
           with open(state_file, encoding="utf-8") as handle:
@@ -399,6 +409,131 @@ jobs:
                   "actual": state.get("schema_version"),
               }
 
+          # Completed F08 normal continuation requires the
+          # reconciled immutable observation ledger.
+          if (
+              expected_experiment_id
+              == "PHASE2D-HARDENED-20260924-F08"
+              and not controlled_f08_migration
+          ):
+              from pathlib import Path
+
+              if not observation_ledger_file:
+                  mismatches["observation_ledger"] = {
+                      "expected": (
+                          "phase2d_observations.jsonl with "
+                          "F08_LEDGER_HISTORICAL_RECONCILIATION"
+                      ),
+                      "actual": "missing",
+                  }
+              else:
+                  ledger_path = Path(observation_ledger_file)
+
+                  if not ledger_path.exists():
+                      mismatches["observation_ledger"] = {
+                          "expected": (
+                              "phase2d_observations.jsonl with "
+                              "F08_LEDGER_HISTORICAL_RECONCILIATION"
+                          ),
+                          "actual": "missing",
+                      }
+                  else:
+                      observation_count = 0
+                      reconciliation_events = []
+
+                      with ledger_path.open(encoding="utf-8") as handle:
+                          for line in handle:
+                              line = line.strip()
+
+                              if not line:
+                                  continue
+
+                              record = json.loads(line)
+
+                              if record.get("record_type") == "observation":
+                                  observation_count += 1
+
+                              if (
+                                  record.get("event")
+                                  == "F08_LEDGER_HISTORICAL_RECONCILIATION"
+                              ):
+                                  reconciliation_events.append(record)
+
+                      migration = state.get(
+                          "observation_ledger",
+                          {},
+                      ).get(
+                          "migration",
+                          {},
+                      )
+
+                      reconciliation_metadata = (
+                          migration.get("historical_reconciliation")
+                          if isinstance(migration, dict)
+                          else None
+                      )
+
+                      if not reconciliation_events:
+                          mismatches[
+                              "observation_ledger_reconciliation"
+                          ] = {
+                              "expected": (
+                                  "F08_LEDGER_HISTORICAL_RECONCILIATION"
+                              ),
+                              "actual": "missing",
+                          }
+
+                      if not isinstance(reconciliation_metadata, dict):
+                          mismatches[
+                              "historical_reconciliation_metadata"
+                          ] = {
+                              "expected": (
+                                  "observation_ledger.migration."
+                                  "historical_reconciliation"
+                              ),
+                              "actual": "missing",
+                          }
+                      else:
+                          expected_observation_count = (
+                              reconciliation_metadata.get(
+                                  "historical_unique_observations"
+                              )
+                          )
+
+                          if (
+                              expected_observation_count is None
+                              or observation_count
+                              < expected_observation_count
+                          ):
+                              mismatches[
+                                  "observation_ledger_count"
+                              ] = {
+                                  "expected": expected_observation_count,
+                                  "actual": observation_count,
+                              }
+
+                      if reconciliation_events:
+                          latest_reconciliation = (
+                              reconciliation_events[-1]
+                          )
+
+                          if (
+                              latest_reconciliation.get(
+                                  "remaining_missing"
+                              )
+                              != 0
+                          ):
+                              mismatches[
+                                  "historical_reconciliation_remaining"
+                              ] = {
+                                  "expected": 0,
+                                  "actual": (
+                                      latest_reconciliation.get(
+                                          "remaining_missing"
+                                      )
+                                  ),
+                              }
+
           if mismatches:
               print("STATE_IDENTITY: INCOMPATIBLE")
               print(json.dumps(mismatches, indent=2, sort_keys=True))
@@ -440,7 +575,7 @@ jobs:
                   experiment_ledger.jsonl \
                   phase2d_observations.jsonl
                 do
-                  src="$(find inspect_state -type f -name "${f}" -print -quit || true)"
+                  src="$(find inspect_state -type f -name "${f}" ! -path '*/pre_reconciliation_archive/*' -print -quit || true)"
 
                   if [[ -n "${src}" ]]; then
                     cp "${src}" "${STATE_DIR}/${f}"
