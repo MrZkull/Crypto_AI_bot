@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Phase 2D — Prospective Shadow Validation v2
 
@@ -26,6 +26,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from phase2d_observation_ledger import (
+    initialize_observation_ledger_from_state,
+    append_observation,
+    load_observations,
+)
 
 import joblib
 import numpy as np
@@ -72,7 +78,7 @@ SNAPSHOT_FILE = Path("research_outputs/phase2d_latest_snapshot.json")
 REQUEST_TIMEOUT = 12
 CANDLE_LIMIT_15M = 300
 CANDLE_LIMIT_1H = 300
-STATE_SCHEMA = 5
+STATE_SCHEMA = 6
 BACKFILL_BARS = 8
 
 LOG_SCHEMA_VERSION = 1
@@ -84,6 +90,11 @@ EXPERIMENT_ID = os.getenv(
 
 LEDGER_FILE = Path(
     "research_outputs/experiment_ledger.jsonl"
+)
+
+# Immutable, idempotent resolved-observation ledger.
+OBSERVATION_LEDGER_FILE = Path(
+    "research_outputs/phase2d_observations.jsonl"
 )
 
 FEATURE_CODE_FILE = (
@@ -1349,6 +1360,13 @@ def summarize(resolved: List[dict]) -> dict:
         if status in {"TP", "SL", "EXPIRED"} and r.get("net_r") is not None:
             valid.append(r)
     if valid:
+        # Drawdown must be chronological by prediction open_time,
+        # not dependent on resolution/list insertion order.
+        valid = sorted(
+            valid,
+            key=lambda r: int(r["open_time"]),
+        )
+
         wins = sum(1 for r in valid if r["status"] == "TP")
         out["precision_excluding_ambiguous"] = wins / len(valid)
         values = [safe_float(r["net_r"]) for r in valid]
@@ -1482,9 +1500,30 @@ def load_compatible_state(
         != expected_value
     }
 
+    stored_schema_version = raw.get(
+        "schema_version"
+    )
+
+    controlled_f08_migration = (
+        stored_schema_version == 5
+        and actual_identity.get("experiment_id")
+        == "PHASE2D-HARDENED-20260924-F08"
+        and identity.get("experiment_id")
+        == "PHASE2D-HARDENED-20260924-F08"
+    )
+
+    if controlled_f08_migration:
+        # The validator code hash necessarily changes for this migration.
+        # Model hashes, feature hashes, experiment ID, and definition still
+        # have to match exactly.
+        identity_mismatches.pop(
+            "validator_code_hash",
+            None,
+        )
+
     schema_mismatch = (
-        raw.get("schema_version")
-        != STATE_SCHEMA
+        stored_schema_version != STATE_SCHEMA
+        and not controlled_f08_migration
     )
 
     if schema_mismatch:
@@ -1501,13 +1540,43 @@ def load_compatible_state(
         "experiment_definition"
     )
 
-    if stored_definition != experiment_definition:
+    definition_for_compare = stored_definition
+
+    if controlled_f08_migration and isinstance(
+        stored_definition,
+        dict,
+    ):
+        # The experiment definition embeds the validator identity. In this
+        # controlled migration, only validator_code_hash may change.
+        definition_for_compare = json.loads(
+            json.dumps(
+                stored_definition
+            )
+        )
+        stored_definition_identity = definition_for_compare.get(
+            "identity"
+        )
+        expected_definition_identity = experiment_definition.get(
+            "identity"
+        )
+        if isinstance(stored_definition_identity, dict) and isinstance(
+            expected_definition_identity,
+            dict,
+        ):
+            stored_definition_identity["validator_code_hash"] = (
+                expected_definition_identity.get(
+                    "validator_code_hash"
+                )
+            )
+
+    if definition_for_compare != experiment_definition:
         identity_mismatches[
             "experiment_definition"
         ] = {
             "expected": experiment_definition,
             "actual": stored_definition,
         }
+
 
     if identity_mismatches:
         if not allow_fresh_start:
@@ -1554,14 +1623,101 @@ def load_compatible_state(
             "previous state incompatible; explicit fresh start",
         )
 
+    if controlled_f08_migration:
+        raw["schema_version"] = STATE_SCHEMA
+
+        # Persist the new validator identity after the one-time
+        # F08 schema-5 -> schema-6 migration. Future runs must
+        # pass ordinary exact compatibility.
+        raw["locked_models"] = dict(
+            raw.get("locked_models", {})
+        )
+
+        raw["locked_models"]["validator_code_hash"] = (
+            identity["validator_code_hash"]
+        )
+
+        migrated_definition = raw.get(
+            "experiment_definition"
+        )
+
+        if isinstance(migrated_definition, dict):
+            migrated_definition = json.loads(
+                json.dumps(
+                    migrated_definition
+                )
+            )
+
+            migrated_definition["identity"] = dict(
+                migrated_definition.get(
+                    "identity",
+                    {},
+                )
+            )
+
+            migrated_definition["identity"][
+                "validator_code_hash"
+            ] = identity["validator_code_hash"]
+
+            raw["experiment_definition"] = (
+                migrated_definition
+            )
+
     validate_state_integrity(
         raw
     )
 
+    previous_observation_ledger = raw.get(
+        "observation_ledger",
+        {},
+    )
+    previous_migration = (
+        previous_observation_ledger.get("migration")
+        if isinstance(previous_observation_ledger, dict)
+        else None
+    )
+
+    migration = initialize_observation_ledger_from_state(
+        raw,
+        OBSERVATION_LEDGER_FILE,
+        experiment_id=identity["experiment_id"],
+        event_name=(
+            "F08_LEDGER_INITIALIZED_FROM_STATE"
+            if identity["experiment_id"]
+            == "PHASE2D-HARDENED-20260924-F08"
+            else "PHASE2D_LEDGER_INITIALIZED_FROM_STATE"
+        ),
+    )
+
+    if migration.get("initialized"):
+        append_ledger_event(
+            migration["event"],
+            migration,
+        )
+        persisted_migration = migration
+    elif (
+        isinstance(previous_migration, dict)
+        and previous_migration.get("initialized") is True
+    ):
+        # Preserve the immutable one-time initialization metadata
+        # instead of replacing it with a current-run no-op result.
+        persisted_migration = previous_migration
+    else:
+        persisted_migration = migration
+
+    raw["observation_ledger"] = {
+        "file": str(OBSERVATION_LEDGER_FILE),
+        "migration": persisted_migration,
+    }
+
     return (
         raw,
         False,
-        "compatible state restored",
+        (
+            "compatible state restored; schema upgraded from 5 to 6"
+            if controlled_f08_migration
+            else "compatible state restored"
+        ),
     )
 
 
@@ -2269,6 +2425,18 @@ def main() -> int:
                             == "candidate"
                             else p_atr
                         ),
+                        "regime_adx": (
+                            float(row["adx"])
+                            if "adx" in row.index
+                            and pd.notna(row["adx"])
+                            else None
+                        ),
+                        "regime_atr_pct": (
+                            float(row["atr_pct"])
+                            if "atr_pct" in row.index
+                            and pd.notna(row["atr_pct"])
+                            else None
+                        ),
                         "created_at": utc_now(),
                     }
 
@@ -2390,6 +2558,12 @@ def main() -> int:
                 result,
             )
 
+            append_observation(
+                OBSERVATION_LEDGER_FILE,
+                EXPERIMENT_ID,
+                result,
+            )
+
             status = result.get(
                 "status",
                 "INVALID",
@@ -2435,30 +2609,40 @@ def main() -> int:
         "[07] CUMULATIVE RESULTS"
     )
 
+    # state.resolved is a bounded cache; the immutable observation ledger
+    # is the authoritative cumulative population for Phase 2D statistics.
+    ledger_observations = load_observations(
+        OBSERVATION_LEDGER_FILE,
+        experiment_id=EXPERIMENT_ID,
+    )
+
+    ledger_by_model = {
+        "candidate": [
+            r for r in ledger_observations
+            if r.get("model") == "candidate"
+        ],
+        "production": [
+            r for r in ledger_observations
+            if r.get("model") == "production"
+        ],
+    }
+
     candidate_summary = summarize(
-        state["resolved"]["candidate"]
+        ledger_by_model["candidate"]
     )
 
     production_summary = summarize(
-        state["resolved"]["production"]
+        ledger_by_model["production"]
     )
 
     candidate_clean = [
-        r
-        for r in state["resolved"][
-            "candidate"
-        ]
-        if r.get("status")
-        in {"TP", "SL", "EXPIRED"}
+        r for r in ledger_by_model["candidate"]
+        if r.get("status") in {"TP", "SL", "EXPIRED"}
     ]
 
     production_clean = [
-        r
-        for r in state["resolved"][
-            "production"
-        ]
-        if r.get("status")
-        in {"TP", "SL", "EXPIRED"}
+        r for r in ledger_by_model["production"]
+        if r.get("status") in {"TP", "SL", "EXPIRED"}
     ]
 
     side_breakdowns = {
@@ -2497,8 +2681,8 @@ def main() -> int:
     )
 
     promotion_gate = evaluate_promotion(
-        state["resolved"]["candidate"],
-        state["resolved"]["production"],
+        ledger_by_model["candidate"],
+        ledger_by_model["production"],
     )
 
     print_section(
@@ -2598,6 +2782,17 @@ def main() -> int:
 
         "side_breakdowns":
             side_breakdowns,
+
+        "observation_ledger": {
+            "file": str(OBSERVATION_LEDGER_FILE),
+            "total": len(ledger_observations),
+            "candidate": len(ledger_by_model["candidate"]),
+            "production": len(ledger_by_model["production"]),
+            "migration": state.get(
+                "observation_ledger",
+                {},
+            ).get("migration"),
+        },
 
         "pending": {
             "candidate": len(
