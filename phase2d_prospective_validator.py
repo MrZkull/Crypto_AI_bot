@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Phase 2D — Prospective Shadow Validation v2
 
@@ -317,13 +317,26 @@ def build_experiment_definition(
         "block_ms": 24 * 60 * 60 * 1000,
 
         "bootstrap_method": (
-            "independent_block_bootstrap"
+            "paired_utc_day_block_bootstrap"
         ),
 
         "bootstrap_seed": 42,
         "bootstrap_rounds": 10_000,
-        "confidence_level": 0.95,
-
+        "confidence_level": 0.9875,
+        "alpha_total": 0.05,
+        "alpha_per_checkpoint": 0.0125,
+        "checkpoint_blocks": [15, 20, 25, 30],
+        "final_checkpoint": 30,
+        "max_calendar_days": 90,
+        "paired_block_definition": (
+            "paired UTC calendar-day means matched on "
+            "common candidate/production UTC dates"
+        ),
+        "checkpoint_cutoff_definition": (
+            "global resolved_at cutoff for the scheduled "
+            "run; all eligible observations resolved by "
+            "that cutoff are included"
+        ),
         "ambiguous_excluded_from_gate": True,
         "expired_included_as_loss": True,
         "expired_net_r": -FRICTION_R,
@@ -3005,13 +3018,13 @@ def main() -> int:
     print(
         f"Candidate unique blocks : "
         f"{promotion_gate.get('unique_blocks_candidate', 0)}/"
-        f"{promotion_gate.get('min_unique_blocks', 10)}"
+        f"{promotion_gate.get('min_unique_blocks', 15)}"
     )
 
     print(
         f"Production unique blocks: "
         f"{promotion_gate.get('unique_blocks_production', 0)}/"
-        f"{promotion_gate.get('min_unique_blocks', 10)}"
+        f"{promotion_gate.get('min_unique_blocks', 15)}"
     )
 
     print(
