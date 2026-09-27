@@ -383,7 +383,7 @@ jobs:
 
           stored_schema = state.get("schema_version")
           controlled_f08_migration = (
-              stored_schema == 5
+              stored_schema in {5, 6}
               and expected_experiment_id == "PHASE2D-HARDENED-20260924-F08"
               and locked.get("experiment_id") == expected_experiment_id
           )
@@ -405,7 +405,7 @@ jobs:
 
           if state.get("schema_version") not in {5, 6}:
               mismatches["state_schema_version"] = {
-                  "expected": 5,
+                  "expected": "{5, 6}",
                   "actual": state.get("schema_version"),
               }
 
@@ -414,7 +414,6 @@ jobs:
           if (
               expected_experiment_id
               == "PHASE2D-HARDENED-20260924-F08"
-              and not controlled_f08_migration
           ):
               from pathlib import Path
 

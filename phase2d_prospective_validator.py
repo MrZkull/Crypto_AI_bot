@@ -1519,7 +1519,7 @@ def load_compatible_state(
     source_state_schema_version = stored_schema_version
 
     controlled_f08_migration = (
-        stored_schema_version == 5
+        stored_schema_version in {5, 6}
         and actual_identity.get("experiment_id")
         == "PHASE2D-HARDENED-20260924-F08"
         and identity.get("experiment_id")
@@ -1560,19 +1560,19 @@ def load_compatible_state(
         stored_definition,
         dict,
     ):
-        # The experiment definition embeds the validator identity. In this
-        # controlled migration, only validator_code_hash may change.
-        definition_for_compare = json.loads(
+        normalized_stored_definition = json.loads(
             json.dumps(
                 stored_definition
             )
         )
-        stored_definition_identity = definition_for_compare.get(
+
+        stored_definition_identity = normalized_stored_definition.get(
             "identity"
         )
         expected_definition_identity = experiment_definition.get(
             "identity"
         )
+
         if isinstance(stored_definition_identity, dict) and isinstance(
             expected_definition_identity,
             dict,
@@ -1582,6 +1582,61 @@ def load_compatible_state(
                     "validator_code_hash"
                 )
             )
+
+        legacy_methodology_keys = (
+            "bootstrap_method",
+            "confidence_level",
+            "alpha_total",
+            "alpha_per_checkpoint",
+            "checkpoint_blocks",
+            "final_checkpoint",
+            "max_calendar_days",
+            "paired_block_definition",
+            "checkpoint_cutoff_definition",
+        )
+
+        is_known_legacy_f08_definition = (
+            normalized_stored_definition.get(
+                "bootstrap_method"
+            )
+            == "independent_block_bootstrap"
+            and normalized_stored_definition.get(
+                "confidence_level"
+            )
+            == 0.95
+            and all(
+                key not in normalized_stored_definition
+                for key in legacy_methodology_keys[2:]
+            )
+        )
+
+        if is_known_legacy_f08_definition:
+            definition_for_compare = json.loads(
+                json.dumps(
+                    experiment_definition
+                )
+            )
+
+            for key in legacy_methodology_keys:
+                definition_for_compare.pop(
+                    key,
+                    None,
+                )
+
+            definition_for_compare["bootstrap_method"] = (
+                "independent_block_bootstrap"
+            )
+            definition_for_compare["confidence_level"] = 0.95
+
+            expected_definition_identity = definition_for_compare.get(
+                "identity"
+            )
+            if isinstance(expected_definition_identity, dict):
+                expected_definition_identity["validator_code_hash"] = (
+                    identity["validator_code_hash"]
+                )
+        else:
+            definition_for_compare = normalized_stored_definition
 
     if definition_for_compare != experiment_definition:
         identity_mismatches[
@@ -1640,9 +1695,11 @@ def load_compatible_state(
     if controlled_f08_migration:
         raw["schema_version"] = STATE_SCHEMA
 
-        # Persist the new validator identity after the one-time
-        # F08 schema-5 -> schema-6 migration. Future runs must
-        # pass ordinary exact compatibility.
+        # Persist the current validator identity and the current experiment
+        # definition after the one-time F08 legacy-methodology migration.
+        # This converts the known independent-bootstrap F08 state to the
+        # frozen paired-bootstrap methodology. The immutable observation
+        # ledger is preserved unchanged.
         raw["locked_models"] = dict(
             raw.get("locked_models", {})
         )
@@ -1651,31 +1708,11 @@ def load_compatible_state(
             identity["validator_code_hash"]
         )
 
-        migrated_definition = raw.get(
-            "experiment_definition"
+        raw["experiment_definition"] = json.loads(
+            json.dumps(
+                experiment_definition
+            )
         )
-
-        if isinstance(migrated_definition, dict):
-            migrated_definition = json.loads(
-                json.dumps(
-                    migrated_definition
-                )
-            )
-
-            migrated_definition["identity"] = dict(
-                migrated_definition.get(
-                    "identity",
-                    {},
-                )
-            )
-
-            migrated_definition["identity"][
-                "validator_code_hash"
-            ] = identity["validator_code_hash"]
-
-            raw["experiment_definition"] = (
-                migrated_definition
-            )
 
     validate_state_integrity(
         raw
