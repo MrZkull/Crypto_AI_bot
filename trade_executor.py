@@ -16,6 +16,7 @@ from config import (
 )
 from deribit_client import DeribitClient, TRADEABLE_SYMBOLS
 from feature_engineering import add_indicators
+from market_data_integrity import sanitize_closed_candles
 from smart_scheduler import (
     should_scan, get_mode_thresholds, get_effective_risk, check_correlation,
     check_btc_momentum, check_fear_and_greed
@@ -647,6 +648,7 @@ def _fetch_deribit_klines_live(symbol: str, interval: str, limit: int = LIVE_LIM
             if ticks:
                 df = pd.DataFrame({
                     "open_time": ticks,
+                    "close_time": [int(x) + int(res) * 60 * 1000 - 1 for x in ticks],
                     "open": [float(x) for x in res_data.get("open", [])],
                     "high": [float(x) for x in res_data.get("high", [])],
                     "low": [float(x) for x in res_data.get("low", [])],
@@ -673,7 +675,7 @@ def get_data(symbol: str, interval: str) -> pd.DataFrame:
                     for c in ["open","high","low","close","volume","taker_buy_base_vol"]:
                         if c in df.columns:
                             df[c] = pd.to_numeric(df[c], errors="coerce")
-                    keep = [c for c in ["open_time","open","high","low","close","volume","taker_buy_base_vol"]
+                    keep = [c for c in ["open_time","close_time","open","high","low","close","volume","taker_buy_base_vol"]
                             if c in df.columns]
                     return df[keep]
         except Exception: continue
@@ -728,17 +730,63 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                 log.warning(f"    [{symbol}] Missing open_time column — skip")
                 return None
 
+        now_ms = int(time.time() * 1000)
+
+        if "close_time" not in raw15.columns:
+            log.warning(f"    [{symbol}] Missing close_time on 15m production data — skip")
+            return None
+
+        clean_15m = sanitize_closed_candles(
+            raw15,
+            candle_duration_ms=15 * 60 * 1000,
+            observation_time_ms=now_ms,
+        )
+        raw15 = pd.DataFrame(clean_15m)
+        if raw15.empty or len(raw15) < 30:
+            log.warning(f"    [{symbol}] Insufficient completed 15m candles — skip")
+            return None
+
         df15 = add_indicators(raw15)
         if df15.empty or "open_time" not in df15.columns: return None
+
+        if btc_df15_live is not None and not btc_df15_live.empty:
+            if "close_time" not in btc_df15_live.columns:
+                btc_df15_live = pd.DataFrame()
+            else:
+                btc_df15_live = pd.DataFrame(sanitize_closed_candles(
+                    btc_df15_live,
+                    candle_duration_ms=15 * 60 * 1000,
+                    observation_time_ms=now_ms,
+                ))
 
         df15 = _merge_extra_features_live(df15, btc_df15_live).fillna(0)
 
         df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
-        df1h = add_indicators(df1h_raw).fillna(0) if (df1h_raw is not None and not df1h_raw.empty) else pd.DataFrame()
+        if df1h_raw is not None and not df1h_raw.empty and "close_time" in df1h_raw.columns:
+            df1h_clean = sanitize_closed_candles(
+                df1h_raw,
+                candle_duration_ms=60 * 60 * 1000,
+                observation_time_ms=now_ms,
+            )
+            df1h_raw = pd.DataFrame(df1h_clean)
+        else:
+            df1h_raw = pd.DataFrame()
+        df1h = add_indicators(df1h_raw).fillna(0) if not df1h_raw.empty else pd.DataFrame()
+
         df4h_raw = get_data(symbol, TIMEFRAME_TREND)
-        df4h = add_indicators(df4h_raw).fillna(0) if (df4h_raw is not None and not df4h_raw.empty) else pd.DataFrame()
+        if df4h_raw is not None and not df4h_raw.empty and "close_time" in df4h_raw.columns:
+            df4h_clean = sanitize_closed_candles(
+                df4h_raw,
+                candle_duration_ms=4 * 60 * 60 * 1000,
+                observation_time_ms=now_ms,
+            )
+            df4h_raw = pd.DataFrame(df4h_clean)
+        else:
+            df4h_raw = pd.DataFrame()
+        df4h = add_indicators(df4h_raw).fillna(0) if not df4h_raw.empty else pd.DataFrame()
 
         row = df15.iloc[-1].copy()
+        observation_time_ms = int(row["open_time"])
         r1h = df1h.iloc[-1] if not df1h.empty else pd.Series(0, index=df15.columns)
         r4h = df4h.iloc[-1] if not df4h.empty else pd.Series(0, index=df15.columns)
 
@@ -935,6 +983,7 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
             "reasons": reasons, "conf_tier": "high" if conf >= 60.0 else "normal",
             "fg_override": fg_override_active,
             "pred_id": pred_id,
+            "open_time": observation_time_ms,
             "snapshot": snapshot,
         }
     except Exception as e:

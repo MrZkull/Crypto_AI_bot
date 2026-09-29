@@ -102,3 +102,17 @@ def arbitrate_signals(
         reason="CANDIDATE_NOT_ELIGIBLE_FOR_SUBSTITUTION",
         comparable=True,
     )
+def arbitrate_observations(candidate: dict, production: dict) -> ArbitrationResult:
+    """Adapt real candidate/production observation dictionaries.
+
+    This remains evidence-only: it performs no exchange I/O and does not
+    invoke or modify the production execution path.
+    """
+    return arbitrate_signals(
+        candidate_symbol=candidate["symbol"],
+        candidate_open_time=int(candidate["open_time"]),
+        candidate_signal=candidate["signal"],
+        production_symbol=production["symbol"],
+        production_open_time=int(production["open_time"]),
+        production_signal=production["signal"],
+    )

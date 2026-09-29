@@ -1,6 +1,6 @@
 ﻿import unittest
 
-from phase2_stage2_arbitration import arbitrate_signals
+from phase2_stage2_arbitration import arbitrate_observations, arbitrate_signals
 
 
 class TestStage2Arbitration(unittest.TestCase):
@@ -91,6 +91,83 @@ class TestStage2Arbitration(unittest.TestCase):
             self.assertEqual(result.final_signal, "SELL")
             self.assertEqual(result.selected_policy, "production")
             self.assertEqual(result.reason, "PRODUCTION_SELL_PRECEDENCE")
+
+
+    def test_real_observation_shape_same_timestamp_is_comparable(self):
+        candidate = {
+            "symbol": "ETHUSDT",
+            "open_time": 1_700_000_000_000,
+            "signal": "BUY",
+        }
+        production = {
+            "symbol": "ETHUSDT",
+            "open_time": 1_700_000_000_000,
+            "signal": "NO_TRADE",
+        }
+
+        result = arbitrate_observations(candidate, production)
+
+        self.assertTrue(result.comparable)
+        self.assertEqual(result.final_signal, "BUY")
+        self.assertEqual(result.selected_policy, "candidate")
+        self.assertEqual(result.reason, "CANDIDATE_BUY_SUBSTITUTION")
+
+    def test_real_observation_shape_timestamp_mismatch_blocks_substitution(self):
+        candidate = {
+            "symbol": "ETHUSDT",
+            "open_time": 1_700_000_000_000,
+            "signal": "BUY",
+        }
+        production = {
+            "symbol": "ETHUSDT",
+            "open_time": 1_700_000_000_000 + 15 * 60 * 1000,
+            "signal": "NO_TRADE",
+        }
+
+        result = arbitrate_observations(candidate, production)
+
+        self.assertFalse(result.comparable)
+        self.assertEqual(result.final_signal, "NO_TRADE")
+        self.assertEqual(result.selected_policy, "production")
+        self.assertEqual(result.reason, "TIMESTAMP_MISMATCH")
+
+    def test_real_observation_shape_different_symbol_blocks_substitution(self):
+        candidate = {
+            "symbol": "ETHUSDT",
+            "open_time": 1_700_000_000_000,
+            "signal": "BUY",
+        }
+        production = {
+            "symbol": "BTCUSDT",
+            "open_time": 1_700_000_000_000,
+            "signal": "NO_TRADE",
+        }
+
+        result = arbitrate_observations(candidate, production)
+
+        self.assertFalse(result.comparable)
+        self.assertEqual(result.final_signal, "NO_TRADE")
+        self.assertEqual(result.selected_policy, "production")
+        self.assertEqual(result.reason, "SYMBOL_MISMATCH")
+
+    def test_real_observation_shape_production_sell_still_has_precedence(self):
+        candidate = {
+            "symbol": "ETHUSDT",
+            "open_time": 1_700_000_000_000,
+            "signal": "BUY",
+        }
+        production = {
+            "symbol": "ETHUSDT",
+            "open_time": 1_700_000_000_000,
+            "signal": "SELL",
+        }
+
+        result = arbitrate_observations(candidate, production)
+
+        self.assertTrue(result.comparable)
+        self.assertEqual(result.final_signal, "SELL")
+        self.assertEqual(result.selected_policy, "production")
+        self.assertEqual(result.reason, "PRODUCTION_SELL_PRECEDENCE")
 
 
 if __name__ == "__main__":
