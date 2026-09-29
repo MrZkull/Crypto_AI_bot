@@ -16,7 +16,13 @@ import pandas as pd
 import joblib
 
 from feature_engineering import add_indicators, ALL_FEATURES
-from market_data_integrity import sanitize_closed_candles, merge_completed_htf
+from market_data_integrity import (
+    sanitize_closed_candles,
+    merge_completed_htf,
+    build_observation_contract,
+    validate_observation_contract,
+    observation_identity,
+)
 from execution_policy import build_candidate_config
 
 try:
@@ -234,6 +240,28 @@ def record_candidate_setup(
     if int(observation_time_ms) <= 0:
         raise ValueError(f"Invalid observation timestamp for {pred_id}")
 
+    close_time = row.get("close_time")
+    if close_time in (None, ""):
+        raise ValueError(
+            f"Missing completed 15m close_time for {pred_id}"
+        )
+
+    observation_contract = build_observation_contract(
+        logical_symbol=str(symbol).upper(),
+        observation_market="BINANCE_SPOT",
+        observation_source={
+            "exchange": "binance",
+            "market_type": "spot",
+        },
+        execution_instrument=None,
+        interval="15m",
+        open_time=int(observation_time_ms),
+        close_time=int(close_time),
+        retrieved_at_ms=int(time.time() * 1000),
+    )
+    validate_observation_contract(observation_contract)
+    observation_id = list(observation_identity(observation_contract))
+
     balance = float(manifest_config.get("evaluation_balance_usd", 10_000.0))
     atr = float(row.get("atr", 0.0))
     if atr <= 0.0 or np.isnan(atr):
@@ -273,6 +301,8 @@ def record_candidate_setup(
             "market_type": "spot",
         },
         "observation_market": "BINANCE_SPOT",
+        "observation_contract": observation_contract,
+        "observation_identity": observation_id,
         "side": side,
         "primary_selected": bool(primary_selected),
         "meta_selected": bool(meta_selected),

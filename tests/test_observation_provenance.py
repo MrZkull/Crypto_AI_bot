@@ -12,6 +12,7 @@ class TestObservationProvenance(unittest.TestCase):
             {"trained_at": "test"},
             {
                 "open_time": 1_700_000_000_000,
+                "close_time": 1_700_000_899_999,
                 "close": 2000.0,
                 "atr": 20.0,
                 "rsi": 55.0,

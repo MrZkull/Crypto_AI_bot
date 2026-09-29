@@ -31,6 +31,398 @@ def interval_ms(interval_str: str) -> int:
     return TIMEFRAME_MS[interval_str]
 
 
+OBSERVATION_CONTRACT_VERSION = "1.0"
+
+OBSERVATION_IDENTITY_FIELDS = (
+    "logical_symbol",
+    "open_time",
+    "interval",
+    "observation_source",
+)
+
+
+def _contract_source(source, field_name="observation_source"):
+    if not isinstance(source, dict):
+        raise ValueError(f"{field_name} must be a dict")
+
+    exchange = str(source.get("exchange", "")).strip().lower()
+    market_type = str(source.get("market_type", "")).strip().lower()
+
+    if not exchange:
+        raise ValueError(f"{field_name}.exchange is required")
+    if not market_type:
+        raise ValueError(f"{field_name}.market_type is required")
+
+    return {
+        "exchange": exchange,
+        "market_type": market_type,
+    }
+
+
+def _contract_ts(name, value):
+    try:
+        value = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{name} must be an integer timestamp")
+
+    if value <= 0:
+        raise ValueError(f"{name} must be > 0")
+
+    return value
+
+
+def _contract_source_record(
+    record,
+    *,
+    name,
+    expected_interval,
+    default_symbol=None,
+    default_market=None,
+    default_source=None,
+    allow_defaults=False,
+):
+    if record is None:
+        return None
+
+    if not isinstance(record, dict):
+        raise ValueError(f"{name} must be a dict or None")
+
+    if allow_defaults:
+        logical_symbol_value = record.get("logical_symbol", default_symbol)
+        observation_market_value = record.get("observation_market", default_market)
+        observation_source_value = record.get("observation_source", default_source)
+    else:
+        logical_symbol_value = record.get("logical_symbol")
+        observation_market_value = record.get("observation_market")
+        observation_source_value = record.get("observation_source")
+
+    if logical_symbol_value in (None, ""):
+        raise ValueError(f"{name}.logical_symbol is required")
+    if observation_market_value in (None, ""):
+        raise ValueError(f"{name}.observation_market is required")
+    if observation_source_value is None:
+        raise ValueError(f"{name}.observation_source is required")
+
+    logical_symbol = str(logical_symbol_value).strip().upper()
+    observation_market = str(observation_market_value).strip().upper()
+
+    if not logical_symbol:
+        raise ValueError(f"{name}.logical_symbol is required")
+    if not observation_market:
+        raise ValueError(f"{name}.observation_market is required")
+
+    source = _contract_source(
+        observation_source_value,
+        f"{name}.observation_source",
+    )
+
+    interval = record.get("interval", expected_interval)
+    if interval != expected_interval:
+        raise ValueError(
+            f"{name}.interval must be {expected_interval!r}, got {interval!r}"
+        )
+
+    open_time = _contract_ts(
+        f"{name}.open_time",
+        record.get("open_time"),
+    )
+    close_time = _contract_ts(
+        f"{name}.close_time",
+        record.get("close_time"),
+    )
+
+    expected_close_time = open_time + interval_ms(interval) - 1
+    if close_time != expected_close_time:
+        raise ValueError(
+            f"{name}.close_time does not match {interval}: "
+            f"expected {expected_close_time}, got {close_time}"
+        )
+
+    return {
+        "logical_symbol": logical_symbol,
+        "observation_market": observation_market,
+        "observation_source": source,
+        "interval": interval,
+        "open_time": open_time,
+        "close_time": close_time,
+    }
+
+
+def build_observation_contract(
+    *,
+    logical_symbol,
+    observation_market,
+    observation_source,
+    execution_instrument,
+    interval,
+    open_time,
+    close_time,
+    retrieved_at_ms=None,
+    htf_sources=None,
+    btc_source=None,
+):
+    """Build and strictly validate the schema-versioned Observation Contract.
+
+    Stable observation identity is:
+        logical_symbol + open_time + interval + observation_source
+
+    Retrieval timestamp and execution instrument are metadata and are
+    intentionally excluded from observation identity/comparability.
+    """
+    logical_symbol = str(logical_symbol).strip().upper()
+    if not logical_symbol:
+        raise ValueError("logical_symbol is required")
+
+    observation_market = str(observation_market).strip().upper()
+    if not observation_market:
+        raise ValueError("observation_market is required")
+
+    observation_source = _contract_source(observation_source)
+
+    if interval not in ("15m", "1h", "4h"):
+        raise ValueError(
+            f"Observation Contract interval must be 15m, 1h, or 4h; got {interval!r}"
+        )
+
+    open_time = _contract_ts("open_time", open_time)
+    close_time = _contract_ts("close_time", close_time)
+
+    expected_close_time = open_time + interval_ms(interval) - 1
+    if close_time != expected_close_time:
+        raise ValueError(
+            "Primary close_time does not match interval: "
+            f"expected {expected_close_time}, got {close_time}"
+        )
+
+    if execution_instrument is not None:
+        execution_instrument = str(execution_instrument).strip() or None
+
+    if retrieved_at_ms is not None:
+        retrieved_at_ms = _contract_ts(
+            "retrieved_at_ms",
+            retrieved_at_ms,
+        )
+        if retrieved_at_ms < close_time:
+            raise ValueError(
+                "retrieved_at_ms cannot be earlier than primary close_time"
+            )
+
+    normalized_htf = {
+        "1h": None,
+        "4h": None,
+    }
+
+    for timeframe in ("1h", "4h"):
+        record = (
+            htf_sources.get(timeframe)
+            if isinstance(htf_sources, dict)
+            else None
+        )
+
+        if record is None:
+            continue
+
+        normalized = _contract_source_record(
+            record,
+            name=f"htf_sources.{timeframe}",
+            expected_interval=timeframe,
+            default_symbol=logical_symbol,
+            default_market=observation_market,
+            default_source=observation_source,
+            allow_defaults=True,
+        )
+
+        if normalized["close_time"] > close_time:
+            raise ValueError(
+                f"htf_sources.{timeframe}.close_time is after primary close_time"
+            )
+
+        normalized_htf[timeframe] = normalized
+
+    normalized_btc = None
+
+    if btc_source is not None:
+        normalized_btc = _contract_source_record(
+            btc_source,
+            name="btc_source",
+            expected_interval="15m",
+            default_symbol="BTCUSDT",
+            default_market=observation_market,
+            default_source=observation_source,
+        )
+
+        if normalized_btc["logical_symbol"] != "BTCUSDT":
+            raise ValueError(
+                "btc_source.logical_symbol must be BTCUSDT"
+            )
+
+        if normalized_btc["close_time"] > close_time:
+            raise ValueError(
+                "btc_source.close_time is after primary close_time"
+            )
+
+    contract = {
+        "contract_version": OBSERVATION_CONTRACT_VERSION,
+        "logical_symbol": logical_symbol,
+        "observation_market": observation_market,
+        "observation_source": observation_source,
+        "execution_instrument": execution_instrument,
+        "interval": interval,
+        "open_time": open_time,
+        "close_time": close_time,
+        "retrieved_at_ms": retrieved_at_ms,
+        "htf_sources": normalized_htf,
+        "btc_source": normalized_btc,
+    }
+
+    validate_observation_contract(contract)
+    return contract
+
+
+def validate_observation_contract(contract):
+    """Strictly validate an Observation Contract without modifying it."""
+    if not isinstance(contract, dict):
+        raise ValueError("Observation Contract must be a dict")
+
+    if contract.get("contract_version") != OBSERVATION_CONTRACT_VERSION:
+        raise ValueError(
+            "Unsupported Observation Contract version: "
+            f"{contract.get('contract_version')!r}"
+        )
+
+    logical_symbol = str(
+        contract.get("logical_symbol", "")
+    ).strip().upper()
+
+    if not logical_symbol:
+        raise ValueError("logical_symbol is required")
+
+    observation_market = str(
+        contract.get("observation_market", "")
+    ).strip().upper()
+
+    if not observation_market:
+        raise ValueError("observation_market is required")
+
+    _contract_source(contract.get("observation_source"))
+
+    interval = contract.get("interval")
+
+    if interval not in ("15m", "1h", "4h"):
+        raise ValueError(
+            f"Unsupported Observation Contract interval: {interval!r}"
+        )
+
+    open_time = _contract_ts(
+        "open_time",
+        contract.get("open_time"),
+    )
+
+    close_time = _contract_ts(
+        "close_time",
+        contract.get("close_time"),
+    )
+
+    expected_close_time = open_time + interval_ms(interval) - 1
+
+    if close_time != expected_close_time:
+        raise ValueError(
+            f"Invalid primary close_time: expected {expected_close_time}, "
+            f"got {close_time}"
+        )
+
+    retrieved_at_ms = contract.get("retrieved_at_ms")
+
+    if retrieved_at_ms is not None:
+        retrieved_at_ms = _contract_ts(
+            "retrieved_at_ms",
+            retrieved_at_ms,
+        )
+
+        if retrieved_at_ms < close_time:
+            raise ValueError(
+                "retrieved_at_ms cannot be earlier than primary close_time"
+            )
+
+    htf_sources = contract.get("htf_sources")
+
+    if not isinstance(htf_sources, dict):
+        raise ValueError("htf_sources must be a dict")
+
+    unknown_htf = set(htf_sources) - {"1h", "4h"}
+    if unknown_htf:
+        raise ValueError(
+            f"Unsupported htf_sources keys: {sorted(unknown_htf)!r}"
+        )
+
+    for timeframe in ("1h", "4h"):
+        record = htf_sources.get(timeframe)
+
+        if record is None:
+            continue
+
+        normalized = _contract_source_record(
+            record,
+            name=f"htf_sources.{timeframe}",
+            expected_interval=timeframe,
+        )
+
+        if normalized["close_time"] > close_time:
+            raise ValueError(
+                f"htf_sources.{timeframe}.close_time is after primary close_time"
+            )
+
+    btc_source = contract.get("btc_source")
+
+    if btc_source is not None:
+        normalized_btc = _contract_source_record(
+            btc_source,
+            name="btc_source",
+            expected_interval="15m",
+        )
+
+        if normalized_btc["logical_symbol"] != "BTCUSDT":
+            raise ValueError(
+                "btc_source.logical_symbol must be BTCUSDT"
+            )
+
+        if normalized_btc["close_time"] > close_time:
+            raise ValueError(
+                "btc_source.close_time is after primary close_time"
+            )
+
+    execution_instrument = contract.get("execution_instrument")
+
+    if (
+        execution_instrument is not None
+        and not str(execution_instrument).strip()
+    ):
+        raise ValueError(
+            "execution_instrument cannot be blank"
+        )
+
+    return True
+
+
+def observation_identity(contract):
+    """Return stable observation identity.
+
+    Retrieval time and execution instrument are deliberately excluded.
+    """
+    validate_observation_contract(contract)
+
+    source = contract["observation_source"]
+
+    return (
+        contract["logical_symbol"],
+        int(contract["open_time"]),
+        contract["interval"],
+        source["exchange"],
+        source["market_type"],
+    )
+
+
+
 def sanitize_closed_candles(
     raw,
     interval_ms_value: int = None,

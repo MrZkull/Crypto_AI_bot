@@ -16,7 +16,12 @@ from config import (
 )
 from deribit_client import DeribitClient, TRADEABLE_SYMBOLS
 from feature_engineering import add_indicators
-from market_data_integrity import sanitize_closed_candles
+from market_data_integrity import (
+    sanitize_closed_candles,
+    build_observation_contract,
+    validate_observation_contract,
+    observation_identity,
+)
 from smart_scheduler import (
     should_scan, get_mode_thresholds, get_effective_risk, check_correlation,
     check_btc_momentum, check_fear_and_greed
@@ -155,7 +160,135 @@ def _candidate_identity_fields() -> dict:
         return {}
 
 
+def _latest_contract_source(
+    df: pd.DataFrame,
+    *,
+    interval: str,
+    logical_symbol: str,
+    observation_market: str,
+    observation_source: dict,
+    primary_close_time: int,
+):
+    # Return the latest completed source candle usable at the primary observation.
+    if df is None or df.empty:
+        return None
+    if not {"open_time", "close_time"}.issubset(df.columns):
+        return None
+
+    eligible = df.copy()
+    eligible["open_time"] = pd.to_numeric(
+        eligible["open_time"], errors="coerce"
+    )
+    eligible["close_time"] = pd.to_numeric(
+        eligible["close_time"], errors="coerce"
+    )
+    eligible = eligible.dropna(subset=["open_time", "close_time"])
+    eligible = eligible[
+        eligible["close_time"] <= int(primary_close_time)
+    ].sort_values("close_time")
+
+    if eligible.empty:
+        return None
+
+    source_row = eligible.iloc[-1]
+    return {
+        "logical_symbol": str(logical_symbol).upper(),
+        "observation_market": str(observation_market).upper(),
+        "observation_source": dict(observation_source),
+        "interval": interval,
+        "open_time": int(source_row["open_time"]),
+        "close_time": int(source_row["close_time"]),
+    }
+
+
+def _build_signal_observation_contract(
+    symbol: str,
+    row: pd.Series,
+    *,
+    df1h_raw: pd.DataFrame,
+    df4h_raw: pd.DataFrame,
+    btc_df15_live: pd.DataFrame,
+    retrieved_at_ms: int,
+):
+    # Build and validate the canonical contract for one production observation.
+    primary_close_time = int(row["close_time"])
+    logical_symbol = str(symbol).upper()
+    observation_market = "BINANCE_SPOT"
+    observation_source = {
+        "exchange": "binance",
+        "market_type": "spot",
+    }
+
+    htf_sources = {}
+
+    source_1h = _latest_contract_source(
+        df1h_raw,
+        interval="1h",
+        logical_symbol=logical_symbol,
+        observation_market=observation_market,
+        observation_source=observation_source,
+        primary_close_time=primary_close_time,
+    )
+    if source_1h is not None:
+        htf_sources["1h"] = source_1h
+
+    source_4h = _latest_contract_source(
+        df4h_raw,
+        interval="4h",
+        logical_symbol=logical_symbol,
+        observation_market=observation_market,
+        observation_source=observation_source,
+        primary_close_time=primary_close_time,
+    )
+    if source_4h is not None:
+        htf_sources["4h"] = source_4h
+
+    btc_source = _latest_contract_source(
+        btc_df15_live,
+        interval="15m",
+        logical_symbol="BTCUSDT",
+        observation_market=observation_market,
+        observation_source=observation_source,
+        primary_close_time=primary_close_time,
+    )
+
+    contract = build_observation_contract(
+        logical_symbol=logical_symbol,
+        observation_market=observation_market,
+        observation_source=observation_source,
+        execution_instrument=None,
+        interval=str(TIMEFRAME_ENTRY),
+        open_time=int(row["open_time"]),
+        close_time=primary_close_time,
+        retrieved_at_ms=int(retrieved_at_ms),
+        htf_sources=htf_sources,
+        btc_source=btc_source,
+    )
+    validate_observation_contract(contract)
+    return contract
+
+
 def _pred_record(symbol, sig, conf, pipeline, row, disagreement, reject_reason=None, pred_id=None):
+    observation_contract = row.get("_observation_contract")
+    if observation_contract is None:
+        if "close_time" not in row:
+            raise ValueError("Prediction record requires observation close_time")
+        observation_contract = build_observation_contract(
+            logical_symbol=str(symbol).upper(),
+            observation_market="BINANCE_SPOT",
+            observation_source={
+                "exchange": "binance",
+                "market_type": "spot",
+            },
+            execution_instrument=None,
+            interval=str(TIMEFRAME_ENTRY),
+            open_time=int(row["open_time"]),
+            close_time=int(row["close_time"]),
+            retrieved_at_ms=int(time.time() * 1000),
+        )
+    validate_observation_contract(observation_contract)
+    identity = list(observation_identity(observation_contract))
+
     entry = float(row.get("close", 0) or 0)
     atr   = float(row.get("atr", 0) or 0)
     stop  = (entry - atr*ATR_STOP_MULT) if sig == "BUY" else (entry + atr*ATR_STOP_MULT) if sig == "SELL" else None
@@ -172,6 +305,8 @@ def _pred_record(symbol, sig, conf, pipeline, row, disagreement, reject_reason=N
             "market_type": "spot",
         },
         "observation_market":    "BINANCE_SPOT",
+        "observation_contract":  observation_contract,
+        "observation_identity":  identity,
         "predicted_signal":      sig,
         "confidence":            conf,
         "entry_ref":             entry,
@@ -1043,6 +1178,16 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         row["rsi_4h"]   = float(r4h.get("rsi",   50))
         row["trend_4h"] = float(r4h.get("trend",  0))
 
+        observation_contract = _build_signal_observation_contract(
+            symbol,
+            row,
+            df1h_raw=df1h_raw,
+            df4h_raw=df4h_raw,
+            btc_df15_live=btc_df15_live,
+            retrieved_at_ms=now_ms,
+        )
+        row["_observation_contract"] = observation_contract
+
         af   = pipeline["all_features"]
         for col in af:
             if col not in row: row[col] = 0.0
@@ -1238,6 +1383,8 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                 "market_type": "spot",
             },
             "observation_market": "BINANCE_SPOT",
+            "observation_contract": observation_contract,
+            "observation_identity": list(observation_identity(observation_contract)),
             "snapshot": snapshot,
         }
     except Exception as e:

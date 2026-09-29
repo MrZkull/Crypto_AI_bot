@@ -172,6 +172,29 @@ class TestProductionObservationContract(unittest.TestCase):
         self.assertIn("open_time", result)
         self.assertIsInstance(result["open_time"], int)
         self.assertEqual(result["open_time"], expected_open_time)
+        self.assertIn("observation_contract", result)
+        self.assertEqual(
+            result["observation_contract"]["logical_symbol"],
+            "ETH-PERPETUAL",
+        )
+        self.assertEqual(
+            result["observation_contract"]["interval"],
+            "15m",
+        )
+        self.assertEqual(
+            result["observation_contract"]["observation_source"],
+            {"exchange": "binance", "market_type": "spot"},
+        )
+        self.assertEqual(
+            result["observation_identity"],
+            [
+                "ETH-PERPETUAL",
+                expected_open_time,
+                "15m",
+                "binance",
+                "spot",
+            ],
+        )
 
     def test_forming_15m_candle_is_excluded(self):
         df15 = self._make_15m_data()
