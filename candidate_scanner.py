@@ -62,8 +62,10 @@ STATE_FILE           = Path("candidate_state.json")
 
 def fetch_klines(symbol: str, interval: str, limit: int = 150) -> pd.DataFrame:
     """Fetches public market candles directly without requiring API credentials."""
+    # Stage 2B: candidate observations must use the same canonical
+    # Binance Spot market stream as the production signal path.
     endpoints = [
-        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
     ]
     headers = {"User-Agent": "CryptoBot-Shadow-Scanner/2.0"}
@@ -88,7 +90,17 @@ def fetch_klines(symbol: str, interval: str, limit: int = 150) -> pd.DataFrame:
                         })
                     df = pd.DataFrame(rows)
                     if not df.empty:
-                        return df.sort_values("open_time").reset_index(drop=True)
+                        df = df.sort_values("open_time").reset_index(drop=True)
+
+                        df.attrs["logical_symbol"] = str(symbol).upper()
+                        df.attrs["interval"] = str(interval)
+                        df.attrs["observation_market"] = "BINANCE_SPOT"
+                        df.attrs["observation_source"] = {
+                            "exchange": "binance",
+                            "market_type": "spot",
+                        }
+
+                        return df
         except Exception:
             continue
 
@@ -183,6 +195,16 @@ def generate_live_features(symbol: str, btc_df15: pd.DataFrame) -> pd.DataFrame:
     df15 = _align_btc_to_15m(btc_df15, df15)
     df15 = _add_extra_features(df15)
     df15["symbol"] = symbol
+
+    # Explicit provenance for the completed 15m model observation.
+    df15.attrs["logical_symbol"] = str(symbol).upper()
+    df15.attrs["interval"] = "15m"
+    df15.attrs["observation_market"] = "BINANCE_SPOT"
+    df15.attrs["observation_source"] = {
+        "exchange": "binance",
+        "market_type": "spot",
+    }
+
     return df15
 
 
@@ -243,6 +265,14 @@ def record_candidate_setup(
         "config_hash": manifest["config_hash"],
 
         "symbol": symbol,
+        "logical_symbol": str(symbol).upper(),
+        "open_time": int(observation_time_ms),
+        "interval": "15m",
+        "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot",
+        },
+        "observation_market": "BINANCE_SPOT",
         "side": side,
         "primary_selected": bool(primary_selected),
         "meta_selected": bool(meta_selected),

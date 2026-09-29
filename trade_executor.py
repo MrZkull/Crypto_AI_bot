@@ -164,6 +164,14 @@ def _pred_record(symbol, sig, conf, pipeline, row, disagreement, reject_reason=N
         "pred_id":               pred_id or f"{symbol}_{int(time.time()*1000)}",
         **_candidate_identity_fields(),
         "symbol":                symbol,
+        "logical_symbol":        str(symbol).upper(),
+        "open_time":             int(row.get("open_time", 0)),
+        "interval":              str(TIMEFRAME_ENTRY),
+        "observation_source":    {
+            "exchange": "binance",
+            "market_type": "spot",
+        },
+        "observation_market":    "BINANCE_SPOT",
         "predicted_signal":      sig,
         "confidence":            conf,
         "entry_ref":             entry,
@@ -1223,6 +1231,13 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
             "fg_override": fg_override_active,
             "pred_id": pred_id,
             "open_time": observation_time_ms,
+            "logical_symbol": str(symbol).upper(),
+            "interval": str(TIMEFRAME_ENTRY),
+            "observation_source": {
+                "exchange": "binance",
+                "market_type": "spot",
+            },
+            "observation_market": "BINANCE_SPOT",
             "snapshot": snapshot,
         }
     except Exception as e:
