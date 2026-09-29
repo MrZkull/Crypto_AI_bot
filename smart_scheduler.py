@@ -75,16 +75,23 @@ def get_drawdown_ratchet() -> float:
             and "Ghost" not in h.get("close_reason", "")
         )
 
-        # NOTE: this denominator is TODAY'S balance (already net of today's
-        # PnL), not the balance the day started with. That makes the ratchet
-        # self-reinforcing as losses accumulate — each subsequent dollar lost
-        # counts for a larger % against an already-shrunken base. At small
-        # account sizes this trips the halt/half-risk thresholds off very
-        # small absolute losses. Directionally conservative (never dangerous
-        # the way it fails), but worth switching to a tracked day-start
-        # balance if you want the % to mean what it says, especially once
-        # running at the ~$10 scale discussed separately.
-        drawdown_pct = (today_pl / current_balance) * 100
+        # Use the balance at the start of the UTC day as the denominator.
+        # With a balance snapshot representing current equity and today's
+        # realized PnL available in trade_history, day_start_balance can be
+        # reconstructed as current_balance - today_pl.
+        #
+        # This avoids the old self-referential denominator where losses were
+        # divided by an already-shrunken balance, causing the same absolute
+        # loss to look progressively worse as the day continued.
+        day_start_balance = current_balance - today_pl
+        if day_start_balance <= 0:
+            log.error(
+                f"Invalid reconstructed day-start balance: "
+                f"current={current_balance:.8f}, today_pl={today_pl:+.8f}"
+            )
+            return 0.0
+
+        drawdown_pct = (today_pl / day_start_balance) * 100
 
         if drawdown_pct <= -5.0:
             log.warning(f"🚨 MAX DRAWDOWN ({drawdown_pct:.1f}%) — Trading Halted")
