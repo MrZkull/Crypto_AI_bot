@@ -17,7 +17,6 @@ import pandas as pd
 from feature_engineering import ALL_FEATURES
 from execution_policy import (
     get_policy_hash,
-    get_file_hash,
     get_feature_code_hash,
     get_feature_schema_hash,
     build_candidate_config,
@@ -32,6 +31,28 @@ MANIFEST_FILE = Path("candidate_manifest.json")
 MODEL_FILE = Path("candidate_model.pkl")
 EVENTS_LEDGER = Path("candidate_events.jsonl")
 PROD_MODEL_FILE = Path("pro_crypto_ai_model.pkl")
+
+# Stage 2D safety boundary:
+# Legacy Gate-10 promotion is retired. Current promotion requires the
+# Phase 2D evidence gate plus paper-trading stability and is NOT performed
+# by this legacy entrypoint.
+LEGACY_PROMOTION_ENABLED = False
+PROMOTION_STATE = "PAPER_STABILITY_REQUIRED"
+
+
+def assert_promotion_disabled():
+    if LEGACY_PROMOTION_ENABLED:
+        raise RuntimeError(
+            "CRITICAL: Legacy promotion must remain disabled."
+        )
+    raise RuntimeError(
+        "Legacy candidate promotion is retired. "
+        "No automatic or legacy Gate-10 model cutover is permitted. "
+        "Required sequence: Phase 2D evidence gate -> paper stability -> "
+        "controlled live review with kill switch."
+    )
+
+
 
 
 def require(condition: bool, message: str) -> None:
@@ -145,7 +166,7 @@ def reconstruct_and_verify_ledger(manifest: dict) -> list[dict]:
 
 
 def promote():
-    log.info("Starting candidate promotion audit...")
+    assert_promotion_disabled()
     require(MANIFEST_FILE.exists(), "candidate_manifest.json not found.")
 
     with open(MANIFEST_FILE, "r") as f:
