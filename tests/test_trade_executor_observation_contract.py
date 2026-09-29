@@ -117,13 +117,15 @@ class TestProductionObservationContract(unittest.TestCase):
             "trained_at": "test",
         }
 
-        def fake_get_data(symbol, interval):
+        def fake_get_data(symbol, interval, canonical_observation=False):
             if interval == trade_executor.TIMEFRAME_ENTRY:
                 return df15.copy()
             if interval == trade_executor.TIMEFRAME_CONFIRM:
                 return df1h.copy()
             if interval == trade_executor.TIMEFRAME_TREND:
-                return df4h.copy()
+                raise AssertionError(
+                    "generate_signal must derive 4h context locally from completed 1h candles"
+                )
             raise AssertionError(f"Unexpected interval: {interval}")
 
         with patch.object(trade_executor, "get_data", side_effect=fake_get_data), \
@@ -235,13 +237,15 @@ class TestProductionObservationContract(unittest.TestCase):
             "trained_at": "test",
         }
 
-        def fake_get_data(symbol, interval):
+        def fake_get_data(symbol, interval, canonical_observation=False):
             if interval == trade_executor.TIMEFRAME_ENTRY:
                 return df15.copy()
             if interval == trade_executor.TIMEFRAME_CONFIRM:
                 return df1h.copy()
             if interval == trade_executor.TIMEFRAME_TREND:
-                return df4h.copy()
+                raise AssertionError(
+                    "generate_signal must derive 4h context locally from completed 1h candles"
+                )
             raise AssertionError(f"Unexpected interval: {interval}")
 
         with patch.object(trade_executor, "get_data", side_effect=fake_get_data), \
@@ -335,13 +339,15 @@ class TestProductionObservationContract(unittest.TestCase):
             "trained_at": "test",
         }
 
-        def fake_get_data(symbol, interval):
+        def fake_get_data(symbol, interval, canonical_observation=False):
             if interval == trade_executor.TIMEFRAME_ENTRY:
                 return df15.copy()
             if interval == trade_executor.TIMEFRAME_CONFIRM:
                 return df1h.copy()
             if interval == trade_executor.TIMEFRAME_TREND:
-                return df4h.copy()
+                raise AssertionError(
+                    "generate_signal must derive 4h context locally from completed 1h candles"
+                )
             raise AssertionError(f"Unexpected interval: {interval}")
 
         with patch.object(trade_executor, "get_data", side_effect=fake_get_data), \

@@ -660,31 +660,138 @@ def _fetch_deribit_klines_live(symbol: str, interval: str, limit: int = LIVE_LIM
     except Exception: pass
     return pd.DataFrame()
 
-def get_data(symbol: str, interval: str) -> pd.DataFrame:
-    for url in ["https://data-api.binance.vision/api/v3/klines", "https://binance.com/api/v3/klines", "https://fapi.binance.com/fapi/v1/klines"]:
-        try:
-            r = requests.get(url, params={"symbol":symbol,"interval":interval,"limit":LIVE_LIMIT}, timeout=8)
-            if r.status_code == 200:
-                raw = r.json()
-                if raw and isinstance(raw, list):
-                    df = pd.DataFrame(raw)
-                    cols = ["open_time","open","high","low","close","volume",
-                            "close_time","quote_vol","trades",
-                            "taker_buy_base_vol","taker_buy_quote_vol","ignore"]
-                    df.columns = cols[:df.shape[1]]
-                    for c in ["open","high","low","close","volume","taker_buy_base_vol"]:
-                        if c in df.columns:
-                            df[c] = pd.to_numeric(df[c], errors="coerce")
-                    keep = [c for c in ["open_time","close_time","open","high","low","close","volume","taker_buy_base_vol"]
-                            if c in df.columns]
-                    return df[keep]
-        except Exception: continue
+def get_data(
+    symbol: str,
+    interval: str,
+    canonical_observation: bool = False,
+) -> pd.DataFrame:
+    """Fetch market data with explicit observation-source semantics.
 
-    df_deribit = _fetch_deribit_klines_live(symbol, interval, limit=LIVE_LIMIT)
+    canonical_observation=True permits Binance Spot only and fails closed
+    rather than silently switching the observation source to Deribit.
+
+    Existing non-canonical callers retain the historical fallback behavior.
+    """
+    spot_urls = [
+        "https://data-api.binance.vision/api/v3/klines",
+        "https://binance.com/api/v3/klines",
+    ]
+
+    urls = list(spot_urls)
+
+    if not canonical_observation:
+        urls.append("https://fapi.binance.com/fapi/v1/klines")
+
+    for url in urls:
+        try:
+            r = requests.get(
+                url,
+                params={
+                    "symbol": symbol,
+                    "interval": interval,
+                    "limit": LIVE_LIMIT,
+                },
+                timeout=8,
+            )
+
+            if r.status_code != 200:
+                continue
+
+            raw = r.json()
+
+            if not raw or not isinstance(raw, list):
+                continue
+
+            df = pd.DataFrame(raw)
+
+            cols = [
+                "open_time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "close_time",
+                "quote_vol",
+                "trades",
+                "taker_buy_base_vol",
+                "taker_buy_quote_vol",
+                "ignore",
+            ]
+
+            df.columns = cols[:df.shape[1]]
+
+            for c in [
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "taker_buy_base_vol",
+            ]:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(
+                        df[c],
+                        errors="coerce",
+                    )
+
+            keep = [
+                c
+                for c in [
+                    "open_time",
+                    "close_time",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "taker_buy_base_vol",
+                ]
+                if c in df.columns
+            ]
+
+            out = df[keep].copy()
+
+            # Provenance is metadata only at this stage.
+            out.attrs["logical_symbol"] = str(symbol).upper()
+            out.attrs["observation_market"] = "BINANCE_SPOT"
+            out.attrs["observation_source"] = {
+                "exchange": "binance",
+                "market_type": "spot",
+            }
+
+            return out
+
+        except Exception:
+            continue
+
+    # Canonical signal observations must fail closed.
+    if canonical_observation:
+        return pd.DataFrame()
+
+    # Preserve the existing Deribit fallback for non-canonical callers.
+    df_deribit = _fetch_deribit_klines_live(
+        symbol,
+        interval,
+        limit=LIVE_LIMIT,
+    )
+
     if not df_deribit.empty:
+        df_deribit = df_deribit.copy()
+
+        df_deribit.attrs["logical_symbol"] = str(symbol).upper()
+        df_deribit.attrs["observation_market"] = (
+            "DERIBIT_LINEAR_USDC_PERPETUAL"
+        )
+        df_deribit.attrs["observation_source"] = {
+            "exchange": "deribit",
+            "market_type": "linear_usdc_perpetual",
+        }
+
         return df_deribit
 
     return pd.DataFrame()
+
 
 def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame) -> pd.DataFrame:
     if df15.empty or "open_time" not in df15.columns:
@@ -716,9 +823,145 @@ def _merge_extra_features_live(df15: pd.DataFrame, btc_df15: pd.DataFrame) -> pd
 
     return df.sort_values("open_time").reset_index(drop=True)
 
+def _aggregate_completed_1h_to_4h(df1h, observation_time_ms=None):
+    """Derive completed UTC 4H candles from completed Binance Spot 1H candles."""
+    required = {
+        "open_time",
+        "close_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    }
+
+    if df1h is None or df1h.empty:
+        return pd.DataFrame()
+
+    if not required.issubset(df1h.columns):
+        return pd.DataFrame()
+
+    hour_ms = 60 * 60 * 1000
+    four_hour_ms = 4 * hour_ms
+
+    work = df1h.copy()
+
+    try:
+        work["open_time"] = pd.to_numeric(
+            work["open_time"], errors="raise"
+        ).astype("int64")
+        work["close_time"] = pd.to_numeric(
+            work["close_time"], errors="raise"
+        ).astype("int64")
+
+        for col in ["open", "high", "low", "close", "volume"]:
+            work[col] = pd.to_numeric(work[col], errors="raise")
+    except Exception:
+        return pd.DataFrame()
+
+    if observation_time_ms is not None:
+        try:
+            observation_time_ms = int(observation_time_ms)
+        except Exception:
+            return pd.DataFrame()
+
+        work = work[
+            work["close_time"] <= observation_time_ms
+        ].copy()
+
+    if work.empty:
+        return pd.DataFrame()
+
+    expected_close = work["open_time"] + hour_ms - 1
+
+    if not (work["close_time"] == expected_close).all():
+        return pd.DataFrame()
+
+    if work["open_time"].duplicated().any():
+        return pd.DataFrame()
+
+    if not np.isfinite(
+        work[["open", "high", "low", "close", "volume"]]
+        .to_numpy(dtype=float)
+    ).all():
+        return pd.DataFrame()
+
+    work = work.sort_values("open_time").reset_index(drop=True)
+    work["_bucket"] = work["open_time"] // four_hour_ms
+
+    rows = []
+
+    for _, group in work.groupby("_bucket", sort=True):
+        group = group.sort_values("open_time").reset_index(drop=True)
+
+        if len(group) != 4:
+            continue
+
+        first_open = int(group.loc[0, "open_time"])
+
+        expected_times = [
+            first_open + i * hour_ms
+            for i in range(4)
+        ]
+
+        if group["open_time"].astype("int64").tolist() != expected_times:
+            continue
+
+        # Only accept UTC-aligned 4H buckets.
+        if first_open % four_hour_ms != 0:
+            continue
+
+        row = {
+            "open_time": first_open,
+            "close_time": first_open + four_hour_ms - 1,
+            "open": float(group.loc[0, "open"]),
+            "high": float(group["high"].max()),
+            "low": float(group["low"].min()),
+            "close": float(group.loc[3, "close"]),
+            "volume": float(group["volume"].sum()),
+        }
+
+        if "taker_buy_base_vol" in group.columns:
+            row["taker_buy_base_vol"] = float(
+                pd.to_numeric(
+                    group["taker_buy_base_vol"],
+                    errors="coerce",
+                ).sum()
+            )
+
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    out = pd.DataFrame(rows)
+
+    out.attrs["logical_symbol"] = work.attrs.get(
+        "logical_symbol", ""
+    )
+    out.attrs["observation_market"] = work.attrs.get(
+        "observation_market",
+        "BINANCE_SPOT",
+    )
+    out.attrs["observation_source"] = work.attrs.get(
+        "observation_source",
+        {
+            "exchange": "binance",
+            "market_type": "spot",
+        },
+    )
+    out.attrs["derived_from_interval"] = "1h"
+    out.attrs["derivation"] = (
+        "completed Binance Spot 1h -> UTC-aligned 4h"
+    )
+
+    return out.sort_values("open_time").reset_index(drop=True)
+
 def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None, btc_df15_live=None):
     try:
-        raw15 = get_data(symbol, TIMEFRAME_ENTRY)
+        raw15 = get_data(
+            symbol, TIMEFRAME_ENTRY, canonical_observation=True
+        )
         if raw15 is None or raw15.empty or len(raw15) < 30:
             log.warning(f"    [{symbol}] Insufficient/missing 15m candle data — skip")
             return None
@@ -761,7 +1004,9 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
 
         df15 = _merge_extra_features_live(df15, btc_df15_live).fillna(0)
 
-        df1h_raw = get_data(symbol, TIMEFRAME_CONFIRM)
+        df1h_raw = get_data(
+            symbol, TIMEFRAME_CONFIRM, canonical_observation=True
+        )
         if df1h_raw is not None and not df1h_raw.empty and "close_time" in df1h_raw.columns:
             df1h_clean = sanitize_closed_candles(
                 df1h_raw,
@@ -773,16 +1018,10 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
             df1h_raw = pd.DataFrame()
         df1h = add_indicators(df1h_raw).fillna(0) if not df1h_raw.empty else pd.DataFrame()
 
-        df4h_raw = get_data(symbol, TIMEFRAME_TREND)
-        if df4h_raw is not None and not df4h_raw.empty and "close_time" in df4h_raw.columns:
-            df4h_clean = sanitize_closed_candles(
-                df4h_raw,
-                candle_duration_ms=4 * 60 * 60 * 1000,
-                observation_time_ms=now_ms,
-            )
-            df4h_raw = pd.DataFrame(df4h_clean)
-        else:
-            df4h_raw = pd.DataFrame()
+        df4h_raw = _aggregate_completed_1h_to_4h(
+            df1h_raw,
+            observation_time_ms=now_ms,
+        )
         df4h = add_indicators(df4h_raw).fillna(0) if not df4h_raw.empty else pd.DataFrame()
 
         row = df15.iloc[-1].copy()
@@ -2073,7 +2312,7 @@ def _run_execution_scan_locked():
     whale_flow = get_exchange_netflow("BTC")
     fng_data = check_fear_and_greed()
     vol_state = vol.get("status", "NORMAL")
-    btc_df15_live = get_data("BTCUSDT", TIMEFRAME_ENTRY)
+    btc_df15_live = get_data("BTCUSDT", TIMEFRAME_ENTRY, canonical_observation=True)
 
     for symbol in SYMBOLS:
         log.info(f"\n  ── {symbol} ({get_tier(symbol)}) ──")
