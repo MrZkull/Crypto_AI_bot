@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import unittest
 
 
@@ -11,7 +11,8 @@ class TestPaperExecutionWorkflow(unittest.TestCase):
             ROOT / ".github" / "workflows" / "paper_execution.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("cron: '9,24,39,54 * * * *'", workflow)
+        self.assertIn("cron: '9 * * * *'", workflow)
+        self.assertNotIn("cron: '9,24,39,54 * * * *'", workflow)
         self.assertIn("python paper_execution.py", workflow)
         self.assertIn("permissions:\n  contents: write", workflow)
         self.assertNotIn("deribit", workflow.lower())

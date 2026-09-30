@@ -502,6 +502,72 @@ class TestPaperExecution(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_run_once_reports_operational_template_without_predictions(self):
+        self.predictions.write_text("[]", encoding="utf-8")
+        with patch.object(
+            paper,
+            "PAPER_STATE_FILE",
+            self.state,
+        ), patch.object(
+            paper,
+            "PAPER_EVENTS_FILE",
+            self.events,
+        ), patch.object(
+            paper,
+            "PREDICTIONS_FILE",
+            self.predictions,
+        ):
+            result = paper.run_once()
+
+        self.assertEqual(result["report_version"], 1)
+        self.assertEqual(result["run"]["execution_mode"], "PAPER_ONLY")
+        self.assertEqual(result["input"]["source_status"], "PRESENT_EMPTY")
+        self.assertEqual(result["input"]["records_loaded"], 0)
+        self.assertEqual(result["input"]["valid_predictions"], 0)
+        self.assertEqual(result["input"]["rejected_predictions"], 0)
+        self.assertIn("candles_processed", result["lifecycle"])
+        self.assertIn("reconciliation", result)
+
+    def test_run_once_reports_prediction_handoff_and_open(self):
+        pred = prediction()
+        signal_candle = {
+            "open_time": pred["open_time"],
+            "close_time": pred["observation_contract"]["close_time"],
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.5,
+            "close": 100.0,
+        }
+        self.predictions.write_text(
+            json.dumps([pred]),
+            encoding="utf-8",
+        )
+
+        with patch.object(
+            paper,
+            "PAPER_STATE_FILE",
+            self.state,
+        ), patch.object(
+            paper,
+            "PAPER_EVENTS_FILE",
+            self.events,
+        ), patch.object(
+            paper,
+            "PREDICTIONS_FILE",
+            self.predictions,
+        ), patch.object(
+            paper.monitor,
+            "fetch_latest_candle",
+            return_value=signal_candle,
+        ):
+            result = paper.run_once()
+
+        self.assertEqual(result["input"]["source_status"], "PRESENT")
+        self.assertEqual(result["input"]["records_loaded"], 1)
+        self.assertEqual(result["input"]["valid_predictions"], 1)
+        self.assertEqual(result["decisions"]["opened"], 1)
+        self.assertEqual(result["portfolio"]["active_positions"], 1)
+
     def test_run_once_is_noop_without_predictions(self):
         self.predictions.write_text("[]", encoding="utf-8")
         with patch.object(

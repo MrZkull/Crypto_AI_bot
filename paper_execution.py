@@ -19,6 +19,7 @@ import json
 import math
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from filelock import FileLock
@@ -395,38 +396,99 @@ def _record_decision(
     })
 
 
+def _new_decision_report() -> dict:
+    return {
+        "records_loaded": 0,
+        "valid_predictions": 0,
+        "rejected_predictions": 0,
+        "rejection_reasons": {},
+        "already_processed": 0,
+        "waiting_for_signal_candle": 0,
+        "missed_entry_window": 0,
+        "duplicate_symbol_active": 0,
+        "capacity_full": 0,
+        "direction_limit": 0,
+        "opened": 0,
+    }
+
+
+def _new_lifecycle_report() -> dict:
+    return {
+        "active_positions_seen": 0,
+        "candles_processed": 0,
+        "no_candle_available": 0,
+        "already_consumed_candle": 0,
+        "events_emitted": 0,
+        "tp1_partial": 0,
+        "updated": 0,
+        "closed": 0,
+        "closed_by_reason": {},
+        "expired": 0,
+    }
+
+
 def _open_eligible_predictions(
     state: dict,
     predictions: list[dict],
+    report: dict | None = None,
 ) -> tuple[bool, list[dict]]:
     dirty = False
     actions: list[dict] = []
+    report = report if report is not None else _new_decision_report()
+    report["records_loaded"] = len(predictions)
 
     normalized = []
     for raw in predictions:
         try:
             pred = _normalize_prediction(raw)
         except (TypeError, ValueError, KeyError):
+            report["rejected_predictions"] += 1
+            key = "MALFORMED_OR_INVALID"
+            report["rejection_reasons"][key] = report["rejection_reasons"].get(key, 0) + 1
             continue
         if pred is not None:
+            report["valid_predictions"] += 1
             normalized.append(pred)
+        else:
+            report["rejected_predictions"] += 1
+            key = (
+                "EXPLICIT_REJECT"
+                if isinstance(raw, dict) and raw.get("reject_reason") not in (None, "")
+                else "INVALID_PREDICTION"
+            )
+            report["rejection_reasons"][key] = report["rejection_reasons"].get(key, 0) + 1
 
     normalized.sort(
         key=lambda item: (item["open_time"], item["pred_id"])
     )
 
+    if normalized:
+        latest = normalized[-1]
+        report["latest_prediction"] = {
+            "pred_id": latest["pred_id"],
+            "symbol": latest["symbol"],
+            "side": latest["side"],
+            "open_time": latest["open_time"],
+            "generated_at": latest.get("generated_at"),
+        }
+    else:
+        report["latest_prediction"] = None
+
     for pred in normalized:
         pred_id = pred["pred_id"]
 
         if pred_id in state["positions"] or pred_id in state["decisions"]:
+            report["already_processed"] += 1
             continue
 
         active = _active_positions(state)
 
         if len(active) >= PAPER_MAX_OPEN_POSITIONS:
+            report["capacity_full"] += 1
             continue
 
         if _symbol_is_active(state, pred["symbol"]):
+            report["duplicate_symbol_active"] += 1
             _record_decision(
                 state,
                 pred,
@@ -436,21 +498,25 @@ def _open_eligible_predictions(
             continue
 
         if _direction_count(state, pred["side"]) >= PAPER_MAX_SAME_DIRECTION:
+            report["direction_limit"] += 1
             continue
 
         candle = monitor.fetch_latest_candle(pred["symbol"])
         if not candle:
+            report["waiting_for_signal_candle"] += 1
             continue
 
         latest_open_time = _latest_candle_open_time(candle)
 
         if latest_open_time < pred["open_time"]:
+            report["waiting_for_signal_candle"] += 1
             continue
 
         # A production prediction is executable only on its exact signal candle.
         # A later candle means the simulated entry window has been missed; never
         # fabricate an entry at a later market price.
         if latest_open_time > pred["open_time"]:
+            report["missed_entry_window"] += 1
             _record_decision(
                 state,
                 pred,
@@ -512,6 +578,7 @@ def _open_eligible_predictions(
             "pred_id": pred_id,
             "symbol": pred["symbol"],
         })
+        report["opened"] += 1
         dirty = True
 
     return dirty, actions
@@ -606,24 +673,32 @@ def _expire_position(
     }
 
 
-def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
+def _monitor_open_positions(
+    state: dict,
+    report: dict | None = None,
+) -> tuple[bool, list[dict]]:
     dirty = False
     actions: list[dict] = []
+    report = report if report is not None else _new_lifecycle_report()
 
     for pred_id, trade in list(state["positions"].items()):
         if trade.get("status") != "ACTIVE":
             continue
 
+        report["active_positions_seen"] += 1
         candle = monitor.fetch_latest_candle(str(trade["symbol"]))
         if not candle:
+            report["no_candle_available"] += 1
             continue
 
         candle_close_time = int(candle["close_time"])
         if candle_close_time <= int(
             trade.get("last_processed_candle_close_time", 0)
         ):
+            report["already_consumed_candle"] += 1
             continue
 
+        report["candles_processed"] += 1
         outcome = monitor.process_trade_candle(trade, candle)
         candle_open_time = _latest_candle_open_time(candle)
         candle_identity = _candle_observation_identity(trade, candle)
@@ -638,8 +713,12 @@ def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
         # be reprocessed on the next workflow run after an otherwise no-op bar.
         dirty = True
 
-        for lifecycle_event in outcome.get("events", []):
+        lifecycle_events = outcome.get("events", [])
+        report["events_emitted"] += len(lifecycle_events)
+        for lifecycle_event in lifecycle_events:
             event = dict(lifecycle_event)
+            if str(event.get("event", "")) == "PARTIAL_TP1_FILLED":
+                report["tp1_partial"] += 1
             event.update({
                 "event_id": _lifecycle_event_id(
                     pred_id,
@@ -665,6 +744,9 @@ def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
         if outcome.get("closed"):
             trade["resolved_at_ms"] = int(time.time() * 1000)
             trade["resolved_candle_close_time"] = candle_close_time
+            close_reason = str(trade.get("exit_reason") or "UNKNOWN")
+            report["closed"] += 1
+            report["closed_by_reason"][close_reason] = report["closed_by_reason"].get(close_reason, 0) + 1
             actions.append({
                 "action": "CLOSED",
                 "pred_id": pred_id,
@@ -681,6 +763,9 @@ def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
         ):
             expiry_event = _expire_position(trade, candle)
             _append_event(expiry_event)
+            report["closed"] += 1
+            report["expired"] += 1
+            report["closed_by_reason"]["EXPIRED"] = report["closed_by_reason"].get("EXPIRED", 0) + 1
             actions.append({
                 "action": "CLOSED",
                 "pred_id": pred_id,
@@ -691,6 +776,7 @@ def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
             dirty = True
 
         elif outcome.get("modified"):
+            report["updated"] += 1
             actions.append({
                 "action": "UPDATED",
                 "pred_id": pred_id,
@@ -876,15 +962,33 @@ def reconcile_state(state: dict) -> dict:
     }
 
 
+def _prediction_source_status(predictions) -> str:
+    if not PREDICTIONS_FILE.exists():
+        return "MISSING_FILE"
+    if not isinstance(predictions, list):
+        return "INVALID_FORMAT"
+    if not predictions:
+        return "PRESENT_EMPTY"
+    return "PRESENT"
+
+
 def run_once() -> dict:
     state = _load_state()
     predictions = _load_json(PREDICTIONS_FILE, [])
+    prediction_list = predictions if isinstance(predictions, list) else []
+
+    decision_report = _new_decision_report()
+    lifecycle_report = _new_lifecycle_report()
 
     dirty_open, open_actions = _open_eligible_predictions(
         state,
-        predictions if isinstance(predictions, list) else [],
+        prediction_list,
+        report=decision_report,
     )
-    dirty_monitor, monitor_actions = _monitor_open_positions(state)
+    dirty_monitor, monitor_actions = _monitor_open_positions(
+        state,
+        report=lifecycle_report,
+    )
 
     reconciliation = reconcile_state(state)
     if not reconciliation["ok"]:
@@ -906,10 +1010,32 @@ def run_once() -> dict:
     )
 
     return {
-        "paper_policy_version": PAPER_POLICY_VERSION,
-        "execution_mode": PAPER_EXECUTION_MODE,
-        "active_positions": active,
-        "closed_positions": closed,
+        "report_version": 1,
+        "run": {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "workflow": "stage2e-paper-execution",
+            "paper_policy_version": PAPER_POLICY_VERSION,
+            "execution_mode": PAPER_EXECUTION_MODE,
+        },
+        "input": {
+            "predictions_file": str(PREDICTIONS_FILE),
+            "source_status": _prediction_source_status(predictions),
+            "records_loaded": decision_report["records_loaded"],
+            "valid_predictions": decision_report["valid_predictions"],
+            "rejected_predictions": decision_report["rejected_predictions"],
+            "rejection_reasons": decision_report["rejection_reasons"],
+            "latest_prediction": decision_report.get("latest_prediction"),
+        },
+        "decisions": decision_report,
+        "lifecycle": lifecycle_report,
+        "portfolio": {
+            "initial_balance_usd": PAPER_INITIAL_BALANCE_USD,
+            "risk_per_trade": PAPER_RISK_PER_TRADE,
+            "max_open_positions": PAPER_MAX_OPEN_POSITIONS,
+            "max_same_direction": PAPER_MAX_SAME_DIRECTION,
+            "active_positions": active,
+            "closed_positions": closed,
+        },
         "open_actions": open_actions,
         "monitor_actions": monitor_actions,
         "reconciliation": reconciliation,
@@ -918,4 +1044,44 @@ def run_once() -> dict:
 
 
 if __name__ == "__main__":
-    print(json.dumps(run_once(), sort_keys=True))
+    result = run_once()
+    print("=" * 72)
+    print("Stage 2E PAPER EXECUTION | PAPER_ONLY")
+    print(f"Run UTC      : {result['run']['timestamp_utc']}")
+    print(
+        "Input        : "
+        f"{result['input']['source_status']} | "
+        f"loaded={result['input']['records_loaded']} | "
+        f"valid={result['input']['valid_predictions']} | "
+        f"rejected={result['input']['rejected_predictions']}"
+    )
+    print(
+        "Decisions    : "
+        f"opened={result['decisions']['opened']} | "
+        f"missed={result['decisions']['missed_entry_window']} | "
+        f"processed={result['decisions']['already_processed']} | "
+        f"dup_symbol={result['decisions']['duplicate_symbol_active']} | "
+        f"dir_limit={result['decisions']['direction_limit']}"
+    )
+    print(
+        "Lifecycle    : "
+        f"candles={result['lifecycle']['candles_processed']} | "
+        f"TP1={result['lifecycle']['tp1_partial']} | "
+        f"updated={result['lifecycle']['updated']} | "
+        f"closed={result['lifecycle']['closed']} | "
+        f"expired={result['lifecycle']['expired']}"
+    )
+    print(
+        "Portfolio    : "
+        f"active={result['portfolio']['active_positions']} | "
+        f"closed={result['portfolio']['closed_positions']} | "
+        f"state_changed={result['state_changed']}"
+    )
+    print(
+        "Reconcile    : "
+        f"ok={result['reconciliation']['ok']} | "
+        f"events={result['reconciliation']['event_count']} | "
+        f"checked={result['reconciliation']['checked_positions']}"
+    )
+    print("-" * 72)
+    print(json.dumps(result, indent=2, sort_keys=True))

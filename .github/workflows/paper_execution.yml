@@ -1,8 +1,8 @@
 name: CryptoBot AI — Stage 2E Paper Execution
 
 on:
-  # Production scanner runs at :04/:19/:34/:49. The :09/:24/:39/:54
-  # cadence gives the paper runner a short deterministic head-start window.
+  # Production scanner runs at :04/:19/:34/:49. Stage 2E runs once per hour
+  # at :09 UTC and consumes the persisted production prediction handoff.
   schedule:
     - cron: '9 * * * *'
   workflow_dispatch:
