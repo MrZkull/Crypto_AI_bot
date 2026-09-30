@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Stage 2E paper execution and reconciliation.
 
 PAPER ONLY:
@@ -234,6 +234,28 @@ def _latest_candle_open_time(candle: dict) -> int:
     return int(candle["close_time"]) - CANDLE_INTERVAL_MS + 1
 
 
+def _candle_observation_identity(trade: dict, candle: dict) -> list:
+    """Build the canonical Binance Spot identity for a closed lifecycle candle."""
+    close_time = int(candle["close_time"])
+    derived_open_time = _latest_candle_open_time(candle)
+
+    supplied_open_time = candle.get("open_time")
+    if supplied_open_time is not None:
+        supplied_open_time = int(supplied_open_time)
+        if supplied_open_time != derived_open_time:
+            raise ValueError(
+                f"Lifecycle candle open/close mismatch for {trade['pred_id']}"
+            )
+
+    return [
+        str(trade["logical_symbol"]).upper(),
+        derived_open_time,
+        str(trade["interval"]),
+        "binance",
+        "spot",
+    ]
+
+
 def _active_positions(state: dict) -> list[dict]:
     return [
         value
@@ -294,6 +316,13 @@ def _build_position(prediction: dict) -> dict:
         "interval": prediction["interval"],
         "observation_contract": prediction["observation_contract"],
         "observation_identity": prediction["observation_identity"],
+        "entry_observation_open_time": prediction["open_time"],
+        "entry_observation_close_time": int(
+            prediction["observation_contract"]["close_time"]
+        ),
+        "entry_observation_identity": list(
+            prediction["observation_identity"]
+        ),
         "model_version": prediction.get("model_version"),
         "generated_at": prediction.get("generated_at"),
 
@@ -303,6 +332,7 @@ def _build_position(prediction: dict) -> dict:
 
         "entry_price": prediction["entry_ref"],
         "entry_price_source": "SIGNAL_CLOSE_PROXY",
+        "simulated_entry": prediction["entry_ref"],
         "entry_ref": prediction["entry_ref"],
         "atr_ref": prediction["atr_ref"],
         "stop": stop,
@@ -457,6 +487,13 @@ def _open_eligible_predictions(
             "open_time": pred["open_time"],
             "entry_price": pred["entry_ref"],
             "entry_price_source": "SIGNAL_CLOSE_PROXY",
+            "entry_observation_open_time": pred["open_time"],
+            "entry_observation_close_time": int(
+                pred["observation_contract"]["close_time"]
+            ),
+            "entry_observation_identity": list(
+                pred["observation_identity"]
+            ),
             "atr_ref": pred["atr_ref"],
             "stop": position["stop"],
             "tp1": position["tp1"],
@@ -554,6 +591,8 @@ def _expire_position(
         "side": trade["side"],
         "open_time": trade["open_time"],
         "candle_close_time": int(candle["close_time"]),
+        "candle_open_time": _latest_candle_open_time(candle),
+        "candle_observation_identity": _candle_observation_identity(trade, candle),
         "exit_price": exit_price,
         "exit_reason": "EXPIRED",
         "remaining_qty": remaining_qty,
@@ -586,8 +625,25 @@ def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
             continue
 
         outcome = monitor.process_trade_candle(trade, candle)
+        candle_open_time = _latest_candle_open_time(candle)
+        candle_identity = _candle_observation_identity(trade, candle)
+        trade["last_observation_open_time"] = candle_open_time
+        trade["last_observation_close_time"] = candle_close_time
+        trade["last_observation_identity"] = candle_identity
+
         trade["last_processed_candle_close_time"] = candle_close_time
         trade["bars_processed"] = int(trade.get("bars_processed", 0)) + 1
+        trade["last_observation_open_time"] = int(
+            candle["open_time"]
+        )
+        trade["last_observation_close_time"] = candle_close_time
+        trade["last_observation_identity"] = [
+            str(trade["logical_symbol"]).upper(),
+            int(candle["open_time"]),
+            trade["interval"],
+            "binance",
+            "spot",
+        ]
 
         # Persist candle-consumption progress even when the lifecycle itself
         # produces no TP/SL/state event. Otherwise the same closed candle can
@@ -606,7 +662,17 @@ def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
                 "symbol": trade["symbol"],
                 "side": trade["side"],
                 "open_time": trade["open_time"],
+                "candle_open_time": int(candle["open_time"]),
                 "candle_close_time": candle_close_time,
+                "candle_open_time": candle_open_time,
+                "candle_observation_identity": candle_identity,
+                "candle_observation_identity": [
+                    str(trade["logical_symbol"]).upper(),
+                    int(candle["open_time"]),
+                    trade["interval"],
+                    "binance",
+                    "spot",
+                ],
                 "observation_identity": trade["observation_identity"],
                 "execution_mode": PAPER_EXECUTION_MODE,
                 "paper_policy_version": PAPER_POLICY_VERSION,
@@ -710,6 +776,99 @@ def reconcile_state(state: dict) -> dict:
                     f"{pred_id}:EXECUTION_MODE_MISMATCH"
                 )
 
+            entry_identity = trade.get("entry_observation_identity")
+            if entry_identity is not None:
+                if list(entry_identity) != list(identity):
+                    failures.append(
+                        f"{pred_id}:ENTRY_OBSERVATION_IDENTITY_MISMATCH"
+                    )
+
+                if int(
+                    trade.get("entry_observation_open_time", 0)
+                ) != int(identity[1]):
+                    failures.append(
+                        f"{pred_id}:ENTRY_OBSERVATION_OPEN_TIME_MISMATCH"
+                    )
+
+                expected_entry_close = (
+                    int(identity[1]) + CANDLE_INTERVAL_MS - 1
+                )
+                if int(
+                    trade.get("entry_observation_close_time", 0)
+                ) != expected_entry_close:
+                    failures.append(
+                        f"{pred_id}:ENTRY_OBSERVATION_CLOSE_TIME_MISMATCH"
+                    )
+
+            if trade.get("status") == "ACTIVE":
+                last_processed = int(
+                    trade.get(
+                        "last_processed_candle_close_time",
+                        identity[1] + CANDLE_INTERVAL_MS - 1,
+                    )
+                )
+                entry_close = int(
+                    trade["observation_contract"]["close_time"]
+                )
+
+                if last_processed > entry_close:
+                    last_open = trade.get("last_observation_open_time")
+                    last_close = trade.get("last_observation_close_time")
+                    last_identity = trade.get("last_observation_identity")
+
+                    if (
+                        last_open is None
+                        or last_close is None
+                        or last_identity is None
+                    ):
+                        failures.append(
+                            f"{pred_id}:MISSING_LAST_OBSERVATION_PROVENANCE"
+                        )
+                    else:
+                        expected_last_identity = [
+                            identity[0],
+                            int(last_open),
+                            identity[2],
+                            identity[3],
+                            identity[4],
+                        ]
+
+                        if list(last_identity) != expected_last_identity:
+                            failures.append(
+                                f"{pred_id}:LAST_OBSERVATION_IDENTITY_MISMATCH"
+                            )
+
+                        if int(last_close) != last_processed:
+                            failures.append(
+                                f"{pred_id}:LAST_OBSERVATION_CLOSE_TIME_MISMATCH"
+                            )
+
+                        if int(last_close) < entry_close:
+                            failures.append(
+                                f"{pred_id}:LAST_OBSERVATION_BEFORE_ENTRY"
+                            )
+
+            if trade.get("status") == "ACTIVE":
+                last_open = trade.get("last_observation_open_time")
+                last_close = trade.get("last_observation_close_time")
+                last_identity = trade.get("last_observation_identity")
+                if last_open is not None and last_close is not None:
+                    expected_identity = [
+                        identity[0],
+                        int(last_open),
+                        identity[2],
+                        identity[3],
+                        identity[4],
+                    ]
+                    if last_identity != expected_identity:
+                        failures.append(
+                            f"{pred_id}:LAST_OBSERVATION_IDENTITY_MISMATCH"
+                        )
+                    if int(last_close) < int(trade["observation_contract"]["close_time"]):
+                        failures.append(
+                            f"{pred_id}:LAST_OBSERVATION_BEFORE_ENTRY"
+                        )
+
             for field in (
                 "entry_price",
                 "atr_ref",
@@ -801,6 +960,7 @@ def run_once() -> dict:
 
 if __name__ == "__main__":
     print(json.dumps(run_once(), sort_keys=True))
+
 
 
 

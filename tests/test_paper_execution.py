@@ -1,4 +1,5 @@
-﻿import unittest
+import json
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -73,6 +74,32 @@ class TestPaperExecution(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_paper_position_is_compatible_with_shadow_lifecycle(self):
+        pred = paper._normalize_prediction(prediction())
+        position = paper._build_position(pred)
+
+        self.assertEqual(position["simulated_entry"], pred["entry_ref"])
+
+        lifecycle_candle = candle(
+            close=107.2,
+            high=107.5,
+            low=106.5,
+        )
+
+        outcome = paper.monitor.process_trade_candle(
+            position,
+            lifecycle_candle,
+        )
+
+        self.assertTrue(outcome["modified"])
+        self.assertFalse(outcome["closed"])
+        self.assertEqual(position["state"], "PARTIAL_TP1")
+        self.assertEqual(len(outcome["events"]), 1)
+        self.assertEqual(
+            outcome["events"][0]["event"],
+            "PARTIAL_TP1_FILLED",
+        )
 
     def test_build_position_is_paper_only_and_preserves_identity(self):
         pred = paper._normalize_prediction(prediction())
@@ -251,6 +278,108 @@ class TestPaperExecution(unittest.TestCase):
             position["last_processed_candle_close_time"],
             later_candle["close_time"],
         )
+    def test_open_and_lifecycle_events_record_observation_provenance(self):
+        state = paper._new_state()
+        pred = paper._normalize_prediction(prediction())
+
+        signal_candle = {
+            "open_time": pred["open_time"],
+            "close_time": pred["observation_contract"]["close_time"],
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.5,
+            "close": 100.0,
+        }
+        next_candle = candle()
+
+        with patch.object(
+            paper,
+            "PAPER_EVENTS_FILE",
+            self.events,
+        ), patch.object(
+            paper.monitor,
+            "fetch_latest_candle",
+            return_value=signal_candle,
+        ):
+            dirty, actions = paper._open_eligible_predictions(
+                state,
+                [prediction()],
+            )
+
+        self.assertTrue(dirty)
+        self.assertEqual(actions[0]["action"], "OPENED")
+        position = state["positions"][pred["pred_id"]]
+        self.assertEqual(
+            position["entry_observation_open_time"],
+            pred["open_time"],
+        )
+        self.assertEqual(
+            position["entry_observation_close_time"],
+            pred["observation_contract"]["close_time"],
+        )
+        self.assertEqual(
+            position["entry_observation_identity"],
+            pred["observation_identity"],
+        )
+
+        with patch.object(
+            paper,
+            "PAPER_EVENTS_FILE",
+            self.events,
+        ), patch.object(
+            paper.monitor,
+            "fetch_latest_candle",
+            return_value=next_candle,
+        ), patch.object(
+            paper.monitor,
+            "process_trade_candle",
+            return_value={
+                "modified": False,
+                "closed": False,
+                "events": [
+                    {
+                        "event": "CANDLE_OBSERVED",
+                    }
+                ],
+            },
+        ):
+            paper._monitor_open_positions(state)
+
+        self.assertEqual(
+            position["last_observation_open_time"],
+            next_candle["open_time"],
+        )
+        self.assertEqual(
+            position["last_observation_close_time"],
+            next_candle["close_time"],
+        )
+        self.assertEqual(
+            position["last_observation_identity"],
+            [
+                "ETHUSDT",
+                next_candle["open_time"],
+                "15m",
+                "binance",
+                "spot",
+            ],
+        )
+
+        events = [
+            json.loads(line)
+            for line in self.events.read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        lifecycle = [
+            item
+            for item in events
+            if item.get("event") == "CANDLE_OBSERVED"
+        ][0]
+        self.assertEqual(
+            lifecycle["candle_observation_identity"],
+            position["last_observation_identity"],
+        )
     def test_active_position_is_processed_once_per_closed_candle(self):
         state = paper._new_state()
         pred = paper._normalize_prediction(prediction())
@@ -395,5 +524,6 @@ class TestPaperExecution(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
