@@ -26,6 +26,23 @@ Reconciliation workflow run:
 - Run: 36338546341
 - Artifact: 10937758986
 
+## F08 known feature confound: taker_buy_ratio
+
+The frozen F08 Deribit research fetcher sets
+`taker_buy_base_vol = volume * 0.5` for every research candle.
+
+Consequently, canonical feature engineering produces a constant
+`taker_buy_ratio = 0.5` for F08 observations.
+
+The Phase 2C HTF-removal candidate retains `taker_buy_ratio` in its
+25-feature candidate feature set. The locked production feature list does
+not contain this feature.
+
+This is a known F08 confound and is recorded for auditability only.
+It does not alter the frozen F08 methodology, thresholds, research data
+source, feature construction, observation ledger, statistical gate, or
+promotion criteria.
+
 ## Production regime-reference provenance
 
 Production model:
