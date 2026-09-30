@@ -633,18 +633,6 @@ def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
 
         trade["last_processed_candle_close_time"] = candle_close_time
         trade["bars_processed"] = int(trade.get("bars_processed", 0)) + 1
-        trade["last_observation_open_time"] = int(
-            candle["open_time"]
-        )
-        trade["last_observation_close_time"] = candle_close_time
-        trade["last_observation_identity"] = [
-            str(trade["logical_symbol"]).upper(),
-            int(candle["open_time"]),
-            trade["interval"],
-            "binance",
-            "spot",
-        ]
-
         # Persist candle-consumption progress even when the lifecycle itself
         # produces no TP/SL/state event. Otherwise the same closed candle can
         # be reprocessed on the next workflow run after an otherwise no-op bar.
@@ -662,17 +650,9 @@ def _monitor_open_positions(state: dict) -> tuple[bool, list[dict]]:
                 "symbol": trade["symbol"],
                 "side": trade["side"],
                 "open_time": trade["open_time"],
-                "candle_open_time": int(candle["open_time"]),
-                "candle_close_time": candle_close_time,
                 "candle_open_time": candle_open_time,
+                "candle_close_time": candle_close_time,
                 "candle_observation_identity": candle_identity,
-                "candle_observation_identity": [
-                    str(trade["logical_symbol"]).upper(),
-                    int(candle["open_time"]),
-                    trade["interval"],
-                    "binance",
-                    "spot",
-                ],
                 "observation_identity": trade["observation_identity"],
                 "execution_mode": PAPER_EXECUTION_MODE,
                 "paper_policy_version": PAPER_POLICY_VERSION,
@@ -848,27 +828,6 @@ def reconcile_state(state: dict) -> dict:
                                 f"{pred_id}:LAST_OBSERVATION_BEFORE_ENTRY"
                             )
 
-            if trade.get("status") == "ACTIVE":
-                last_open = trade.get("last_observation_open_time")
-                last_close = trade.get("last_observation_close_time")
-                last_identity = trade.get("last_observation_identity")
-                if last_open is not None and last_close is not None:
-                    expected_identity = [
-                        identity[0],
-                        int(last_open),
-                        identity[2],
-                        identity[3],
-                        identity[4],
-                    ]
-                    if last_identity != expected_identity:
-                        failures.append(
-                            f"{pred_id}:LAST_OBSERVATION_IDENTITY_MISMATCH"
-                        )
-                    if int(last_close) < int(trade["observation_contract"]["close_time"]):
-                        failures.append(
-                            f"{pred_id}:LAST_OBSERVATION_BEFORE_ENTRY"
-                        )
-
             for field in (
                 "entry_price",
                 "atr_ref",
@@ -960,7 +919,3 @@ def run_once() -> dict:
 
 if __name__ == "__main__":
     print(json.dumps(run_once(), sort_keys=True))
-
-
-
-
