@@ -631,15 +631,17 @@
     "entry_time_ms": 1791021600000,
     "recorded_at_ms": 1791023041230,
     "entry_fee_usd": 0.0,
-    "tp1_fee_usd": 0.0,
+    "tp1_fee_usd": 29.57936470588282,
     "thesis_label": null,
     "net_r": null,
     "evidence_type": "EMPIRICAL_PROSPECTIVE",
-    "state": "COUNTERFACTUAL_OPEN",
+    "state": "PARTIAL_TP1",
     "status": "COUNTERFACTUAL_ACTIVE",
     "last_funding_ts": 1791021600000,
     "funding_usd": 0.0,
-    "realized_gross_pnl": 0.0
+    "realized_gross_pnl": 0.0,
+    "remaining_qty": 18.300653594771532,
+    "tp1_realized_gross_pnl": 210.00000000000168
   },
   "BNBUSDT_1791021600000": {
     "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
@@ -775,11 +777,15 @@
     "thesis_label": null,
     "net_r": null,
     "evidence_type": "EMPIRICAL_PROSPECTIVE",
-    "state": "COUNTERFACTUAL_OPEN",
-    "status": "COUNTERFACTUAL_ACTIVE",
+    "state": "CLOSED",
+    "status": "CLOSED",
     "last_funding_ts": 1791021600000,
     "funding_usd": 0.0,
-    "realized_gross_pnl": 0.0
+    "realized_gross_pnl": null,
+    "exit_price": null,
+    "final_exit_fee_usd": 0.0,
+    "exit_reason": "AMBIGUOUS_BARRIER",
+    "ambiguous_barrier": true
   },
   "XRPUSDT_1791021600000": {
     "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
@@ -1339,15 +1345,17 @@
     "entry_time_ms": 1791021600000,
     "recorded_at_ms": 1791023063112,
     "entry_fee_usd": 0.0,
-    "tp1_fee_usd": 0.0,
+    "tp1_fee_usd": 6.442085106382965,
     "thesis_label": null,
     "net_r": null,
     "evidence_type": "EMPIRICAL_PROSPECTIVE",
-    "state": "COUNTERFACTUAL_OPEN",
+    "state": "PARTIAL_TP1",
     "status": "COUNTERFACTUAL_ACTIVE",
     "last_funding_ts": 1791021600000,
     "funding_usd": 0.0,
-    "realized_gross_pnl": 0.0
+    "realized_gross_pnl": 0.0,
+    "remaining_qty": 44680.851063829694,
+    "tp1_realized_gross_pnl": 210.0
   },
   "DOGEUSDT_1791021600000": {
     "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
@@ -2109,15 +2117,17 @@
     "entry_time_ms": 1791037800000,
     "recorded_at_ms": 1791038836803,
     "entry_fee_usd": 0.0,
-    "tp1_fee_usd": 0.0,
+    "tp1_fee_usd": 34.891626961667356,
     "thesis_label": null,
     "net_r": null,
     "evidence_type": "EMPIRICAL_PROSPECTIVE",
-    "state": "COUNTERFACTUAL_OPEN",
+    "state": "PARTIAL_TP1",
     "status": "COUNTERFACTUAL_ACTIVE",
     "last_funding_ts": 1791037800000,
     "funding_usd": 0.0,
-    "realized_gross_pnl": 0.0
+    "realized_gross_pnl": 0.0,
+    "remaining_qty": 21.61049652688465,
+    "tp1_realized_gross_pnl": 210.0000000000059
   },
   "SOLUSDT_1791037800000": {
     "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
@@ -2177,15 +2187,17 @@
     "entry_time_ms": 1791037800000,
     "recorded_at_ms": 1791038841248,
     "entry_fee_usd": 0.0,
-    "tp1_fee_usd": 0.0,
+    "tp1_fee_usd": 19.617262135922342,
     "thesis_label": null,
     "net_r": null,
     "evidence_type": "EMPIRICAL_PROSPECTIVE",
-    "state": "COUNTERFACTUAL_OPEN",
+    "state": "PARTIAL_TP1",
     "status": "COUNTERFACTUAL_ACTIVE",
     "last_funding_ts": 1791037800000,
     "funding_usd": 0.0,
-    "realized_gross_pnl": 0.0
+    "realized_gross_pnl": 0.0,
+    "remaining_qty": 271.84466019417493,
+    "tp1_realized_gross_pnl": 209.99999999999844
   },
   "NEARUSDT_1791037800000": {
     "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
@@ -2682,6 +2694,74 @@
     "state": "COUNTERFACTUAL_OPEN",
     "status": "COUNTERFACTUAL_ACTIVE",
     "last_funding_ts": 1791071100000,
+    "funding_usd": 0.0,
+    "realized_gross_pnl": 0.0
+  },
+  "TRXUSDT_1791091800000": {
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "pred_id": "TRXUSDT_1791091800000",
+    "event": "SETUP_OBSERVED",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "decision_policy_hash": "",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "TRXUSDT",
+    "logical_symbol": "TRXUSDT",
+    "open_time": 1791091800000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "TRXUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791091800000,
+      "close_time": 1791092699999,
+      "retrieved_at_ms": 1791092809598,
+      "htf_sources": {
+        "1h": null,
+        "4h": null
+      },
+      "btc_source": null
+    },
+    "observation_identity": [
+      "TRXUSDT",
+      1791091800000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "side": "BUY",
+    "primary_selected": true,
+    "meta_selected": false,
+    "atr": 0.00013571428571432231,
+    "simulated_entry": 0.3355,
+    "stop": 0.3351607142857142,
+    "tp1": 0.33597500000000013,
+    "tp2": 0.3365178571428574,
+    "qty": 884210.5263155148,
+    "initial_risk_usd": 300.0,
+    "entry_time_ms": 1791091800000,
+    "recorded_at_ms": 1791092809598,
+    "entry_fee_usd": 0.0,
+    "tp1_fee_usd": 0.0,
+    "thesis_label": null,
+    "net_r": null,
+    "evidence_type": "EMPIRICAL_PROSPECTIVE",
+    "state": "COUNTERFACTUAL_OPEN",
+    "status": "COUNTERFACTUAL_ACTIVE",
+    "last_funding_ts": 1791091800000,
     "funding_usd": 0.0,
     "realized_gross_pnl": 0.0
   }
