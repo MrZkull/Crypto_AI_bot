@@ -16,6 +16,7 @@ from config import (
 )
 from deribit_client import DeribitClient, TRADEABLE_SYMBOLS
 from feature_engineering import add_indicators
+from legacy_production_features import add_legacy_production_indicators
 from market_data_integrity import (
     sanitize_closed_candles,
     build_observation_contract,
@@ -52,6 +53,8 @@ _SCAN_LIVENESS = {
     "symbols_attempted": 0,
     "symbols_scored": 0,
     "predictions_saved": 0,
+    "features_zero_filled": 0,
+    "feature_validation_rejects": 0,
     "skip_reason": None,
 }
 STALE_LOCK_MINUTES     = 20
@@ -1114,6 +1117,84 @@ def _aggregate_completed_1h_to_4h(df1h, observation_time_ms=None):
 
     return out.sort_values("open_time").reset_index(drop=True)
 
+def _required_production_features(pipeline):
+    """Resolve the model's explicit feature contract without inference."""
+    selector = pipeline.get("selector")
+
+    selected = getattr(selector, "selected_features", None)
+    if selected:
+        features = list(selected)
+        source = "selector.selected_features"
+    else:
+        legacy = getattr(selector, "feature_names", None)
+        if legacy:
+            features = list(legacy)
+            source = "selector.feature_names"
+        else:
+            artifact = pipeline.get("best_features")
+            if artifact:
+                features = list(artifact)
+                source = "pipeline.best_features"
+            else:
+                features = list(pipeline.get("all_features") or [])
+                source = "pipeline.all_features"
+
+    if not features:
+        raise RuntimeError(
+            "Production model exposes no usable feature schema"
+        )
+
+    if len(features) != len(set(features)):
+        raise RuntimeError(
+            f"Production model feature schema contains duplicates: {features}"
+        )
+
+    artifact = pipeline.get("best_features")
+    if selected and artifact and list(artifact) != features:
+        raise RuntimeError(
+            "Production model selected_features disagree with best_features"
+        )
+
+    if legacy and artifact and list(artifact) != features:
+        raise RuntimeError(
+            "Production model feature_names disagree with best_features"
+        )
+
+    strict = bool(
+        selected
+        or getattr(selector, "feature_names", None)
+        or artifact
+    )
+
+    return features, source, strict
+
+
+def _validate_production_feature_row(row, required_features):
+    """Return missing/invalid explicit model features; never repair them."""
+    missing = [
+        feature
+        for feature in required_features
+        if feature not in row.index
+    ]
+
+    invalid = []
+
+    for feature in required_features:
+        if feature in missing:
+            continue
+
+        try:
+            value = float(row[feature])
+        except (TypeError, ValueError, OverflowError):
+            invalid.append(feature)
+            continue
+
+        if not math.isfinite(value):
+            invalid.append(feature)
+
+    return missing, invalid
+
+
 def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=None, fng_data=None, btc_df15_live=None):
     try:
         raw15 = get_data(
@@ -1146,8 +1227,13 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
             log.warning(f"    [{symbol}] Insufficient completed 15m candles — skip")
             return None
 
-        df15 = add_indicators(raw15)
-        if df15.empty or "open_time" not in df15.columns: return None
+        # Production v2.0 compatibility frame:
+        # use the exact locked legacy formulas on the closed Binance
+        # observation stream. Canonical feature_engineering.py remains
+        # unchanged and continues to define the candidate/canonical schema.
+        df15 = add_legacy_production_indicators(raw15)
+        if df15.empty or "open_time" not in df15.columns:
+            return None
 
         if btc_df15_live is not None and not btc_df15_live.empty:
             if "close_time" not in btc_df15_live.columns:
@@ -1159,12 +1245,19 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
                     observation_time_ms=now_ms,
                 ))
 
-        df15 = _merge_extra_features_live(df15, btc_df15_live).fillna(0)
+        df15 = _merge_extra_features_live(
+            df15,
+            btc_df15_live,
+        )
 
         df1h_raw = get_data(
             symbol, TIMEFRAME_CONFIRM, canonical_observation=True
         )
-        if df1h_raw is not None and not df1h_raw.empty and "close_time" in df1h_raw.columns:
+        if (
+            df1h_raw is not None
+            and not df1h_raw.empty
+            and "close_time" in df1h_raw.columns
+        ):
             df1h_clean = sanitize_closed_candles(
                 df1h_raw,
                 candle_duration_ms=60 * 60 * 1000,
@@ -1173,24 +1266,48 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
             df1h_raw = pd.DataFrame(df1h_clean)
         else:
             df1h_raw = pd.DataFrame()
-        df1h = add_indicators(df1h_raw).fillna(0) if not df1h_raw.empty else pd.DataFrame()
+
+        df1h = (
+            add_legacy_production_indicators(df1h_raw)
+            if not df1h_raw.empty
+            else pd.DataFrame()
+        )
 
         df4h_raw = _aggregate_completed_1h_to_4h(
             df1h_raw,
             observation_time_ms=now_ms,
         )
-        df4h = add_indicators(df4h_raw).fillna(0) if not df4h_raw.empty else pd.DataFrame()
+        df4h = (
+            add_legacy_production_indicators(df4h_raw)
+            if not df4h_raw.empty
+            else pd.DataFrame()
+        )
 
         row = df15.iloc[-1].copy()
         observation_time_ms = int(row["open_time"])
-        r1h = df1h.iloc[-1] if not df1h.empty else pd.Series(0, index=df15.columns)
-        r4h = df4h.iloc[-1] if not df4h.empty else pd.Series(0, index=df15.columns)
 
-        row["rsi_1h"]   = float(r1h.get("rsi",  50))
-        row["adx_1h"]   = float(r1h.get("adx",   0))
-        row["trend_1h"] = float(r1h.get("trend", 0))
-        row["rsi_4h"]   = float(r4h.get("rsi",   50))
-        row["trend_4h"] = float(r4h.get("trend",  0))
+        r1h = (
+            df1h.iloc[-1]
+            if not df1h.empty
+            else pd.Series(dtype=float)
+        )
+        r4h = (
+            df4h.iloc[-1]
+            if not df4h.empty
+            else pd.Series(dtype=float)
+        )
+
+        # Populate HTF fields only from actual completed frames.
+        # Production-model validation below will fail closed when any
+        # selected HTF feature is unavailable.
+        if not df1h.empty:
+            row["rsi_1h"] = float(r1h.get("rsi", 50))
+            row["adx_1h"] = float(r1h.get("adx", 0))
+            row["trend_1h"] = float(r1h.get("trend", 0))
+
+        if not df4h.empty:
+            row["rsi_4h"] = float(r4h.get("rsi", 50))
+            row["trend_4h"] = float(r4h.get("trend", 0))
 
         observation_contract = _build_signal_observation_contract(
             symbol,
@@ -1202,14 +1319,72 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         )
         row["_observation_contract"] = observation_contract
 
-        af   = pipeline["all_features"]
-        for col in af:
-            if col not in row: row[col] = 0.0
+        required_features, feature_source, strict_schema = (
+            _required_production_features(pipeline)
+        )
+
+        missing_features, invalid_features = (
+            _validate_production_feature_row(
+                row,
+                required_features,
+            )
+        )
+
+        if strict_schema:
+            if missing_features or invalid_features:
+                if missing_features:
+                    _SCAN_LIVENESS["features_zero_filled"] += len(
+                        missing_features
+                    )
+
+                _SCAN_LIVENESS["feature_validation_rejects"] += 1
+
+                details = []
+
+                if missing_features:
+                    details.append(
+                        "missing=" + ",".join(missing_features)
+                    )
+
+                if invalid_features:
+                    details.append(
+                        "invalid=" + ",".join(invalid_features)
+                    )
+
+                reject_reason = (
+                    "PRODUCTION_FEATURE_INVALID "
+                    + "; ".join(details)
+                )
+
+                log.warning(
+                    f"    [{symbol}] Production feature contract failed "
+                    f"({feature_source}): {reject_reason}"
+                )
+
+                # Fail closed before model inference. At this point there is
+                # deliberately no valid sig/conf to persist as a prediction.
+                return None
+
+        else:
+            # Non-production/test selectors may expose only all_features.
+            # Preserve the lightweight test contract without weakening the
+            # real production artifact contract above.
+            for feature in required_features:
+                if feature not in row.index:
+                    row[feature] = 0.0
 
         X = pd.DataFrame(
-            [row[af].values],
-            columns=af
-        ).replace([np.inf, -np.inf], 0).fillna(0)
+            [[row[feature] for feature in required_features]],
+            columns=required_features,
+        )
+
+        if not np.isfinite(
+            X.to_numpy(dtype=float)
+        ).all():
+            raise RuntimeError(
+                "Production feature frame contains non-finite selected values "
+                "after validation"
+            )
 
         # Production-model selector compatibility:
         # 1) Current ImportanceSelector state: selected_features
@@ -1217,71 +1392,44 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         # 3) Generic sklearn/test selector exposing transform()
         # 4) Final frozen-artifact fallback: pipeline["best_features"]
         selector = pipeline.get("selector")
-        selected_features = getattr(selector, "selected_features", None)
-        legacy_feature_names = getattr(selector, "feature_names", None)
+        selected_features = getattr(
+            selector,
+            "selected_features",
+            None,
+        )
+        legacy_feature_names = getattr(
+            selector,
+            "feature_names",
+            None,
+        )
         artifact_features = pipeline.get("best_features")
 
         if selected_features:
             Xs = selector.transform(X)
 
         elif legacy_feature_names:
-            legacy_feature_names = list(legacy_feature_names)
-
-            if artifact_features and list(artifact_features) != legacy_feature_names:
-                raise RuntimeError(
-                    "Production model selector feature_names disagree with best_features"
-                )
-
-            missing_features = [
-                feature for feature in legacy_feature_names
-                if feature not in X.columns
-            ]
-            if missing_features:
-                raise RuntimeError(
-                    f"Production model selector feature_names missing from runtime feature frame: {missing_features}"
-                )
+            legacy_feature_names = list(
+                legacy_feature_names
+            )
 
             Xs = X[legacy_feature_names].to_numpy()
 
-        elif selector is not None and hasattr(selector, "transform"):
-            try:
-                Xs = selector.transform(X)
-            except AttributeError as exc:
-                if "selected_features" not in str(exc):
-                    raise
+        elif selector is not None and hasattr(
+            selector,
+            "transform",
+        ):
+            Xs = selector.transform(X)
 
-                if not artifact_features:
-                    raise RuntimeError(
-                        "Production model selector is incompatible and no best_features fallback exists"
-                    ) from exc
-
-                missing_features = [
-                    feature for feature in artifact_features
-                    if feature not in X.columns
-                ]
-                if missing_features:
-                    raise RuntimeError(
-                        f"Production model best_features missing from runtime feature frame: {missing_features}"
-                    ) from exc
-
-                Xs = X[list(artifact_features)].to_numpy()
+        elif artifact_features:
+            Xs = X[
+                list(artifact_features)
+            ].to_numpy()
 
         else:
-            if not artifact_features:
-                raise RuntimeError(
-                    "Production model selector is incompatible and no best_features fallback exists"
-                )
-
-            missing_features = [
-                feature for feature in artifact_features
-                if feature not in X.columns
-            ]
-            if missing_features:
-                raise RuntimeError(
-                    f"Production model best_features missing from runtime feature frame: {missing_features}"
-                )
-
-            Xs = X[list(artifact_features)].to_numpy()
+            raise RuntimeError(
+                "Production model selector is incompatible and exposes "
+                "no explicit feature schema"
+            )
 
         disagreement = compute_ensemble_disagreement(pipeline, Xs[0])
 
