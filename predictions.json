@@ -184598,5 +184598,2305 @@
     "lookahead_bars": 24,
     "generated_at": "2026-10-07T20:20:10.080400+00:00",
     "audited": false
+  },
+  {
+    "pred_id": "ETHUSDT_1791407512235",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "ETHUSDT",
+    "logical_symbol": "ETHUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "ETHUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407510985,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "ETHUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "ETHUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "ETHUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "SELL",
+    "confidence": 46.4,
+    "entry_ref": 2574.52,
+    "atr_ref": 6.745524953532005,
+    "predicted_stop": 2591.383812,
+    "predicted_tp1": 2550.910663,
+    "rsi_15m": 54.79382826392669,
+    "adx_15m": 22.513036097477347,
+    "ensemble_disagreement": 0.021,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "conf 46.4<52.0",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:11:52.235529+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "BNBUSDT_1791407515086",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "BNBUSDT",
+    "logical_symbol": "BNBUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "BNBUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407513853,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "BNBUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "BNBUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "BNBUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 35.9,
+    "entry_ref": 771.15,
+    "atr_ref": 1.3316368338751825,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 52.849204887194645,
+    "adx_15m": 22.799083709108864,
+    "ensemble_disagreement": 0.0162,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:11:55.086660+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "SOLUSDT_1791407517658",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "SOLUSDT",
+    "logical_symbol": "SOLUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "SOLUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407516430,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "SOLUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "SOLUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "SOLUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "SELL",
+    "confidence": 58.1,
+    "entry_ref": 116.2,
+    "atr_ref": 0.34704071735173075,
+    "predicted_stop": 117.067602,
+    "predicted_tp1": 114.985357,
+    "rsi_15m": 46.07889150937788,
+    "adx_15m": 13.85360817308145,
+    "ensemble_disagreement": 0.0174,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "ADX 13.9<18.0",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:11:57.658598+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "XRPUSDT_1791407520214",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "XRPUSDT",
+    "logical_symbol": "XRPUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "XRPUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407519005,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "XRPUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "XRPUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "XRPUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 47.2,
+    "entry_ref": 1.4226,
+    "atr_ref": 0.004894555397077958,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 42.272560277669015,
+    "adx_15m": 25.68994871616432,
+    "ensemble_disagreement": 0.0209,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:00.214215+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "NEARUSDT_1791407522808",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "NEARUSDT",
+    "logical_symbol": "NEARUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "NEARUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407521550,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "NEARUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "NEARUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "NEARUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 63.9,
+    "entry_ref": 5.41,
+    "atr_ref": 0.07078843295986788,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 69.5584802120305,
+    "adx_15m": 65.33596258157212,
+    "ensemble_disagreement": 0.0335,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:02.808147+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "LTCUSDT_1791407525383",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "LTCUSDT",
+    "logical_symbol": "LTCUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "LTCUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407524151,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "LTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "LTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "LTCUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "SELL",
+    "confidence": 45.6,
+    "entry_ref": 66.13,
+    "atr_ref": 0.23288260045955053,
+    "predicted_stop": 66.712207,
+    "predicted_tp1": 65.314911,
+    "rsi_15m": 45.13261893234845,
+    "adx_15m": 15.491683381434306,
+    "ensemble_disagreement": 0.0144,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "conf 45.6<62.0",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:05.383320+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "UNIUSDT_1791407527966",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "UNIUSDT",
+    "logical_symbol": "UNIUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "UNIUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407526723,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "UNIUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "UNIUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "UNIUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "SELL",
+    "confidence": 47.7,
+    "entry_ref": 7.795,
+    "atr_ref": 0.04439974273891564,
+    "predicted_stop": 7.905999,
+    "predicted_tp1": 7.639601,
+    "rsi_15m": 43.10867123726724,
+    "adx_15m": 15.445487145527046,
+    "ensemble_disagreement": 0.0345,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "conf 47.7<52.0",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:07.966955+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "BCHUSDT_1791407530720",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "BCHUSDT",
+    "logical_symbol": "BCHUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "BCHUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407529650,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "BCHUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "BCHUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "BCHUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 42.6,
+    "entry_ref": 301.6,
+    "atr_ref": 0.9589127465924661,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 49.54377380984499,
+    "adx_15m": 12.798375348429305,
+    "ensemble_disagreement": 0.0248,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:10.720478+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "DOTUSDT_1791407533148",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "DOTUSDT",
+    "logical_symbol": "DOTUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "DOTUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407531927,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "DOTUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "DOTUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "DOTUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 53.0,
+    "entry_ref": 1.112,
+    "atr_ref": 0.005048923904388136,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 58.115126774203624,
+    "adx_15m": 31.420551563520817,
+    "ensemble_disagreement": 0.0212,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:13.148231+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "ALGOUSDT_1791407535457",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "ALGOUSDT",
+    "logical_symbol": "ALGOUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "ALGOUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407534362,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "ALGOUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "ALGOUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "ALGOUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 52.5,
+    "entry_ref": 0.1185,
+    "atr_ref": 0.0005676542755885165,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 62.58676134131199,
+    "adx_15m": 47.494081482373375,
+    "ensemble_disagreement": 0.0232,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:15.457253+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "ENAUSDT_1791407538044",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "ENAUSDT",
+    "logical_symbol": "ENAUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "ENAUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407536804,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "ENAUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "ENAUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "ENAUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 55.6,
+    "entry_ref": 0.2274,
+    "atr_ref": 0.0016676626831185213,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 52.13646796953866,
+    "adx_15m": 22.78246227336221,
+    "ensemble_disagreement": 0.0138,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:18.044698+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "DOGEUSDT_1791407540903",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "DOGEUSDT",
+    "logical_symbol": "DOGEUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "DOGEUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407539670,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "DOGEUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "DOGEUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "DOGEUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 48.8,
+    "entry_ref": 0.08891,
+    "atr_ref": 0.00029831332165215513,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 54.359142121642385,
+    "adx_15m": 10.382633403762775,
+    "ensemble_disagreement": 0.0402,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:20.904012+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "TRUMPUSDT_1791407543986",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "TRUMPUSDT",
+    "logical_symbol": "TRUMPUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "TRUMPUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407542594,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "TRUMPUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "TRUMPUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "TRUMPUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 50.6,
+    "entry_ref": 1.859,
+    "atr_ref": 0.007408527883154499,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 54.97927897824925,
+    "adx_15m": 13.29066688296324,
+    "ensemble_disagreement": 0.0315,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:23.986423+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "PUMPUSDT_1791407546570",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "PUMPUSDT",
+    "logical_symbol": "PUMPUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "PUMPUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407545332,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "PUMPUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "PUMPUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "PUMPUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 66.8,
+    "entry_ref": 0.006347,
+    "atr_ref": 9.319402805195316e-05,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 52.337727900960886,
+    "adx_15m": 43.89809268948596,
+    "ensemble_disagreement": 0.0197,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:26.570799+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "AAVEUSDT_1791407549158",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "AAVEUSDT",
+    "logical_symbol": "AAVEUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "AAVEUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407547922,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "AAVEUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "AAVEUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "AAVEUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 61.5,
+    "entry_ref": 174.3,
+    "atr_ref": 0.7422371880131018,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 67.13624578089643,
+    "adx_15m": 38.54088866994222,
+    "ensemble_disagreement": 0.0204,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:29.159047+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "LINKUSDT_1791407551767",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "LINKUSDT",
+    "logical_symbol": "LINKUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "LINKUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407550512,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "LINKUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "LINKUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "LINKUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 45.2,
+    "entry_ref": 13.365,
+    "atr_ref": 0.05674388820023523,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 46.02886922963612,
+    "adx_15m": 14.817932060998436,
+    "ensemble_disagreement": 0.0196,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:31.767394+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "SUIUSDT_1791407554385",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "SUIUSDT",
+    "logical_symbol": "SUIUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "SUIUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407553128,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "SUIUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "SUIUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "SUIUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 53.4,
+    "entry_ref": 1.1247,
+    "atr_ref": 0.004961228007691714,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 53.431110007656905,
+    "adx_15m": 16.506196039225348,
+    "ensemble_disagreement": 0.03,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:34.385852+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "AVAXUSDT_1791407556944",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "AVAXUSDT",
+    "logical_symbol": "AVAXUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "AVAXUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407555734,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "AVAXUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "AVAXUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "AVAXUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 47.3,
+    "entry_ref": 11.236,
+    "atr_ref": 0.08033755894670183,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 50.62164188608869,
+    "adx_15m": 21.894729757138343,
+    "ensemble_disagreement": 0.0114,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:36.944689+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "ADAUSDT_1791407559557",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "ADAUSDT",
+    "logical_symbol": "ADAUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "ADAUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407558298,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "ADAUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "ADAUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "ADAUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 49.0,
+    "entry_ref": 0.2553,
+    "atr_ref": 0.001296734200073651,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 49.08054994646365,
+    "adx_15m": 22.516202068684812,
+    "ensemble_disagreement": 0.0224,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:39.557237+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "TRXUSDT_1791407561817",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "TRXUSDT",
+    "logical_symbol": "TRXUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "TRXUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407560745,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "TRXUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "TRXUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "TRXUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "BUY",
+    "confidence": 37.3,
+    "entry_ref": 0.3354,
+    "atr_ref": 0.00035269146021899293,
+    "predicted_stop": 0.334518,
+    "predicted_tp1": 0.336634,
+    "rsi_15m": 53.655437033485576,
+    "adx_15m": 20.461858101853196,
+    "ensemble_disagreement": 0.0179,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "conf 37.3<62.0",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:41.817418+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "XLMUSDT_1791407564163",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "XLMUSDT",
+    "logical_symbol": "XLMUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "XLMUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407563077,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "XLMUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "XLMUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "XLMUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 45.4,
+    "entry_ref": 0.1997,
+    "atr_ref": 0.0007020690883592933,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 45.49043699369867,
+    "adx_15m": 18.065280077637084,
+    "ensemble_disagreement": 0.0149,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:44.163856+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "ZECUSDT_1791407566758",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "ZECUSDT",
+    "logical_symbol": "ZECUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "ZECUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407565530,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "ZECUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "ZECUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "ZECUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 61.6,
+    "entry_ref": 1323.68,
+    "atr_ref": 10.320281362082273,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 50.301044504273264,
+    "adx_15m": 22.328755801050686,
+    "ensemble_disagreement": 0.0199,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:46.758441+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "HBARUSDT_1791407569215",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "HBARUSDT",
+    "logical_symbol": "HBARUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "HBARUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407567963,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "HBARUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "HBARUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "HBARUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 53.2,
+    "entry_ref": 0.09305,
+    "atr_ref": 0.0004027047043944741,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 51.20555152032681,
+    "adx_15m": 28.814228763044184,
+    "ensemble_disagreement": 0.043,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:49.215758+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "CRVUSDT_1791407571617",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "CRVUSDT",
+    "logical_symbol": "CRVUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "CRVUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407570412,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "CRVUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "CRVUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "CRVUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "SELL",
+    "confidence": 50.0,
+    "entry_ref": 0.3592,
+    "atr_ref": 0.002557227086550951,
+    "predicted_stop": 0.365593,
+    "predicted_tp1": 0.35025,
+    "rsi_15m": 65.74939681536733,
+    "adx_15m": 38.40921965237138,
+    "ensemble_disagreement": 0.0502,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "conf 50.0<52.0",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:51.617685+00:00",
+    "audited": false
+  },
+  {
+    "pred_id": "FILUSDT_1791407574234",
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "FILUSDT",
+    "logical_symbol": "FILUSDT",
+    "open_time": 1791405900000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "FILUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791405900000,
+      "close_time": 1791406799999,
+      "retrieved_at_ms": 1791407572982,
+      "htf_sources": {
+        "1h": {
+          "logical_symbol": "FILUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "1h",
+          "open_time": 1791403200000,
+          "close_time": 1791406799999
+        },
+        "4h": {
+          "logical_symbol": "FILUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "interval": "4h",
+          "open_time": 1791388800000,
+          "close_time": 1791403199999
+        }
+      },
+      "btc_source": {
+        "logical_symbol": "BTCUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "interval": "15m",
+        "open_time": 1791405900000,
+        "close_time": 1791406799999
+      }
+    },
+    "observation_identity": [
+      "FILUSDT",
+      1791405900000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "predicted_signal": "NO_TRADE",
+    "confidence": 54.7,
+    "entry_ref": 1.0416,
+    "atr_ref": 0.0053390408533159,
+    "predicted_stop": null,
+    "predicted_tp1": null,
+    "rsi_15m": 56.63307070191169,
+    "adx_15m": 39.652160021612154,
+    "ensemble_disagreement": 0.0126,
+    "high_disagreement": false,
+    "ood_distance": null,
+    "ood_tier": "PENDING",
+    "model_version": "2026-08-23T19:30:12.136077+00:00",
+    "was_executed": false,
+    "reject_reason": "NO_TRADE",
+    "lookahead_bars": 24,
+    "generated_at": "2026-10-07T21:12:54.234265+00:00",
+    "audited": false
   }
 ]
