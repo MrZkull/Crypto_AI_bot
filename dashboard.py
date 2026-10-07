@@ -12,6 +12,7 @@ import socket
 import uuid
 import joblib
 import importlib
+import threading
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,8 +62,16 @@ EMAIL_REGEX        = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 _cache = {}
 _cache_ts = {}
-CACHE_TTL = 30  
+CACHE_TTL = 30
 
+# Dashboard-only performance caches.
+# These do not change trading decisions.
+_MODEL_META_CACHE = {"key": None, "value": None}
+_MODEL_META_LOCK = threading.Lock()
+
+_DERIBIT_CLIENT = None
+_DERIBIT_CLIENT_KEY = None
+_DERIBIT_CLIENT_LOCK = threading.Lock()
 REPORT_STORE = {}
 REPORT_TTL_SECONDS = 60 * 60 * 48
 
@@ -111,22 +120,63 @@ def get_live_config():
         }
 
 def get_model_metadata():
+    model_path = None
+    model_key = None
+
     for p in [Path(MODEL_FILE), Path("data") / MODEL_FILE]:
         if p.exists():
             try:
-                pipeline = joblib.load(p)
+                st = p.stat()
+                model_path = p
+                model_key = (str(p.resolve()), st.st_mtime_ns, st.st_size)
+                break
+            except OSError:
+                continue
+
+    if model_path is not None:
+        with _MODEL_META_LOCK:
+            cached = _MODEL_META_CACHE
+
+            if cached["key"] == model_key and cached["value"] is not None:
+                return cached["value"]
+
+            try:
+                pipeline = joblib.load(model_path)
+
                 ensemble = pipeline.get("ensemble")
                 estimators = []
+
                 if hasattr(ensemble, "estimators_"):
-                    estimators = [type(est).__name__ for est in ensemble.estimators_]
+                    estimators = [
+                        type(est).__name__
+                        for est in ensemble.estimators_
+                    ]
                 elif hasattr(ensemble, "named_estimators_"):
-                    estimators = list(ensemble.named_estimators_.keys())
-                
-                model_name = " + ".join(estimators) if estimators else "Trained Ensemble"
-                rec_buy = float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.40))) * 100.0
-                rec_sell = float(pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.45))) * 100.0
-                
-                return {
+                    estimators = list(
+                        ensemble.named_estimators_.keys()
+                    )
+
+                model_name = (
+                    " + ".join(estimators)
+                    if estimators
+                    else "Trained Ensemble"
+                )
+
+                rec_buy = float(
+                    pipeline.get(
+                        "recommended_threshold_buy",
+                        pipeline.get("recommended_threshold", 0.40)
+                    )
+                ) * 100.0
+
+                rec_sell = float(
+                    pipeline.get(
+                        "recommended_threshold_sell",
+                        pipeline.get("recommended_threshold", 0.45)
+                    )
+                ) * 100.0
+
+                metadata = {
                     "ok": True,
                     "model_name": model_name,
                     "rec_buy_conf": round(rec_buy, 1),
@@ -134,17 +184,34 @@ def get_model_metadata():
                     "all_features": pipeline.get("all_features", []),
                     "label_map": pipeline.get("label_map", {})
                 }
+
+                cached["key"] = model_key
+                cached["value"] = metadata
+
+                return metadata
+
             except Exception as e:
-                log.warning(f"Error reading model metadata from {p}: {e}")
-    
+                log.warning(
+                    f"Error reading model metadata from {model_path}: {e}"
+                )
+
     scan_status = get(SCAN_STATUS_FILE, {})
     cfg = get_live_config()
-    
+
     live_buy = scan_status.get("active_buy_conf")
     live_sell = scan_status.get("active_sell_conf")
-    
-    base_buy = float(live_buy) if live_buy is not None else cfg["min_confidence"]
-    base_sell = float(live_sell) if live_sell is not None else cfg["min_confidence"]
+
+    base_buy = (
+        float(live_buy)
+        if live_buy is not None
+        else cfg["min_confidence"]
+    )
+
+    base_sell = (
+        float(live_sell)
+        if live_sell is not None
+        else cfg["min_confidence"]
+    )
 
     return {
         "ok": False,
@@ -152,9 +219,12 @@ def get_model_metadata():
         "rec_buy_conf": round(base_buy, 1),
         "rec_sell_conf": round(base_sell, 1),
         "all_features": cfg["features"],
-        "label_map": {0: "SELL", 1: "NO_TRADE", 2: "BUY"}
+        "label_map": {
+            0: "SELL",
+            1: "NO_TRADE",
+            2: "BUY"
+        }
     }
-
 def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     if not HAS_REPORTLAB:
         raise ImportError("ReportLab package is not installed on this server.")
@@ -347,9 +417,24 @@ def gh_fetch(filename: str):
             url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}?ref={GH_BRANCH}"
             r = requests.get(url, headers=headers, timeout=8)
             if r.status_code == 200:
-                raw_content = base64.b64decode(r.json()["content"]).decode("utf-8")
+                raw_content = base64.b64decode(
+                    r.json()["content"]
+                ).decode("utf-8")
+
                 _mark_gh_sync(True)
-                return json.loads(raw_content) if filename.endswith(".json") else raw_content
+
+                if filename == "bot.log":
+                    # Dashboard only needs the recent log tail.
+                    # Keep the Render process memory bounded.
+                    return "\n".join(
+                        raw_content.splitlines()[-1000:]
+                    )
+
+                return (
+                    json.loads(raw_content)
+                    if filename.endswith(".json")
+                    else raw_content
+                )
         except Exception as e:
             _mark_gh_sync(False, str(e))
     return None
@@ -421,16 +506,39 @@ def bust(filename: str):
     _cache_ts[filename] = 0
 
 def deribit_client():
+    global _DERIBIT_CLIENT, _DERIBIT_CLIENT_KEY
+
     cid = os.getenv("DERIBIT_CLIENT_ID", "")
     secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
+
     if not cid or not secret:
         return None
-    try:
-        from deribit_client import DeribitClient
-        return DeribitClient(cid, secret)
-    except Exception:
-        return None
 
+    client_key = (cid, secret)
+
+    with _DERIBIT_CLIENT_LOCK:
+
+        if (
+            _DERIBIT_CLIENT is not None
+            and _DERIBIT_CLIENT_KEY == client_key
+        ):
+            return _DERIBIT_CLIENT
+
+        try:
+            from deribit_client import DeribitClient
+
+            client = DeribitClient(cid, secret)
+
+            _DERIBIT_CLIENT = client
+            _DERIBIT_CLIENT_KEY = client_key
+
+            return client
+
+        except Exception as e:
+            log.warning(
+                f"Deribit dashboard client unavailable: {e}"
+            )
+            return None
 def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
     bust(EMAIL_TRACKER_FILE)
     logs = get(EMAIL_TRACKER_FILE, [])
