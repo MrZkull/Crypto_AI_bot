@@ -1633,6 +1633,12 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         return None
 
 def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: float, vol_state: str = "NORMAL", base_min_conf: float = None) -> bool:
+    if not _execution_allows_new_entries():
+        log.warning(
+            f"  [EXECUTION_MODE:{get_execution_mode()}] "
+            f"New entry blocked for {sig.get('symbol', 'UNKNOWN')}"
+        )
+        return False
     if base_min_conf is None:
         raise ValueError("execute_trade() requires base_min_conf — no implicit default allowed.")
 
@@ -2599,6 +2605,38 @@ def _send_open_alert(sym,sig,conf,score,entry,stop,tp1,tp2,qty,q1,q2,risk,bal):
           f"📦 {qty} contracts · Real Risk: ${risk:.2f} · Bal: ${bal:.2f}\n"
           f"━━━━━━━━━━━━━━━━━━━━")
 
+VALID_EXECUTION_MODES = {
+    "PREDICT_ONLY",
+    "MANAGE_ONLY",
+    "FULL",
+}
+
+
+def get_execution_mode() -> str:
+    mode = str(
+        getattr(config, "EXECUTION_MODE", "PREDICT_ONLY")
+    ).strip().upper()
+
+    if mode not in VALID_EXECUTION_MODES:
+        raise RuntimeError(
+            f"Invalid EXECUTION_MODE={mode!r}; "
+            f"allowed={sorted(VALID_EXECUTION_MODES)}"
+        )
+
+    return mode
+
+
+def _execution_allows_new_entries() -> bool:
+    return get_execution_mode() == "FULL"
+
+
+def _execution_allows_management() -> bool:
+    return get_execution_mode() in {
+        "MANAGE_ONLY",
+        "FULL",
+    }
+
+
 def run_execution_scan():
     log.info(f"\n{'═'*56}\nSCAN — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n{'═'*56}")
 
@@ -2611,6 +2649,8 @@ def run_execution_scan():
 
 def _run_execution_scan_locked():
     scan_started_at = datetime.now(timezone.utc).isoformat()
+    execution_mode = get_execution_mode()
+
     _SCAN_LIVENESS.update({
         "scan_ran": False,
         "symbols_attempted": 0,
@@ -2627,6 +2667,7 @@ def _run_execution_scan_locked():
         "symbols_attempted": 0,
         "symbols_scored": 0,
         "predictions_saved": 0,
+        "execution_mode": execution_mode,
         "skip_reason": None,
     })
 
@@ -2643,21 +2684,44 @@ def _run_execution_scan_locked():
             "symbols_attempted": 0,
             "symbols_scored": 0,
             "predictions_saved": 0,
+            "execution_mode": execution_mode,
             "skip_reason": str(reason),
         })
         return
 
-    deribit    = DeribitClient(os.getenv("DERIBIT_CLIENT_ID",""), os.getenv("DERIBIT_CLIENT_SECRET",""))
-    deribit.test_connection()
     pipeline   = joblib.load(MODEL_FILE)
     thresholds = get_mode_thresholds(mode)
     risk_mult  = get_effective_risk(mode, vol)
+
+    deribit = None
+
+    if _execution_allows_management():
+        client_id = os.getenv("DERIBIT_CLIENT_ID", "")
+        client_secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
+
+        if not client_id or not client_secret:
+            raise RuntimeError(
+                f"EXECUTION_MODE={execution_mode} requires "
+                "DERIBIT_CLIENT_ID and DERIBIT_CLIENT_SECRET"
+            )
+
+        deribit = DeribitClient(
+            client_id,
+            client_secret,
+        )
+        deribit.test_connection()
 
     _SCAN_LIVENESS["scan_ran"] = True
     _SCAN_LIVENESS["symbols_attempted"] = len(SYMBOLS)
 
     max_open_trades = int(getattr(config, "MAX_OPEN_TRADES", 8))
     max_same_dir    = int(getattr(config, "MAX_SAME_DIRECTION", 4))
+
+    # Local ledger count is safe in every execution mode.
+    # PREDICT_ONLY must not require exchange access just to report open count.
+    open_count = len(
+        [t for t in load_trades().values() if not t.get("closed", False)]
+    )
 
     # ── CLAMP: Floor model thresholds against config.MIN_CONFIDENCE ──
     config_floor = float(getattr(config, "MIN_CONFIDENCE", 52.0))
@@ -2667,78 +2731,96 @@ def _run_execution_scan_locked():
     log.info(f"  {mode['label']} | Active Targets: BUY≥{rec_buy:.1f}% SELL≥{rec_sell:.1f}% "
              f"| score≥{thresholds['min_score']} | ADX≥{thresholds['min_adx']} | risk:{risk_mult:.2f}")
 
-    log.info("\n[0] Balance..."); balance = save_balance(deribit)
-    log.info("\n[1] Monitor trades..."); check_open_trades(deribit)
-    log.info("\n[2] Stale trade check..."); check_stale_trades(deribit)
-    log.info("\n[3] Ghost trade recovery..."); clean_ghost_trades(deribit)
-    log.info("\n[3b] Funding rate check..."); check_funding_rates(deribit)
+    balance = 0.0
+    if _execution_allows_management():
+        log.info("\n[0] Balance..."); balance = save_balance(deribit)
+        log.info("\n[1] Monitor trades..."); check_open_trades(deribit)
+        log.info("\n[2] Stale trade check..."); check_stale_trades(deribit)
+        log.info("\n[3] Ghost trade recovery..."); clean_ghost_trades(deribit)
+        log.info("\n[3b] Funding rate check..."); check_funding_rates(deribit)
     
-    log.info("\n[3c] Reconciler: Auditing exchange positions vs local ledger...")
-    trades = load_trades()
-    tracked_symbols = set(trades.keys())
+        log.info("\n[3c] Reconciler: Auditing exchange positions vs local ledger...")
+        trades = load_trades()
+        tracked_symbols = set(trades.keys())
 
-    orphan_tracker = load_json(ORPHAN_TRACKER_FILE, {})
-    now_ts = time.time()
-    active_orphans_this_scan = set()
+        orphan_tracker = load_json(ORPHAN_TRACKER_FILE, {})
+        now_ts = time.time()
+        active_orphans_this_scan = set()
 
-    try:
-        raw_positions = deribit.get_positions()
-        fetch_succeeded = True
-    except Exception as e:
-        raw_positions = []
-        fetch_succeeded = False
-        log.warning(f"  [3c] could not fetch live positions: {e}")
+        try:
+            raw_positions = deribit.get_positions()
+            fetch_succeeded = True
+        except Exception as e:
+            raw_positions = []
+            fetch_succeeded = False
+            log.warning(f"  [3c] could not fetch live positions: {e}")
 
-    for p in raw_positions:
-        inst = p.get("instrument_name", "")
-        if not inst:
-            continue
-        base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-        sym  = f"{base}USDT"
-        size = deribit.get_position_size(sym)
+        for p in raw_positions:
+            inst = p.get("instrument_name", "")
+            if not inst:
+                continue
+            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
+            sym  = f"{base}USDT"
+            size = deribit.get_position_size(sym)
 
-        if abs(size) <= 0.0001:
-            continue
-
-        if sym not in tracked_symbols:
-            active_orphans_this_scan.add(sym)
-            first_seen = orphan_tracker.get(sym)
-
-            if first_seen is None:
-                orphan_tracker[sym] = now_ts
-                log.warning(f"  ⚠️ [RECONCILER] Candidate orphan: {sym} (size={size})")
+            if abs(size) <= 0.0001:
                 continue
 
-            elapsed = now_ts - float(first_seen)
-            if elapsed < ORPHAN_CONFIRM_SECONDS:
-                continue
+            if sym not in tracked_symbols:
+                active_orphans_this_scan.add(sym)
+                first_seen = orphan_tracker.get(sym)
 
-            log.warning(f"  🚨 [RECONCILER] Confirmed orphan: {sym} — Flattening...")
-            _cancel_all_open_orders_for_symbol(deribit, sym)
+                if first_seen is None:
+                    orphan_tracker[sym] = now_ts
+                    log.warning(f"  ⚠️ [RECONCILER] Candidate orphan: {sym} (size={size})")
+                    continue
+
+                elapsed = now_ts - float(first_seen)
+                if elapsed < ORPHAN_CONFIRM_SECONDS:
+                    continue
+
+                log.warning(f"  🚨 [RECONCILER] Confirmed orphan: {sym} — Flattening...")
+                _cancel_all_open_orders_for_symbol(deribit, sym)
             
-            flatten_side = "SELL" if size > 0 else "BUY"
-            flatten_qty  = deribit.round_amount(sym, abs(size))
+                flatten_side = "SELL" if size > 0 else "BUY"
+                flatten_qty  = deribit.round_amount(sym, abs(size))
             
-            try:
-                if flatten_qty > 0:
-                    deribit.place_market_order(symbol=sym, side=flatten_side, amount=flatten_qty, reduce_only=True)
+                try:
+                    if flatten_qty > 0:
+                        deribit.place_market_order(symbol=sym, side=flatten_side, amount=flatten_qty, reduce_only=True)
                 
-                if _verify_actually_closed(deribit, sym):
-                    orphan_tracker.pop(sym, None)
-                    log.info(f"  ✓ [RECONCILER] Flattened orphan {sym}")
-                    _send(f"🛡️ *[RECONCILER] Orphan Flattened — {sym}*")
-            except Exception as re_err:
-                log.error(f"  [RECONCILER] Flatten failed: {re_err}")
+                    if _verify_actually_closed(deribit, sym):
+                        orphan_tracker.pop(sym, None)
+                        log.info(f"  ✓ [RECONCILER] Flattened orphan {sym}")
+                        _send(f"🛡️ *[RECONCILER] Orphan Flattened — {sym}*")
+                except Exception as re_err:
+                    log.error(f"  [RECONCILER] Flatten failed: {re_err}")
 
-    if fetch_succeeded:
-        for tracked_cand in list(orphan_tracker.keys()):
-            if tracked_cand not in active_orphans_this_scan:
-                orphan_tracker.pop(tracked_cand, None)
-        save_json(ORPHAN_TRACKER_FILE, orphan_tracker)
+        if fetch_succeeded:
+            for tracked_cand in list(orphan_tracker.keys()):
+                if tracked_cand not in active_orphans_this_scan:
+                    orphan_tracker.pop(tracked_cand, None)
+            save_json(ORPHAN_TRACKER_FILE, orphan_tracker)
         
-    save_balance(deribit)
+        save_balance(deribit)
 
-    open_count = len([t for t in load_trades().values() if not t.get("closed",False)])
+    if execution_mode == "MANAGE_ONLY":
+        save_json(
+            SCAN_STATUS_FILE,
+            {
+                "phase": "completed",
+                "started_at": scan_started_at,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "scan_ran": True,
+                "symbols_attempted": 0,
+                "symbols_scored": 0,
+                "predictions_saved": 0,
+                "execution_mode": execution_mode,
+                "skip_reason": "MANAGE_ONLY_NO_NEW_ENTRIES",
+            },
+        )
+        return
+
     log.info(f"\n[4] Scanning {len(SYMBOLS)} coins | Open:{open_count}/{max_open_trades} (Max Direction: {max_same_dir})")
 
     found = 0
@@ -2755,12 +2837,28 @@ def _run_execution_scan_locked():
         
         found += 1
         base_hurdle = rec_buy if sig["signal"] == "BUY" else rec_sell
-        
-        if execute_trade(deribit, sig, risk_mult, balance, vol_state, base_min_conf=base_hurdle):
+
+        if execution_mode != "FULL":
+            continue
+
+        if execute_trade(
+            deribit,
+            sig,
+            risk_mult,
+            balance,
+            vol_state,
+            base_min_conf=base_hurdle,
+        ):
             time.sleep(1.5)
 
-    save_balance(deribit)
-    log.info(f"\n{'═'*56}\nDONE — {found} signal(s) | ${balance:.2f}\n{'═'*56}")
+    if _execution_allows_management():
+        save_balance(deribit)
+
+    log.info(
+        f"\n{'═'*56}\nDONE — {found} signal(s) | "
+        f"mode={execution_mode} | balance=${balance:.2f}"
+        f"\n{'═'*56}"
+    )
 
     save_json(SCAN_STATUS_FILE, {
         "phase": "completed",
@@ -2770,6 +2868,7 @@ def _run_execution_scan_locked():
         "symbols_attempted": int(_SCAN_LIVENESS["symbols_attempted"]),
         "symbols_scored": int(_SCAN_LIVENESS["symbols_scored"]),
         "predictions_saved": int(_SCAN_LIVENESS["predictions_saved"]),
+        "execution_mode": execution_mode,
         "skip_reason": _SCAN_LIVENESS.get("skip_reason"),
         "signals_found": int(found),
         "active_buy_conf": round(rec_buy, 1),

@@ -96,6 +96,12 @@ TIMEFRAME_TREND   = "4h"
 LIVE_LIMIT        = 300
 SCAN_INTERVAL_MIN = 15
 
+# ── Execution Safety Mode ───────────────────────────────────────────
+# PREDICT_ONLY: generate/save predictions; no Deribit connection/order activity
+# MANAGE_ONLY : manage existing Deribit positions/orders; no new entries
+# FULL        : prediction + new-entry execution
+EXECUTION_MODE = "PREDICT_ONLY"
+
 # ── Strategy & Filter Baselines ───────────────────────────────────────
 MIN_CONFIDENCE    = 52.0
 MIN_ADX           = 15.0
