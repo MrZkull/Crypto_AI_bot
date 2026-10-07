@@ -1206,8 +1206,82 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         for col in af:
             if col not in row: row[col] = 0.0
 
-        X    = pd.DataFrame([row[af].values], columns=af).replace([np.inf,-np.inf],0).fillna(0)
-        Xs   = pipeline["selector"].transform(X)
+        X = pd.DataFrame(
+            [row[af].values],
+            columns=af
+        ).replace([np.inf, -np.inf], 0).fillna(0)
+
+        # Production-model selector compatibility:
+        # 1) Current ImportanceSelector state: selected_features
+        # 2) Legacy serialized ImportanceSelector state: feature_names
+        # 3) Generic sklearn/test selector exposing transform()
+        # 4) Final frozen-artifact fallback: pipeline["best_features"]
+        selector = pipeline.get("selector")
+        selected_features = getattr(selector, "selected_features", None)
+        legacy_feature_names = getattr(selector, "feature_names", None)
+        artifact_features = pipeline.get("best_features")
+
+        if selected_features:
+            Xs = selector.transform(X)
+
+        elif legacy_feature_names:
+            legacy_feature_names = list(legacy_feature_names)
+
+            if artifact_features and list(artifact_features) != legacy_feature_names:
+                raise RuntimeError(
+                    "Production model selector feature_names disagree with best_features"
+                )
+
+            missing_features = [
+                feature for feature in legacy_feature_names
+                if feature not in X.columns
+            ]
+            if missing_features:
+                raise RuntimeError(
+                    f"Production model selector feature_names missing from runtime feature frame: {missing_features}"
+                )
+
+            Xs = X[legacy_feature_names].to_numpy()
+
+        elif selector is not None and hasattr(selector, "transform"):
+            try:
+                Xs = selector.transform(X)
+            except AttributeError as exc:
+                if "selected_features" not in str(exc):
+                    raise
+
+                if not artifact_features:
+                    raise RuntimeError(
+                        "Production model selector is incompatible and no best_features fallback exists"
+                    ) from exc
+
+                missing_features = [
+                    feature for feature in artifact_features
+                    if feature not in X.columns
+                ]
+                if missing_features:
+                    raise RuntimeError(
+                        f"Production model best_features missing from runtime feature frame: {missing_features}"
+                    ) from exc
+
+                Xs = X[list(artifact_features)].to_numpy()
+
+        else:
+            if not artifact_features:
+                raise RuntimeError(
+                    "Production model selector is incompatible and no best_features fallback exists"
+                )
+
+            missing_features = [
+                feature for feature in artifact_features
+                if feature not in X.columns
+            ]
+            if missing_features:
+                raise RuntimeError(
+                    f"Production model best_features missing from runtime feature frame: {missing_features}"
+                )
+
+            Xs = X[list(artifact_features)].to_numpy()
 
         disagreement = compute_ensemble_disagreement(pipeline, Xs[0])
 
