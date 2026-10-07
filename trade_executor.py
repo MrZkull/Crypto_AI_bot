@@ -2611,19 +2611,83 @@ VALID_EXECUTION_MODES = {
     "FULL",
 }
 
+# GitHub workflow_dispatch may explicitly request MANAGE_ONLY for
+# controlled testnet validation. FULL is intentionally excluded.
+MANUAL_OVERRIDE_EXECUTION_MODES = {
+    "PREDICT_ONLY",
+    "MANAGE_ONLY",
+}
 
-def get_execution_mode() -> str:
-    mode = str(
-        getattr(config, "EXECUTION_MODE", "PREDICT_ONLY")
-    ).strip().upper()
 
-    if mode not in VALID_EXECUTION_MODES:
+def _validate_execution_mode(mode: str, *, source: str) -> str:
+    normalized = str(mode).strip().upper()
+
+    if normalized not in VALID_EXECUTION_MODES:
         raise RuntimeError(
-            f"Invalid EXECUTION_MODE={mode!r}; "
+            f"Invalid {source}={normalized!r}; "
             f"allowed={sorted(VALID_EXECUTION_MODES)}"
         )
 
-    return mode
+    return normalized
+
+
+def get_execution_mode() -> str:
+    """Resolve effective execution mode with a fail-closed policy.
+
+    Rules:
+      * Scheduled/non-manual GitHub Actions runs are forced to PREDICT_ONLY.
+      * workflow_dispatch may select PREDICT_ONLY or MANAGE_ONLY.
+      * Missing manual input defaults to PREDICT_ONLY.
+      * FULL is not exposed through workflow_dispatch.
+      * Invalid manual overrides fail closed.
+      * Local execution continues to use config.EXECUTION_MODE.
+    """
+    in_github_actions = (
+        os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true"
+    )
+
+    github_event = os.getenv(
+        "GITHUB_EVENT_NAME",
+        "",
+    ).strip().lower()
+
+    if in_github_actions:
+
+        if github_event == "workflow_dispatch":
+
+            override = os.getenv(
+                "EXECUTION_MODE_OVERRIDE",
+                "",
+            ).strip().upper()
+
+            mode = override or "PREDICT_ONLY"
+
+            if mode not in MANUAL_OVERRIDE_EXECUTION_MODES:
+                raise RuntimeError(
+                    f"Invalid EXECUTION_MODE_OVERRIDE={mode!r}; "
+                    "manual workflow override allows only "
+                    f"{sorted(MANUAL_OVERRIDE_EXECUTION_MODES)}"
+                )
+
+            return mode
+
+        # Defense in depth:
+        # scheduled, repository_dispatch, and every other non-manual
+        # GitHub Actions invocation are forced to PREDICT_ONLY.
+        return "PREDICT_ONLY"
+
+    configured = str(
+        getattr(
+            config,
+            "EXECUTION_MODE",
+            "PREDICT_ONLY",
+        )
+    ).strip().upper()
+
+    return _validate_execution_mode(
+        configured,
+        source="EXECUTION_MODE",
+    )
 
 
 def _execution_allows_new_entries() -> bool:

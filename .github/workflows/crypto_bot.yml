@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: '4,19,34,49 * * * *'
   workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: 'Execution mode for this manual validation run'
+        required: false
+        type: choice
+        default: PREDICT_ONLY
+        options:
+          - PREDICT_ONLY
+          - MANAGE_ONLY
   repository_dispatch: {}
 
 concurrency:
@@ -34,12 +43,49 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ── Download 230 MB model artifact from GitHub Release v2.0 ──
+      - name: Resolve execution mode
+        env:
+          EXECUTION_MODE_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.execution_mode || '' }}
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import os
+          import trade_executor
+
+          mode = trade_executor.get_execution_mode()
+          new_entries = trade_executor._execution_allows_new_entries()
+          management = trade_executor._execution_allows_management()
+
+          print(f"EXECUTION_MODE={mode}")
+          print(f"new_entries={new_entries}")
+          print(f"management={management}")
+
+          assert not new_entries, (
+              "Execution-mode preflight failed: new entries must remain blocked"
+          )
+
+          assert management == (mode == "MANAGE_ONLY"), (
+              f"Unexpected management permission for {mode}"
+          )
+
+          with open(
+              os.environ["GITHUB_ENV"],
+              "a",
+              encoding="utf-8",
+          ) as f:
+              f.write(
+                  f"EFFECTIVE_EXECUTION_MODE={mode}\n"
+              )
+
+      # ── Download prediction model only when needed ──
       - name: Download Model Artifact from GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
         run: |
-          if [ ! -f pro_crypto_ai_model.pkl ]; then
+          if [ "${EFFECTIVE_EXECUTION_MODE}" = "MANAGE_ONLY" ]; then
+            echo "MANAGE_ONLY: skipping prediction model download."
+          elif [ ! -f pro_crypto_ai_model.pkl ]; then
             echo "Fetching pro_crypto_ai_model.pkl from Release v2.0..."
             gh release download v2.0 --pattern "pro_crypto_ai_model.pkl" --clobber --repo "${{ github.repository }}"
           fi
@@ -67,11 +113,18 @@ jobs:
           GH_PAT_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
           GITHUB_BRANCH: main
+          EXECUTION_MODE_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.execution_mode || '' }}
         run: python trade_executor.py
 
 
       - name: Validate scanner liveness
         run: |
+          if [ "${EFFECTIVE_EXECUTION_MODE}" = "MANAGE_ONLY" ]; then
+            echo "MANAGE_ONLY: prediction scanner intentionally bypassed."
+            echo "Skipping prediction liveness validation."
+            exit 0
+          fi
+
           EXPECTED=$(python -c "import config; print(len(config.SYMBOLS))")
           python scripts/check_scanner_liveness.py --status scan_status.json --expected-symbols "$EXPECTED"
 
@@ -155,6 +208,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
         run: |
+          if [ "${EFFECTIVE_EXECUTION_MODE}" = "MANAGE_ONLY" ]; then
+            echo "MANAGE_ONLY: skipping Historical Auditor trigger."
+            exit 0
+          fi
+
           echo "Triggering audit_workflow.yml..."
           curl -s -X POST \
             -H "Authorization: token $GH_TOKEN" \

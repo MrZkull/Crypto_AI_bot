@@ -413,3 +413,193 @@ def test_manage_only_bypasses_scheduler_and_runs_management():
                 pass
         else:
             trade_executor.config.EXECUTION_MODE = original_mode
+
+
+def test_manual_workflow_default_is_predict_only():
+    original = getattr(
+        trade_executor.config,
+        "EXECUTION_MODE",
+        None,
+    )
+
+    try:
+        trade_executor.config.EXECUTION_MODE = "FULL"
+
+        with patch.dict(
+            trade_executor.os.environ,
+            {
+                "GITHUB_ACTIONS": "true",
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+            },
+            clear=False,
+        ):
+            trade_executor.os.environ.pop(
+                "EXECUTION_MODE_OVERRIDE",
+                None,
+            )
+
+            assert (
+                trade_executor.get_execution_mode()
+                == "PREDICT_ONLY"
+            )
+
+            assert not (
+                trade_executor._execution_allows_new_entries()
+            )
+
+            assert not (
+                trade_executor._execution_allows_management()
+            )
+
+    finally:
+        if original is None:
+            try:
+                delattr(
+                    trade_executor.config,
+                    "EXECUTION_MODE",
+                )
+            except AttributeError:
+                pass
+        else:
+            trade_executor.config.EXECUTION_MODE = original
+
+
+def test_manual_workflow_can_select_manage_only_without_enabling_entries():
+    original = getattr(
+        trade_executor.config,
+        "EXECUTION_MODE",
+        None,
+    )
+
+    try:
+        trade_executor.config.EXECUTION_MODE = "PREDICT_ONLY"
+
+        with patch.dict(
+            trade_executor.os.environ,
+            {
+                "GITHUB_ACTIONS": "true",
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "EXECUTION_MODE_OVERRIDE": "MANAGE_ONLY",
+            },
+            clear=False,
+        ):
+            assert (
+                trade_executor.get_execution_mode()
+                == "MANAGE_ONLY"
+            )
+
+            assert not (
+                trade_executor._execution_allows_new_entries()
+            )
+
+            assert (
+                trade_executor._execution_allows_management()
+            )
+
+    finally:
+        if original is None:
+            try:
+                delattr(
+                    trade_executor.config,
+                    "EXECUTION_MODE",
+                )
+            except AttributeError:
+                pass
+        else:
+            trade_executor.config.EXECUTION_MODE = original
+
+
+def test_scheduled_github_run_is_forced_to_predict_only():
+    original = getattr(
+        trade_executor.config,
+        "EXECUTION_MODE",
+        None,
+    )
+
+    try:
+        trade_executor.config.EXECUTION_MODE = "FULL"
+
+        with patch.dict(
+            trade_executor.os.environ,
+            {
+                "GITHUB_ACTIONS": "true",
+                "GITHUB_EVENT_NAME": "schedule",
+                "EXECUTION_MODE_OVERRIDE": "MANAGE_ONLY",
+            },
+            clear=False,
+        ):
+            assert (
+                trade_executor.get_execution_mode()
+                == "PREDICT_ONLY"
+            )
+
+            assert not (
+                trade_executor._execution_allows_new_entries()
+            )
+
+            assert not (
+                trade_executor._execution_allows_management()
+            )
+
+    finally:
+        if original is None:
+            try:
+                delattr(
+                    trade_executor.config,
+                    "EXECUTION_MODE",
+                )
+            except AttributeError:
+                pass
+        else:
+            trade_executor.config.EXECUTION_MODE = original
+
+
+def test_manual_workflow_rejects_full_override():
+    with patch.dict(
+        trade_executor.os.environ,
+        {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "EXECUTION_MODE_OVERRIDE": "FULL",
+        },
+        clear=False,
+    ):
+        try:
+            trade_executor.get_execution_mode()
+        except RuntimeError as exc:
+            message = str(exc)
+
+            assert (
+                "Invalid EXECUTION_MODE_OVERRIDE"
+                in message
+            )
+
+            assert "MANAGE_ONLY" in message
+
+        else:
+            raise AssertionError(
+                "FULL must not be accepted as a manual override"
+            )
+
+
+def test_manual_workflow_rejects_invalid_override():
+    with patch.dict(
+        trade_executor.os.environ,
+        {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "EXECUTION_MODE_OVERRIDE": "NOT_A_REAL_MODE",
+        },
+        clear=False,
+    ):
+        try:
+            trade_executor.get_execution_mode()
+        except RuntimeError as exc:
+            assert (
+                "Invalid EXECUTION_MODE_OVERRIDE"
+                in str(exc)
+            )
+        else:
+            raise AssertionError(
+                "Invalid manual override was accepted"
+            )
