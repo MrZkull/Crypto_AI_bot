@@ -1486,11 +1486,15 @@ async function apiFetch(path, fallback, opts) {
   try {
     const r = await fetch(path, opts || {cache:'no-store'});
     const data = await r.json().catch(() => fallback);
+
     if (!r.ok) {
-      return { ok: false, error: data.error || r.status, message: data.message || `HTTP ${r.status}` };
+      console.warn(`[API ${r.status}] ${path}`);
+      return fallback;
     }
+
     return data;
   } catch(e) {
+    console.warn(`[API ERROR] ${path}`, e);
     return fallback;
   }
 }
@@ -3167,20 +3171,36 @@ async function fetchEmailTracker() {
   `).join('');
 }
 
+let refreshInFlight = false;
+
 async function refreshAll() {
-  await fetchConfig();
-  await Promise.all([
-    fetchStatus(),
-    fetchBalance(),
-    fetchOpenTrades(),
-    fetchSignals(),
-    fetchBtcAtr(),
-    fetchMarketData(),
-    fetchLog(),
-    fetchProbationData(),
-    fetchCooldownData()
-  ]);
-  updateCoinChips();
+  if (refreshInFlight) {
+    console.debug('[Dashboard] Refresh already in progress; skipping overlapping cycle.');
+    return;
+  }
+
+  refreshInFlight = true;
+
+  try {
+    await fetchConfig();
+
+    await Promise.all([
+      fetchStatus(),
+      fetchBalance(),
+      fetchOpenTrades(),
+      fetchSignals(),
+      fetchBtcAtr(),
+      fetchMarketData(),
+      fetchLog(),
+      fetchProbationData(),
+      fetchCooldownData()
+    ]);
+
+    updateCoinChips();
+
+  } finally {
+    refreshInFlight = false;
+  }
 }
 
 initTheme();
