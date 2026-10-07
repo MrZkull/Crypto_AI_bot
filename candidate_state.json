@@ -3918,5 +3918,73 @@
     "final_exit_fee_usd": 26.008235294117455,
     "exit_reason": "STOP_LOSS",
     "remaining_qty": 0.0
+  },
+  "ALGOUSDT_1791330300000": {
+    "candidate_id": "cand_f4e5f9d1908642b985cfaf0b4791edbb",
+    "pred_id": "ALGOUSDT_1791330300000",
+    "event": "SETUP_OBSERVED",
+    "model_sha256": "d245a17452ed9f5a678e73a5720d5c09eaf4c0e2f332bef3f1883d6a668ef011",
+    "feature_schema_hash": "7086b238766b51f63777248fd11a164c6dfb5f3f3015dee399994cd00bbbd688",
+    "feature_code_hash": "6b7d555e4966dca3937f6b2c8141fefd8786633bb37d820a138fb82a214de5d3",
+    "execution_policy_hash": "575c604a2ad66fd37ce87286f501159cbbc5e913f89d58edb252a9527ab63deb",
+    "decision_policy_hash": "",
+    "config_hash": "e403b9836116b116195f9a4af2a35a08365a88ada9a6ed04978b64ab49ffba8f",
+    "symbol": "ALGOUSDT",
+    "logical_symbol": "ALGOUSDT",
+    "open_time": 1791330300000,
+    "interval": "15m",
+    "observation_source": {
+      "exchange": "binance",
+      "market_type": "spot"
+    },
+    "observation_market": "BINANCE_SPOT",
+    "observation_contract": {
+      "contract_version": "1.0",
+      "logical_symbol": "ALGOUSDT",
+      "observation_market": "BINANCE_SPOT",
+      "observation_source": {
+        "exchange": "binance",
+        "market_type": "spot"
+      },
+      "execution_instrument": null,
+      "interval": "15m",
+      "open_time": 1791330300000,
+      "close_time": 1791331199999,
+      "retrieved_at_ms": 1791331630719,
+      "htf_sources": {
+        "1h": null,
+        "4h": null
+      },
+      "btc_source": null
+    },
+    "observation_identity": [
+      "ALGOUSDT",
+      1791330300000,
+      "15m",
+      "binance",
+      "spot"
+    ],
+    "side": "BUY",
+    "primary_selected": true,
+    "meta_selected": false,
+    "atr": 0.0003285714285714271,
+    "simulated_entry": 0.1235,
+    "stop": 0.12267857142857143,
+    "tp1": 0.12465,
+    "tp2": 0.1259642857142857,
+    "qty": 365217.39130434836,
+    "initial_risk_usd": 300.0,
+    "entry_time_ms": 1791330300000,
+    "recorded_at_ms": 1791331630720,
+    "entry_fee_usd": 0.0,
+    "tp1_fee_usd": 0.0,
+    "thesis_label": null,
+    "net_r": null,
+    "evidence_type": "EMPIRICAL_PROSPECTIVE",
+    "state": "COUNTERFACTUAL_OPEN",
+    "status": "COUNTERFACTUAL_ACTIVE",
+    "last_funding_ts": 1791330300000,
+    "funding_usd": 0.0,
+    "realized_gross_pnl": 0.0
   }
 }
