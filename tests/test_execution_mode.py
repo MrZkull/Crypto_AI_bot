@@ -266,3 +266,150 @@ def test_predict_only_scan_does_not_construct_deribit_and_still_scores():
                 pass
         else:
             trade_executor.config.EXECUTION_MODE = original_mode
+
+def test_manage_only_bypasses_scheduler_and_runs_management():
+    original_mode = getattr(
+        trade_executor.config,
+        "EXECUTION_MODE",
+        None,
+    )
+    original_symbols = trade_executor.SYMBOLS
+    original_liveness = dict(
+        trade_executor._SCAN_LIVENESS
+    )
+
+    try:
+        trade_executor.config.EXECUTION_MODE = "MANAGE_ONLY"
+        trade_executor.SYMBOLS = ["ETHUSDT"]
+
+        deribit = MagicMock()
+        management_calls = []
+
+        def fake_management(name):
+            def _fake(*args, **kwargs):
+                management_calls.append(name)
+            return _fake
+
+        def fake_env(key, default=""):
+            values = {
+                "DERIBIT_CLIENT_ID": "test-client-id",
+                "DERIBIT_CLIENT_SECRET": "test-client-secret",
+            }
+            return values.get(key, default)
+
+        status_writes = []
+
+        def fake_save_json(path, payload):
+            status_writes.append((str(path), dict(payload)))
+
+        with patch.object(
+            trade_executor,
+            "should_scan",
+            side_effect=AssertionError(
+                "MANAGE_ONLY must bypass prediction scheduler gates"
+            ),
+        ), patch.object(
+            trade_executor.joblib,
+            "load",
+            side_effect=AssertionError(
+                "MANAGE_ONLY must not load prediction model"
+            ),
+        ), patch.object(
+            trade_executor,
+            "get_mode_thresholds",
+            side_effect=AssertionError(
+                "MANAGE_ONLY must not build prediction thresholds"
+            ),
+        ), patch.object(
+            trade_executor,
+            "get_effective_risk",
+            side_effect=AssertionError(
+                "MANAGE_ONLY must not calculate prediction risk"
+            ),
+        ), patch.object(
+            trade_executor,
+            "DeribitClient",
+            return_value=deribit,
+        ) as deribit_ctor, patch.object(
+            trade_executor.os,
+            "getenv",
+            side_effect=fake_env,
+        ), patch.object(
+            trade_executor,
+            "load_trades",
+            return_value={},
+        ), patch.object(
+            trade_executor,
+            "save_balance",
+            return_value=1234.56,
+        ) as save_balance_mock, patch.object(
+            trade_executor,
+            "check_open_trades",
+            side_effect=fake_management("check_open_trades"),
+        ), patch.object(
+            trade_executor,
+            "check_stale_trades",
+            side_effect=fake_management("check_stale_trades"),
+        ), patch.object(
+            trade_executor,
+            "clean_ghost_trades",
+            side_effect=fake_management("clean_ghost_trades"),
+        ), patch.object(
+            trade_executor,
+            "check_funding_rates",
+            side_effect=fake_management("check_funding_rates"),
+        ), patch.object(
+            trade_executor,
+            "save_json",
+            side_effect=fake_save_json,
+        ):
+            trade_executor._run_execution_scan_locked()
+
+        deribit_ctor.assert_called_once_with(
+            "test-client-id",
+            "test-client-secret",
+        )
+        deribit.test_connection.assert_called_once()
+
+        assert management_calls == [
+            "check_open_trades",
+            "check_stale_trades",
+            "clean_ghost_trades",
+            "check_funding_rates",
+        ]
+        assert save_balance_mock.call_count >= 1
+
+        completed = [
+            payload
+            for path, payload in status_writes
+            if payload.get("phase") == "completed"
+        ]
+        assert completed
+
+        final_status = completed[-1]
+
+        assert final_status["execution_mode"] == "MANAGE_ONLY"
+        assert final_status["symbols_attempted"] == 0
+        assert final_status["symbols_scored"] == 0
+        assert final_status["predictions_saved"] == 0
+        assert final_status["skip_reason"] == "MANAGE_ONLY_NO_NEW_ENTRIES"
+        assert final_status["management_ran"] is True
+
+    finally:
+        trade_executor.SYMBOLS = original_symbols
+
+        trade_executor._SCAN_LIVENESS.clear()
+        trade_executor._SCAN_LIVENESS.update(
+            original_liveness
+        )
+
+        if original_mode is None:
+            try:
+                delattr(
+                    trade_executor.config,
+                    "EXECUTION_MODE",
+                )
+            except AttributeError:
+                pass
+        else:
+            trade_executor.config.EXECUTION_MODE = original_mode

@@ -2671,27 +2671,40 @@ def _run_execution_scan_locked():
         "skip_reason": None,
     })
 
-    run, mode, vol, reason = should_scan()
-    if not run:
-        log.info(f"  Scan skipped: {reason}")
-        _SCAN_LIVENESS["skip_reason"] = str(reason)
+    # MANAGE_ONLY is intentionally independent of prediction scheduler gates.
+    # Existing-position protection/management must not be suppressed by
+    # quiet-hours, drawdown, or other new-entry scan decisions.
+    if execution_mode == "MANAGE_ONLY":
+        run = True
+        mode = {"label": "MANAGE_ONLY"}
+        vol = {"status": "NORMAL"}
+        reason = None
+        pipeline = None
+        thresholds = None
+        risk_mult = 1.0
+    else:
+        run, mode, vol, reason = should_scan()
 
-        save_json(SCAN_STATUS_FILE, {
-            "phase": "completed",
-            "started_at": scan_started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-            "scan_ran": False,
-            "symbols_attempted": 0,
-            "symbols_scored": 0,
-            "predictions_saved": 0,
-            "execution_mode": execution_mode,
-            "skip_reason": str(reason),
-        })
-        return
+        if not run:
+            log.info(f"  Scan skipped: {reason}")
+            _SCAN_LIVENESS["skip_reason"] = str(reason)
 
-    pipeline   = joblib.load(MODEL_FILE)
-    thresholds = get_mode_thresholds(mode)
-    risk_mult  = get_effective_risk(mode, vol)
+            save_json(SCAN_STATUS_FILE, {
+                "phase": "completed",
+                "started_at": scan_started_at,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "scan_ran": False,
+                "symbols_attempted": 0,
+                "symbols_scored": 0,
+                "predictions_saved": 0,
+                "execution_mode": execution_mode,
+                "skip_reason": str(reason),
+            })
+            return
+
+        pipeline = joblib.load(MODEL_FILE)
+        thresholds = get_mode_thresholds(mode)
+        risk_mult = get_effective_risk(mode, vol)
 
     deribit = None
 
@@ -2725,11 +2738,38 @@ def _run_execution_scan_locked():
 
     # ── CLAMP: Floor model thresholds against config.MIN_CONFIDENCE ──
     config_floor = float(getattr(config, "MIN_CONFIDENCE", 52.0))
-    rec_buy  = max(config_floor, float(pipeline.get("recommended_threshold_buy", pipeline.get("recommended_threshold", 0.40))) * 100.0)
-    rec_sell = max(config_floor, float(pipeline.get("recommended_threshold_sell", pipeline.get("recommended_threshold", 0.45))) * 100.0)
 
-    log.info(f"  {mode['label']} | Active Targets: BUY≥{rec_buy:.1f}% SELL≥{rec_sell:.1f}% "
-             f"| score≥{thresholds['min_score']} | ADX≥{thresholds['min_adx']} | risk:{risk_mult:.2f}")
+    # MANAGE_ONLY has no prediction pipeline by design.
+    if pipeline is None:
+        rec_buy = config_floor
+        rec_sell = config_floor
+    else:
+        rec_buy = max(
+            config_floor,
+            float(
+                pipeline.get(
+                    "recommended_threshold_buy",
+                    pipeline.get("recommended_threshold", 0.40),
+                )
+            ) * 100.0,
+        )
+        rec_sell = max(
+            config_floor,
+            float(
+                pipeline.get(
+                    "recommended_threshold_sell",
+                    pipeline.get("recommended_threshold", 0.45),
+                )
+            ) * 100.0,
+        )
+
+    log.info(
+        f"  {mode['label']} | Active Targets: "
+        f"BUY={rec_buy:.1f}% SELL={rec_sell:.1f}% "
+        f"| score={thresholds['min_score'] if thresholds else 'N/A'} "
+        f"| ADX={thresholds['min_adx'] if thresholds else 'N/A'} "
+        f"| risk:{risk_mult:.2f}"
+    )
 
     balance = 0.0
     if _execution_allows_management():
@@ -2811,12 +2851,13 @@ def _run_execution_scan_locked():
                 "phase": "completed",
                 "started_at": scan_started_at,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
-                "scan_ran": True,
+                "scan_ran": False,
                 "symbols_attempted": 0,
                 "symbols_scored": 0,
                 "predictions_saved": 0,
                 "execution_mode": execution_mode,
                 "skip_reason": "MANAGE_ONLY_NO_NEW_ENTRIES",
+                "management_ran": True,
             },
         )
         return
