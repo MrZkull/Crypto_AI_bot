@@ -42,6 +42,18 @@ SIGNALS_FILE           = "signals.json"
 BALANCE_FILE           = "balance.json"
 LOCK_FILE              = "scan_lock.json"
 SCAN_STATUS_FILE       = "scan_status.json"
+
+# Stage2E scanner liveness telemetry.
+# This records whether the scanner actually ran, how many symbols
+# reached ML scoring, and how many prediction records were persisted.
+_STAGE2E_LIVENESS_V2 = True
+_SCAN_LIVENESS = {
+    "scan_ran": False,
+    "symbols_attempted": 0,
+    "symbols_scored": 0,
+    "predictions_saved": 0,
+    "skip_reason": None,
+}
 STALE_LOCK_MINUTES     = 20
 EXECUTION_SANITY_FLOOR = 35.0          
 ORPHAN_TRACKER_FILE    = "orphan_candidates.json"
@@ -330,6 +342,8 @@ def _pred_record(symbol, sig, conf, pipeline, row, disagreement, reject_reason=N
 def save_prediction(rec: dict):
     preds = load_json(PREDICTIONS_FILE, [])
     preds.append(rec)
+    if _SCAN_LIVENESS.get("scan_ran"):
+        _SCAN_LIVENESS["predictions_saved"] += 1
     if len(preds) > MAX_PREDICTIONS_KEPT:
         unaudited = [p for p in preds if not p.get("audited")]
         audited   = [p for p in preds if p.get("audited")]
@@ -1202,6 +1216,11 @@ def generate_signal(symbol, pipeline, thresholds, btc_momentum=None, whale_flow=
         
         sig  = pipeline["label_map"][int(pred)]
         conf = round(float(max(prob))*100, 1)
+
+        # A symbol is "scored" only after the ensemble has actually
+        # produced a prediction/probability result.
+        if _SCAN_LIVENESS.get("scan_ran"):
+            _SCAN_LIVENESS["symbols_scored"] += 1
 
         # ── CLAMP: Enforce config.MIN_CONFIDENCE as absolute minimum floor ──
         config_floor = float(getattr(config, "MIN_CONFIDENCE", 52.0))
@@ -2370,12 +2389,40 @@ def run_execution_scan():
 
 def _run_execution_scan_locked():
     scan_started_at = datetime.now(timezone.utc).isoformat()
-    save_json(SCAN_STATUS_FILE, {"phase": "started", "started_at": scan_started_at, "completed_at": None})
+    _SCAN_LIVENESS.update({
+        "scan_ran": False,
+        "symbols_attempted": 0,
+        "symbols_scored": 0,
+        "predictions_saved": 0,
+        "skip_reason": None,
+    })
+
+    save_json(SCAN_STATUS_FILE, {
+        "phase": "started",
+        "started_at": scan_started_at,
+        "completed_at": None,
+        "scan_ran": False,
+        "symbols_attempted": 0,
+        "symbols_scored": 0,
+        "predictions_saved": 0,
+        "skip_reason": None,
+    })
 
     run, mode, vol, reason = should_scan()
     if not run:
         log.info(f"  Scan skipped: {reason}")
-        save_json(SCAN_STATUS_FILE, {"phase": "completed", "started_at": scan_started_at, "completed_at": datetime.now(timezone.utc).isoformat()})
+        _SCAN_LIVENESS["skip_reason"] = str(reason)
+
+        save_json(SCAN_STATUS_FILE, {
+            "phase": "completed",
+            "started_at": scan_started_at,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "scan_ran": False,
+            "symbols_attempted": 0,
+            "symbols_scored": 0,
+            "predictions_saved": 0,
+            "skip_reason": str(reason),
+        })
         return
 
     deribit    = DeribitClient(os.getenv("DERIBIT_CLIENT_ID",""), os.getenv("DERIBIT_CLIENT_SECRET",""))
@@ -2383,6 +2430,9 @@ def _run_execution_scan_locked():
     pipeline   = joblib.load(MODEL_FILE)
     thresholds = get_mode_thresholds(mode)
     risk_mult  = get_effective_risk(mode, vol)
+
+    _SCAN_LIVENESS["scan_ran"] = True
+    _SCAN_LIVENESS["symbols_attempted"] = len(SYMBOLS)
 
     max_open_trades = int(getattr(config, "MAX_OPEN_TRADES", 8))
     max_same_dir    = int(getattr(config, "MAX_SAME_DIRECTION", 4))
@@ -2491,9 +2541,15 @@ def _run_execution_scan_locked():
     log.info(f"\n{'═'*56}\nDONE — {found} signal(s) | ${balance:.2f}\n{'═'*56}")
 
     save_json(SCAN_STATUS_FILE, {
-        "phase": "completed", 
-        "started_at": scan_started_at, 
+        "phase": "completed",
+        "started_at": scan_started_at,
         "completed_at": datetime.now(timezone.utc).isoformat(),
+        "scan_ran": bool(_SCAN_LIVENESS["scan_ran"]),
+        "symbols_attempted": int(_SCAN_LIVENESS["symbols_attempted"]),
+        "symbols_scored": int(_SCAN_LIVENESS["symbols_scored"]),
+        "predictions_saved": int(_SCAN_LIVENESS["predictions_saved"]),
+        "skip_reason": _SCAN_LIVENESS.get("skip_reason"),
+        "signals_found": int(found),
         "active_buy_conf": round(rec_buy, 1),
         "active_sell_conf": round(rec_sell, 1),
         "probation_offset": float(PROBATION_CONFIDENCE_OFFSET),

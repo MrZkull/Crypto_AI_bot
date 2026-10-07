@@ -69,6 +69,12 @@ jobs:
           GITHUB_BRANCH: main
         run: python trade_executor.py
 
+
+      - name: Validate scanner liveness
+        run: |
+          EXPECTED=$(python -c "import config; print(len(config.SYMBOLS))")
+          python scripts/check_scanner_liveness.py --status scan_status.json --expected-symbols "$EXPECTED"
+
       - name: Commit and Push State
         if: always()
         run: |
