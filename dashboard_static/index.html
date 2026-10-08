@@ -7,10 +7,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- Chart.js v4 + Hammer.js + Zoom Plugin -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
+/* ══════════════════════════════════════════════════════════════════════════
+   DESIGN SYSTEM TOKENS (Institutional Cyber & Modern Executive)
+   ══════════════════════════════════════════════════════════════════════════ */
 :root {
   --bg: #070a11;
   --bg2: #0d131f;
@@ -86,11 +90,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Custom Scrollbar */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
 
+/* ── SIDEBAR ── */
 .sidebar {
   width: var(--nav-w);
   min-height: 100vh;
@@ -146,6 +152,10 @@ body {
   letter-spacing: 1.5px;
   text-transform: uppercase;
   color: var(--text3);
+}
+nav {
+  display: flex;
+  flex-direction: column;
 }
 .nav-item {
   display: flex;
@@ -247,6 +257,7 @@ body {
 .coin-chip.probated-chip { border-color: var(--amber) !important; color: var(--amber) !important; background: var(--amber2) !important; font-weight: 700; }
 .coin-chip.cooldown-chip { border-color: var(--cyan) !important; color: var(--cyan) !important; background: var(--cyan2) !important; }
 
+/* ── MAIN CONTENT ── */
 .main {
   margin-left: var(--nav-w);
   flex: 1;
@@ -340,6 +351,7 @@ body {
 .page.active { display: block; animation: fadeIn 0.2s ease-in-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ── STAT CARDS ── */
 .stats-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -388,6 +400,7 @@ body {
 .stat-value.purple { color: var(--purple); }
 .stat-sub { font-size: 10px; color: var(--text2); margin-top: 6px; font-weight: 500; }
 
+/* ── PANELS & CONTAINERS ── */
 .panel {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -430,6 +443,7 @@ body {
 .g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .g3 { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
 
+/* ── TRADE CARDS ── */
 .trade-card {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -474,6 +488,7 @@ body {
 }
 .btn-close-trade:hover { background: var(--red); color: #fff; }
 
+/* ── SIGNAL CARDS ── */
 .signal-card {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -492,6 +507,7 @@ body {
 .sc-val { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--text); }
 .stars { color: var(--amber); font-size: 11px; letter-spacing: 1px; }
 
+/* ── CONTROLS & FILTER BUTTONS ── */
 .signal-filters, .history-toolbar {
   display: flex;
   align-items: center;
@@ -533,6 +549,7 @@ body {
 }
 .fselect:focus { border-color: var(--blue); }
 
+/* ── MARKET & CHARTS ── */
 .market-card {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -557,6 +574,7 @@ body {
 .log-line.err { color: var(--red); font-weight: 600; }
 .log-line.wrn { color: var(--amber); font-weight: 600; }
 
+/* ── TABLES ── */
 .htable-wrapper { max-height: 65vh; overflow-y: auto; overflow-x: auto; position: relative; border-radius: 0 0 12px 12px; }
 .htable { width: 100%; border-collapse: collapse; min-width: 650px; font-family: var(--mono); font-size: 11px; }
 .htable thead th { position: sticky; top: 0; z-index: 20; background: var(--bg3); padding: 12px; font-family: var(--sans); font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text3); border-bottom: 1px solid var(--border); text-align: left; }
@@ -580,6 +598,7 @@ body {
 .perf-bar.loss { background: var(--red); }
 .empty { text-align: center; padding: 36px 16px; color: var(--text3); font-size: 12px; }
 
+/* ── SYSTEM MONITOR ── */
 .mon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
 .mon-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--card-shadow); }
 .mon-card-hd { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg3); flex-wrap: wrap; gap: 6px; }
@@ -599,6 +618,7 @@ body {
 .mon-ring.err { background: var(--red2); border: 2px solid var(--red); color: var(--red); }
 .mon-alert { background: var(--red2); border: 1px solid rgba(244, 63, 94, 0.3); border-radius: 8px; padding: 10px 14px; display: flex; gap: 10px; margin-bottom: 8px; }
 
+/* ── MODALS ── */
 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.75); z-index: 999; display: none; align-items: center; justify-content: center; backdrop-filter: blur(8px); }
 .modal-overlay.active { display: flex; animation: fadeIn 0.2s; }
 .modal-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 24px; max-width: 440px; width: 90%; box-shadow: 0 20px 40px -10px rgba(0,0,0,0.6); }
@@ -609,6 +629,7 @@ body {
 .coin-perf-wr { font-family: var(--mono); font-size: 15px; font-weight: 800; }
 .coin-perf-sub { font-size: 9px; font-family: var(--mono); color: var(--text3); }
 
+/* ── RESPONSIVE ── */
 @media (max-width: 1024px) { .g2, .g3 { grid-template-columns: 1fr; } }
 @media (max-width: 768px) {
   :root { --nav-w: 180px; }
@@ -670,7 +691,6 @@ body {
     </div>
   </div>
 </aside>
-
 <div class="main">
   <div class="topbar">
     <div class="topbar-left">
@@ -698,6 +718,7 @@ body {
     </div>
   </div>
 
+  <!-- 1. DASHBOARD PAGE -->
   <div class="page active" id="page-dashboard">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Testnet Balance</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub">USDT Live Balance</div></div>
@@ -784,6 +805,7 @@ body {
     </div>
   </div>
 
+  <!-- 2. SIGNALS PAGE -->
   <div class="page" id="page-signals">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Total Signals Today</div><div class="stat-value green" id="sig-total">0</div><div class="stat-sub">last 24 hours</div></div>
@@ -821,6 +843,7 @@ body {
     </div>
   </div>
 
+  <!-- 3. MARKET PAGE -->
   <div class="page" id="page-market">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Gainers</div><div class="stat-value green" id="mkt-gainers">0</div><div class="stat-sub" id="mkt-gainers-sub">loading...</div></div>
@@ -857,6 +880,7 @@ body {
     </div>
   </div>
 
+  <!-- 4. OPEN TRADES PAGE -->
   <div class="page" id="page-trades">
     <div class="stats-row">
       <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub" id="ot-max-sub">—</div></div>
@@ -871,7 +895,7 @@ body {
       </div>
     </div>
   </div>
-
+  <!-- 5. HISTORY PAGE & INSTITUTIONAL REPORT ENGINE -->
   <div class="page" id="page-history">
     <div class="stats-row">
       <div class="stat-card c-purple"><div class="stat-label">Total Trades</div><div class="stat-value purple" id="h-total">0</div><div class="stat-sub">filtered range</div></div>
@@ -983,6 +1007,7 @@ body {
       </div>
     </div>
 
+    <!-- SHARE RECIPIENT AUDIT TRACKER TABLE -->
     <div class="panel" style="margin-top:16px;">
       <div class="panel-header">
         <span class="panel-title">Report Sharing Audit Tracker</span>
@@ -1010,6 +1035,7 @@ body {
     </div>
   </div>
 
+  <!-- 6. PERFORMANCE PAGE -->
   <div class="page" id="page-performance">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Best Trade</div><div class="stat-value green" id="p-best">—</div><div class="stat-sub" id="p-best-sym">USDT profit</div></div>
@@ -1042,6 +1068,7 @@ body {
     </div>
   </div>
 
+  <!-- 7. QUANT ANALYTICS PAGE -->
   <div class="page" id="page-quant">
     <div class="stats-row">
       <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">—</div><div class="stat-sub">Annualized</div></div>
@@ -1072,6 +1099,7 @@ body {
     </div>
   </div>
   
+  <!-- 8. EXECUTION MICROSTRUCTURE PAGE -->
   <div class="page" id="page-execution">
     <div class="stats-row">
       <div class="stat-card c-blue"><div class="stat-label">Avg Slippage</div><div class="stat-value blue" id="ex-slip">—</div><div class="stat-sub">Limit vs Fill</div></div>
@@ -1089,6 +1117,7 @@ body {
     </div>
   </div>
 
+  <!-- 9. INTELLIGENCE PAGE -->
   <div class="page" id="page-intel">  
     <div class="stats-row">    
       <div class="stat-card c-purple"><div class="stat-label">Prediction Ledger</div><div class="stat-value purple" id="intel-total-preds">—</div><div class="stat-sub" id="intel-unaudited">— unaudited</div></div>    
@@ -1113,6 +1142,7 @@ body {
     </div>
   </div> 
   
+  <!-- 10. MODEL HEALTH PAGE -->
   <div class="page" id="page-modelhealth">
     <div class="stats-row">
       <div class="stat-card c-purple"><div class="stat-label">Active Model Ensemble</div><div class="stat-value purple" id="mh-name">—</div><div class="stat-sub">Live Serialization</div></div>
@@ -1127,6 +1157,7 @@ body {
     </div>
   </div>
 
+  <!-- 11. CONFIGURATION PAGE -->
   <div class="page" id="page-config">
     <div class="g2" style="align-items:start">
       <div class="panel">
@@ -1183,6 +1214,7 @@ body {
     </div>
   </div>
 
+  <!-- 12. SYSTEM MONITOR PAGE -->
   <div class="page" id="page-monitor">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
       <div>
@@ -1337,8 +1369,9 @@ body {
     </div>
   </div>
 
-</div>
+</div> <!-- end .main -->
 
+<!-- EMERGENCY KILL SWITCH MODAL -->
 <div class="modal-overlay" id="killModal">
   <div class="modal-box">
     <div style="font-size:17px;font-weight:800;color:var(--red);margin-bottom:10px;display:flex;align-items:center;gap:8px;">🚨 EMERGENCY KILL SWITCH</div>
@@ -1357,6 +1390,7 @@ body {
   </div>
 </div>
 
+<!-- EMAIL DISPATCH MODAL -->
 <div class="modal-overlay" id="emailModal">
   <div class="modal-box" style="border-color:var(--purple);box-shadow:0 10px 30px rgba(139,92,246,0.25)">
     <div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px;">✉️ Send Performance Report</div>
@@ -1368,14 +1402,23 @@ body {
     </div>
   </div>
 </div>
-
+<script>
 <script>
 let ALL_COINS = [];
 let COIN_TIERS_MAP = {};
 const PAGES = {
-  dashboard:'Dashboard', signals:'Signals', market:'Market', trades:'Open Trades',
-  history:'History', performance:'Performance', quant:'Quant Analytics',
-  execution:'Execution', intel:'Intelligence' , modelhealth:'Model Health', config:'Configuration', monitor:'System Monitor'
+  dashboard: 'Dashboard',
+  signals: 'Signals',
+  market: 'Market',
+  trades: 'Open Trades',
+  history: 'History',
+  performance: 'Performance',
+  quant: 'Quant Analytics',
+  execution: 'Execution',
+  intel: 'Intelligence',
+  modelhealth: 'Model Health',
+  config: 'Configuration',
+  monitor: 'System Monitor'
 };
 
 let allSignals = [], allTrades = {}, allHistory = [];
@@ -1385,7 +1428,9 @@ let histRange = 'all', histResultFilter = 'all', sigFilter = 'all', confFilter =
 let scanRunning = false, monTimer = null;
 let equityChartInst = null, dailyPnlChartInst = null, calibrationChartInst = null;
 let allEquityPoints = [], allDailyPnlPoints = [];
+let refreshInFlight = false;
 
+// ── THEME INITIALIZATION ──
 function initTheme() {
   const saved = localStorage.getItem('theme') || 'dark';
   if (saved === 'light') {
@@ -1451,23 +1496,18 @@ async function apiFetch(path, fallback, opts) {
   try {
     const r = await fetch(path, opts || { cache: 'no-store' });
     if (r.status === 429) {
-      console.warn(`[API 429 Rate Limit] Backing off request on ${path}`);
+      console.warn(`[API 429 Rate Limit] Backing off on ${path}`);
       return fallback;
     }
     const data = await r.json().catch(() => fallback);
-    if (!r.ok) {
-      console.warn(`[API ${r.status}] ${path}`);
-      return fallback;
-    }
+    if (!r.ok) return fallback;
     return data;
   } catch(e) {
-    console.warn(`[API ERROR] ${path}`, e);
     return fallback;
   }
 }
 
-let refreshInFlight = false;
-
+// ── UNIFIED STATE PIPELINE ──
 async function refreshAll() {
   if (refreshInFlight) return;
   refreshInFlight = true;
@@ -1477,10 +1517,19 @@ async function refreshAll() {
     if (data && data.ok) {
       applyDashboardState(data);
     } else {
-      await fetchStatus();
-      await fetchBalance();
-      await fetchOpenTrades();
+      await Promise.all([
+        fetchStatus(),
+        fetchBalance(),
+        fetchOpenTrades(),
+        fetchSignals(),
+        fetchBtcAtr(),
+        fetchMarketData(),
+        fetchLog(),
+        fetchProbationData(),
+        fetchCooldownData()
+      ]);
     }
+    updateCoinChips();
   } catch (err) {
     console.warn('[Dashboard] Sync warning:', err);
   } finally {
@@ -1548,6 +1597,8 @@ function applyDashboardState(d) {
     const pairs = d.status.total_monitored_pairs || 25;
     document.getElementById('topMonitoredCount').textContent = pairs;
     document.getElementById('statPairsCount').textContent = `${pairs} pairs`;
+    document.getElementById('statSigToday').textContent = d.status.today_signals || 0;
+    document.getElementById('statSigSub').textContent   = (d.status.today_buys || 0) + ' BUY · ' + (d.status.today_sells || 0) + ' SELL';
   }
 
   if (d.balance) {
@@ -1597,6 +1648,23 @@ function applyDashboardState(d) {
     cooldownCoinsSet = new Set(cooldownCoinsData.map(c => c.symbol));
     renderCooldownTracker(cooldownCoinsData);
   }
+}
+
+async function healTradeBracket(symbol) {
+  if (!confirm(`Attach fresh Stop-Loss and Take-Profit brackets to ${symbol} on Deribit?`)) return;
+  try {
+    const r = await apiFetch('/api/trades/heal', { ok: false }, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol })
+    });
+    if (r && r.ok) {
+      alert(`✅ ${symbol} Repaired!\n${r.message}`);
+      await refreshAll();
+    } else {
+      alert(`🚨 Repair Failed: ${r.error || 'Server error'}`);
+    }
+  } catch(e) { alert(`🚨 Error: ${e.message}`); }
 }
 
 async function fetchProbationData() {
@@ -1653,7 +1721,7 @@ async function manualBenchCoin() {
     alert("Please select a coin to place on probation.");
     return;
   }
-  if (!confirm(`Place ${symbol} on probation?\n\nThis enforces a +10% confidence premium.`)) return;
+  if (!confirm(`Place ${symbol} on probation?\n\nEnforces a +10% confidence premium.`)) return;
   try {
     const r = await fetch('/api/probation/bench', {
       method: 'POST',
@@ -1799,14 +1867,14 @@ async function fetchBalance() {
 async function fetchOpenTrades() {
   const data = await apiFetch('/api/trades/open', []);
   const tradesArray = Array.isArray(data) ? data : [];
-  allTrades  = {};
+  allTrades = {};
   tradesArray.forEach(t => { if (t && t.symbol) allTrades[t.symbol] = t; });
 
-  const count   = tradesArray.length;
-  const tradeEl = document.getElementById('tradeCount');
-  if (tradeEl) {
-    tradeEl.textContent = count;
-    tradeEl.style.display = count > 0 ? '' : 'none';
+  const count = tradesArray.length;
+  const tradeCountEl = document.getElementById('tradeCount');
+  if (tradeCountEl) {
+    tradeCountEl.textContent = count;
+    tradeCountEl.style.display = count > 0 ? '' : 'none';
   }
 
   const badge = document.getElementById('openBadge');
@@ -1821,101 +1889,15 @@ async function fetchOpenTrades() {
   });
 }
 
-async function fetchIntel() {  
-  const [preds, dossier, proposals] = await Promise.all([    
-    apiFetch('/api/predictions', {}),    
-    apiFetch('/api/dossier', {coins:[]}),    
-    apiFetch('/api/adaptation_proposals?status=pending', {proposals:[]}),  
-  ]);  
-  
-  if (preds.ok) {    
-    document.getElementById('intel-total-preds').textContent = preds.total_predictions;    
-    document.getElementById('intel-unaudited').textContent = preds.unaudited_count + ' unaudited';    
-    document.getElementById('intel-hitrate').textContent = preds.overall_hit_rate != null ? preds.overall_hit_rate + '%' : '—';    
-    document.getElementById('intel-disagreement').textContent = preds.avg_ensemble_disagreement ?? '—';  
-  }  
-  
-  const dBody = document.getElementById('dossierBody');  
-  if (dossier.ok && dossier.coins.length) {    
-    dBody.innerHTML = dossier.coins.map(c => `      
-      <tr>        
-        <td style="color:var(--text);font-weight:700">${c.symbol}</td>        
-        <td>${c.total_audited}</td>        
-        <td style="color:${c.hit_rate >= 55 ? 'var(--green)' : c.hit_rate >= 40 ? 'var(--amber)' : 'var(--red)'};font-weight:700">${c.hit_rate ?? '—'}%</td>        
-        <td>${c.avg_disagreement_when_correct ?? '—'}</td>        
-        <td>${c.avg_disagreement_when_incorrect ?? '—'}</td>        
-        <td>${Object.entries(c.tags||{}).map(([t,n]) => `<span class="tag" style="background:var(--amber2);color:var(--amber);margin-right:4px">${t}×${n}</span>`).join('') || '—'}</td>      
-      </tr>`).join('');  
-  } else {    
-    dBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text3)">No audited data yet</td></tr>';  
-  }  
-  
-  const pBody = document.getElementById('proposalsBody');  
-  const pending = proposals.ok ? proposals.proposals : [];  
-  document.getElementById('intel-pending').textContent = pending.length;  
-  const badge = document.getElementById('proposalBadge');  
-  badge.textContent = pending.length;  
-  badge.style.display = pending.length ? '' : 'none';  
-  
-  pBody.innerHTML = pending.length ? pending.map(p => `    
-    <div class="trade-card" style="border-left:4px solid var(--amber)">      
-      <div class="tc-top">        
-        <span class="tc-sym">${p.symbol} <span class="tag" style="background:var(--amber2);color:var(--amber);margin-left:6px">${p.tag}</span></span>        
-        <span style="font-size:10px;color:var(--text3);font-family:var(--mono);">${p.occurrences} occurrences</span>      
-      </div>      
-      <div style="font-size:12px;color:var(--text2);margin:8px 0">${p.suggested_change}</div>      
-      <div style="display:flex;gap:10px;justify-content:flex-end">        
-        <button class="fbtn" style="border-color:var(--red);color:var(--red)" onclick="rejectProposal('${p.id}', this)">✕ Reject</button>
-        <button class="fbtn" style="border-color:var(--green);color:var(--green)" onclick="approveProposal('${p.id}', this)">✓ Approve</button>      
-      </div>    
-    </div>`).join('') : '<div class="empty"><div class="emsg">No pending proposals</div></div>';
-}
-
-async function approveProposal(id, btn) {
-  if (!confirm('Approve this adaptation?')) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Applying...'; }
-  try {
-    const res = await fetch(`/api/adaptation_proposals/${id}/approve`, { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.ok) {
-      await fetchIntel();
-    } else {
-      alert(`🚨 Approval Failed: ${data.error || data.message || `HTTP ${res.status}`}`);
-      if (btn) { btn.disabled = false; btn.textContent = '✓ Approve'; }
-    }
-  } catch (err) {
-    alert(`🚨 Connection Error: ${err.message}`);
-    if (btn) { btn.disabled = false; btn.textContent = '✓ Approve'; }
-  }
-}
-
-async function rejectProposal(id, btn) {
-  if (!confirm('Reject and dismiss this adaptation proposal?')) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rejecting...'; }
-  try {
-    const res = await fetch(`/api/adaptation_proposals/${id}/reject`, { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.ok) {
-      await fetchIntel();
-    } else {
-      alert(`🚨 Rejection Failed: ${data.error || data.message || `HTTP ${res.status}`}`);
-      if (btn) { btn.disabled = false; btn.textContent = '✕ Reject'; }
-    }
-  } catch (err) {
-    alert(`🚨 Connection Error: ${err.message}`);
-    if (btn) { btn.disabled = false; btn.textContent = '✕ Reject'; }
-  }
-}
-
 function renderTradeCard(t) {
   const isBuy     = t.signal === 'BUY';
   const dec       = (t.entry || 1) < 10 ? 4 : 2;
   const pnl       = parseFloat(t.unrealised || 0);
   const pnlPct    = parseFloat(t.pnl_pct || 0);
-  const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-  const pnlSign  = pnl >= 0 ? '+' : '';
+  const pnlColor  = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+  const pnlSign   = pnl >= 0 ? '+' : '';
   const fmt       = (v, d) => (v != null && !isNaN(v) && parseFloat(v) > 0) ? parseFloat(v).toFixed(d) : '—';
-  const sigCol   = isBuy ? 'var(--green)' : 'var(--red)';
+  const sigCol    = isBuy ? 'var(--green)' : 'var(--red)';
 
   const isProbation = probatedCoinsSet.has(t.symbol);
   const probBadge = isProbation ? `<span class="tag" style="background:var(--amber2);color:var(--amber);border:1px solid rgba(245, 158, 11, 0.3);margin-left:6px;">🔒 PROBATION (+10%)</span>` : '';
@@ -2032,7 +2014,7 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   <div style="position:relative;height:8px;border-radius:4px;background:var(--bg4);margin-bottom:4px;overflow:visible">
     <div style="position:absolute;left:0%;top:0;height:100%;width:${entryPct.toFixed(2)}%;background:rgba(244,63,94,0.2);border-radius:4px 0 0 4px"></div>
     <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:0;height:100%;width:${rewardWidth.toFixed(2)}%;background:rgba(59,130,246,0.25)"></div>
-    ${tp2 > 0 ? `<div style="position:absolute;left:${tp1Pct.toFixed(2)}\%;top:0;height:100\%;width:${targetWidth.toFixed(2)}%;background:rgba(16,185,129,0.25);border-radius:0 4px 4px 0"></div>` : ''}
+    ${tp2 > 0 ? `<div style="position:absolute;left:${tp1Pct.toFixed(2)}%;top:0;height:100%;width:${targetWidth.toFixed(2)}%;background:rgba(16,185,129,0.25);border-radius:0 4px 4px 0"></div>` : ''}
 
     <div style="position:absolute;left:${slPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:${slTrailedInProfit ? 'var(--green)' : 'var(--red)'};border-radius:1px;z-index:3"></div>
     <div style="position:absolute;left:${entryPct.toFixed(2)}%;top:-4px;bottom:-4px;width:2px;background:var(--text3);border-radius:1px;z-index:2"></div>
@@ -2075,8 +2057,7 @@ async function closeTrade(symbol) {
     });
 
     if (r && (r.ok || r.status === 'closed')) {
-      const pnlSign = (r.pnl || 0) >= 0 ? '+' : '';
-      alert(`✅ ${symbol} Closed!\nRealized PnL: ${pnlSign}${(r.pnl || 0).toFixed(4)} USDT`);
+      alert(`✅ ${symbol} Closed!`);
       refreshAll();
     } else {
       alert('🚨 Close Failed: ' + (r?.error || r?.message || 'Server error'));
@@ -2085,6 +2066,92 @@ async function closeTrade(symbol) {
   } catch (err) {
     alert('🚨 Connection Error: ' + err.message);
     refreshAll();
+  }
+}
+
+async function fetchIntel() {  
+  const [preds, dossier, proposals] = await Promise.all([    
+    apiFetch('/api/predictions', {}),    
+    apiFetch('/api/dossier', {coins:[]}),    
+    apiFetch('/api/adaptation_proposals?status=pending', {proposals:[]}),  
+  ]);  
+  
+  if (preds.ok) {    
+    document.getElementById('intel-total-preds').textContent = preds.total_predictions;    
+    document.getElementById('intel-unaudited').textContent = preds.unaudited_count + ' unaudited';    
+    document.getElementById('intel-hitrate').textContent = preds.overall_hit_rate != null ? preds.overall_hit_rate + '%' : '—';    
+    document.getElementById('intel-disagreement').textContent = preds.avg_ensemble_disagreement ?? '—';  
+  }  
+  
+  const dBody = document.getElementById('dossierBody');  
+  if (dossier.ok && dossier.coins.length) {    
+    dBody.innerHTML = dossier.coins.map(c => `      
+      <tr>        
+        <td style="color:var(--text);font-weight:700">${c.symbol}</td>        
+        <td>${c.total_audited}</td>        
+        <td style="color:${c.hit_rate >= 55 ? 'var(--green)' : c.hit_rate >= 40 ? 'var(--amber)' : 'var(--red)'};font-weight:700">${c.hit_rate ?? '—'}%</td>        
+        <td>${c.avg_disagreement_when_correct ?? '—'}</td>        
+        <td>${c.avg_disagreement_when_incorrect ?? '—'}</td>        
+        <td>${Object.entries(c.tags||{}).map(([t,n]) => `<span class="tag" style="background:var(--amber2);color:var(--amber);margin-right:4px">${t}×${n}</span>`).join('') || '—'}</td>      
+      </tr>`).join('');  
+  } else {    
+    dBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text3)">No audited data yet</td></tr>';  
+  }  
+  
+  const pBody = document.getElementById('proposalsBody');  
+  const pending = proposals.ok ? proposals.proposals : [];  
+  document.getElementById('intel-pending').textContent = pending.length;  
+  const badge = document.getElementById('proposalBadge');  
+  badge.textContent = pending.length;  
+  badge.style.display = pending.length ? '' : 'none';  
+  
+  pBody.innerHTML = pending.length ? pending.map(p => `    
+    <div class="trade-card" style="border-left:4px solid var(--amber)">      
+      <div class="tc-top">        
+        <span class="tc-sym">${p.symbol} <span class="tag" style="background:var(--amber2);color:var(--amber);margin-left:6px">${p.tag}</span></span>        
+        <span style="font-size:10px;color:var(--text3);font-family:var(--mono);">${p.occurrences} occurrences</span>      
+      </div>      
+      <div style="font-size:12px;color:var(--text2);margin:8px 0">${p.suggested_change}</div>      
+      <div style="display:flex;gap:10px;justify-content:flex-end">        
+        <button class="fbtn" style="border-color:var(--red);color:var(--red)" onclick="rejectProposal('${p.id}', this)">✕ Reject</button>
+        <button class="fbtn" style="border-color:var(--green);color:var(--green)" onclick="approveProposal('${p.id}', this)">✓ Approve</button>      
+      </div>    
+    </div>`).join('') : '<div class="empty"><div class="emsg">No pending proposals</div></div>';
+}
+
+async function approveProposal(id, btn) {
+  if (!confirm('Approve this adaptation?')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Applying...'; }
+  try {
+    const res = await fetch(`/api/adaptation_proposals/${id}/approve`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      await fetchIntel();
+    } else {
+      alert(`🚨 Approval Failed: ${data.error || `HTTP ${res.status}`}`);
+      if (btn) { btn.disabled = false; btn.textContent = '✓ Approve'; }
+    }
+  } catch (err) {
+    alert(`🚨 Connection Error: ${err.message}`);
+    if (btn) { btn.disabled = false; btn.textContent = '✓ Approve'; }
+  }
+}
+
+async function rejectProposal(id, btn) {
+  if (!confirm('Reject and dismiss this adaptation proposal?')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rejecting...'; }
+  try {
+    const res = await fetch(`/api/adaptation_proposals/${id}/reject`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      await fetchIntel();
+    } else {
+      alert(`🚨 Rejection Failed: ${data.error || `HTTP ${res.status}`}`);
+      if (btn) { btn.disabled = false; btn.textContent = '✕ Reject'; }
+    }
+  } catch (err) {
+    alert(`🚨 Connection Error: ${err.message}`);
+    if (btn) { btn.disabled = false; btn.textContent = '✕ Reject'; }
   }
 }
 
@@ -2393,35 +2460,6 @@ function renderWinLossRatio(wins, losses) {
   `;
 }
 
-function renderCoinPerformance(realTrades) {
-  const grid = document.getElementById('coinPerfGrid');
-  if (!grid) return;
-
-  const isWin = t => (parseFloat(t.pnl || 0)) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason || '').includes(k));
-
-  grid.innerHTML = ALL_COINS.map(coin => {
-    const cTrades = realTrades.filter(t => t.symbol === coin);
-    const total   = cTrades.length;
-    const wins    = cTrades.filter(isWin).length;
-    const losses  = total - wins;
-    const pnl     = cTrades.reduce((s,t) => s + (parseFloat(t.pnl || 0)), 0);
-    const wr      = total ? (wins / total * 100).toFixed(0) : null;
-    const wrColor = wr == null ? 'var(--text3)' : wr >= 60 ? 'var(--green)' : wr >= 40 ? 'var(--amber)' : 'var(--red)';
-    const pnlColor= pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)';
-
-    return `
-      <div class="coin-perf-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span class="coin-perf-sym">${coin.replace('USDT','')}</span>
-          <span style="font-family:var(--mono);font-size:10px;color:${pnlColor};font-weight:700;">${pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '$0'}</span>
-        </div>
-        <div class="coin-perf-wr" style="color:${wrColor}">${wr != null ? wr + '%' : '—'}</div>
-        <div class="coin-perf-sub">${total > 0 ? `${wins}W / ${losses}L` : 'No trades'}</div>
-      </div>
-    `;
-  }).join('');
-}
-
 async function fetchHistory() {
   const data = await apiFetch('/api/trades/history', []);
   allHistory = Array.isArray(data) ? data : [];
@@ -2451,6 +2489,35 @@ async function fetchHistory() {
   renderPerfBars(real);
   renderWinLossRatio(wins, loss);
   renderCoinPerformance(real);
+}
+
+function renderCoinPerformance(realTrades) {
+  const grid = document.getElementById('coinPerfGrid');
+  if (!grid) return;
+
+  const isWin = t => (parseFloat(t.pnl || 0)) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason || '').includes(k));
+
+  grid.innerHTML = ALL_COINS.map(coin => {
+    const cTrades = realTrades.filter(t => t.symbol === coin);
+    const total   = cTrades.length;
+    const wins    = cTrades.filter(isWin).length;
+    const losses  = total - wins;
+    const pnl     = cTrades.reduce((s,t) => s + (parseFloat(t.pnl || 0)), 0);
+    const wr      = total ? (wins / total * 100).toFixed(0) : null;
+    const wrColor = wr == null ? 'var(--text3)' : wr >= 60 ? 'var(--green)' : wr >= 40 ? 'var(--amber)' : 'var(--red)';
+    const pnlColor= pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)';
+
+    return `
+      <div class="coin-perf-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span class="coin-perf-sym">${coin.replace('USDT','')}</span>
+          <span style="font-family:var(--mono);font-size:10px;color:${pnlColor};font-weight:700;">${pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '$0'}</span>
+        </div>
+        <div class="coin-perf-wr" style="color:${wrColor}">${wr != null ? wr + '%' : '—'}</div>
+        <div class="coin-perf-sub">${total > 0 ? `${wins}W / ${losses}L` : 'No trades'}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 async function fetchMarketData() {
@@ -3102,152 +3169,6 @@ async function fetchEmailTracker() {
       <td><span class="tag ${l.status.startsWith('SENT') ? 'win' : 'loss'}">${l.status}</span></td>
     </tr>
   `).join('');
-}
-
-let refreshInFlight = false;
-
-async function refreshAll() {
-  if (refreshInFlight) {
-    console.debug('[Dashboard] Refresh already in progress; skipping overlapping cycle.');
-    return;
-  }
-
-  refreshInFlight = true;
-
-  try {
-    const data = await apiFetch('/api/dashboard_state', null);
-    if (data && data.ok) {
-      applyDashboardState(data);
-    } else {
-      // Fallback if unified endpoint is unreachable
-      await Promise.all([
-        fetchStatus(),
-        fetchBalance(),
-        fetchOpenTrades(),
-        fetchSignals(),
-        fetchBtcAtr(),
-        fetchMarketData(),
-        fetchLog(),
-        fetchProbationData(),
-        fetchCooldownData()
-      ]);
-    }
-
-    updateCoinChips();
-  } finally {
-    refreshInFlight = false;
-  }
-}
-
-function applyDashboardState(d) {
-  const mode = d.execution_mode || "PREDICT_ONLY";
-  const badge = document.getElementById('execModeBadge');
-  const sideTitle = document.getElementById('sidebarModeTitle');
-  const sideSub = document.getElementById('sidebarModeSub');
-
-  if (badge) {
-    if (mode === "PREDICT_ONLY") {
-      badge.textContent = "🛡️ PREDICT ONLY";
-      badge.style.borderColor = "var(--cyan)";
-      badge.style.color = "var(--cyan)";
-      badge.style.background = "var(--cyan2)";
-      badge.title = "Simulation Mode: Scoring & Telemetry Only. No live exchange orders.";
-    } else if (mode === "MANAGE_ONLY") {
-      badge.textContent = "⚠️ MANAGE ONLY";
-      badge.style.borderColor = "var(--amber)";
-      badge.style.color = "var(--amber)";
-      badge.style.background = "var(--amber2)";
-      badge.title = "Management Mode: Position monitoring & stop repair. No new entries.";
-    } else {
-      badge.textContent = "⚡ FULL TRADING";
-      badge.style.borderColor = "var(--green)";
-      badge.style.color = "var(--green)";
-      badge.style.background = "var(--green2)";
-      badge.title = "Full Execution: Live market entries enabled.";
-    }
-  }
-
-  if (sideTitle) sideTitle.textContent = mode;
-  if (sideSub) sideSub.textContent = mode === "PREDICT_ONLY" ? "No Exchange Orders" : (mode === "MANAGE_ONLY" ? "Protective Mgmt Only" : "Active Trading");
-
-  if (d.status) {
-    document.getElementById('liveBadge').textContent = 'LIVE';
-    document.getElementById('liveBadge').className   = 'live-badge';
-
-    const wr = d.status.win_rate || 0;
-    const wrEl = document.getElementById('statWR');
-    if (wrEl) {
-      wrEl.textContent = wr ? wr + '%' : '—';
-      wrEl.className = 'stat-value ' + (wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red');
-    }
-    const wrSub = document.getElementById('statWRSub');
-    if (wrSub) wrSub.textContent = (d.status.wins || 0) + ' W / ' + (d.status.losses || 0) + ' L';
-
-    const pnl = d.status.total_pnl || 0;
-    const pnlEl = document.getElementById('statPnl');
-    if (pnlEl) {
-      pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
-      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    }
-
-    const acc = d.status.model_accuracy || '—';
-    ['topAccuracy', 'statModelAcc', 'mh-acc'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = acc;
-    });
-
-    const pairs = d.status.total_monitored_pairs || 25;
-    document.getElementById('topMonitoredCount').textContent = pairs;
-    document.getElementById('statPairsCount').textContent = `${pairs} pairs`;
-  }
-
-  if (d.balance) {
-    const usdt = d.balance.usdt != null ? Number(d.balance.usdt).toFixed(2) : '—';
-    document.getElementById('statBalance').textContent = usdt;
-    document.getElementById('topBalance').textContent  = usdt;
-    document.getElementById('balMain').textContent      = usdt;
-  }
-
-  const tradesData = Array.isArray(d.trades) ? d.trades : [];
-  allTrades = {};
-  tradesData.forEach(t => { if (t && t.symbol) allTrades[t.symbol] = t; });
-
-  const count = tradesData.length;
-  const tradeCountEl = document.getElementById('tradeCount');
-  if (tradeCountEl) {
-    tradeCountEl.textContent = count;
-    tradeCountEl.style.display = count > 0 ? '' : 'none';
-  }
-  const openBadge = document.getElementById('openBadge');
-  if (openBadge) openBadge.textContent = count + ' active';
-  document.getElementById('statOpen').textContent = count;
-
-  const html = count ? tradesData.map(t => renderTradeCard(t)).join('') :
-    '<div class="empty" style="text-align:center;padding:40px;color:var(--text3);"><div style="font-size:36px;margin-bottom:10px;">📭</div><div>No open trades.<br><small>' + (mode === 'PREDICT_ONLY' ? 'Bot is running in PREDICT_ONLY mode.' : 'Bot scans every 15 min.') + '</small></div></div>';
-
-  ['openTradesBody','openTradesFullBody'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = html;
-  });
-
-  if (d.config) {
-    ALL_COINS = d.config.symbols || [];
-    COIN_TIERS_MAP = d.config.coin_tiers || {};
-    buildCoinChips();
-    updateCoinChips();
-  }
-
-  if (d.probation && Array.isArray(d.probation.probated_coins)) {
-    probatedCoinsData = d.probation.probated_coins;
-    probatedCoinsSet = new Set(probatedCoinsData.map(c => c.symbol));
-    renderProbationTracker();
-  }
-
-  if (d.cooldown && Array.isArray(d.cooldown.cooldowns)) {
-    cooldownCoinsData = d.cooldown.cooldowns;
-    cooldownCoinsSet = new Set(cooldownCoinsData.map(c => c.symbol));
-    renderCooldownTracker(cooldownCoinsData);
-  }
 }
 
 initTheme();
