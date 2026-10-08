@@ -2393,6 +2393,35 @@ function renderWinLossRatio(wins, losses) {
   `;
 }
 
+function renderCoinPerformance(realTrades) {
+  const grid = document.getElementById('coinPerfGrid');
+  if (!grid) return;
+
+  const isWin = t => (parseFloat(t.pnl || 0)) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason || '').includes(k));
+
+  grid.innerHTML = ALL_COINS.map(coin => {
+    const cTrades = realTrades.filter(t => t.symbol === coin);
+    const total   = cTrades.length;
+    const wins    = cTrades.filter(isWin).length;
+    const losses  = total - wins;
+    const pnl     = cTrades.reduce((s,t) => s + (parseFloat(t.pnl || 0)), 0);
+    const wr      = total ? (wins / total * 100).toFixed(0) : null;
+    const wrColor = wr == null ? 'var(--text3)' : wr >= 60 ? 'var(--green)' : wr >= 40 ? 'var(--amber)' : 'var(--red)';
+    const pnlColor= pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)';
+
+    return `
+      <div class="coin-perf-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span class="coin-perf-sym">${coin.replace('USDT','')}</span>
+          <span style="font-family:var(--mono);font-size:10px;color:${pnlColor};font-weight:700;">${pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '$0'}</span>
+        </div>
+        <div class="coin-perf-wr" style="color:${wrColor}">${wr != null ? wr + '%' : '—'}</div>
+        <div class="coin-perf-sub">${total > 0 ? `${wins}W / ${losses}L` : 'No trades'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
 async function fetchHistory() {
   const data = await apiFetch('/api/trades/history', []);
   allHistory = Array.isArray(data) ? data : [];
@@ -2422,35 +2451,6 @@ async function fetchHistory() {
   renderPerfBars(real);
   renderWinLossRatio(wins, loss);
   renderCoinPerformance(real);
-}
-
-function renderCoinPerformance(realTrades) {
-  const grid = document.getElementById('coinPerfGrid');
-  if (!grid) return;
-
-  const isWin = t => (parseFloat(t.pnl || 0)) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason || '').includes(k));
-
-  grid.innerHTML = ALL_COINS.map(coin => {
-    const cTrades = realTrades.filter(t => t.symbol === coin);
-    const total   = cTrades.length;
-    const wins    = cTrades.filter(isWin).length;
-    const losses  = total - wins;
-    const pnl     = cTrades.reduce((s,t) => s + (parseFloat(t.pnl || 0)), 0);
-    const wr      = total ? (wins / total * 100).toFixed(0) : null;
-    const wrColor = wr == null ? 'var(--text3)' : wr >= 60 ? 'var(--green)' : wr >= 40 ? 'var(--amber)' : 'var(--red)';
-    const pnlColor= pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)';
-
-    return `
-      <div class="coin-perf-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span class="coin-perf-sym">${coin.replace('USDT','')}</span>
-          <span style="font-family:var(--mono);font-size:10px;color:${pnlColor};font-weight:700;">${pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '$0'}</span>
-        </div>
-        <div class="coin-perf-wr" style="color:${wrColor}">${wr != null ? wr + '%' : '—'}</div>
-        <div class="coin-perf-sub">${total > 0 ? `${wins}W / ${losses}L` : 'No trades'}</div>
-      </div>
-    `;
-  }).join('');
 }
 
 async function fetchMarketData() {
@@ -3102,6 +3102,152 @@ async function fetchEmailTracker() {
       <td><span class="tag ${l.status.startsWith('SENT') ? 'win' : 'loss'}">${l.status}</span></td>
     </tr>
   `).join('');
+}
+
+let refreshInFlight = false;
+
+async function refreshAll() {
+  if (refreshInFlight) {
+    console.debug('[Dashboard] Refresh already in progress; skipping overlapping cycle.');
+    return;
+  }
+
+  refreshInFlight = true;
+
+  try {
+    const data = await apiFetch('/api/dashboard_state', null);
+    if (data && data.ok) {
+      applyDashboardState(data);
+    } else {
+      // Fallback if unified endpoint is unreachable
+      await Promise.all([
+        fetchStatus(),
+        fetchBalance(),
+        fetchOpenTrades(),
+        fetchSignals(),
+        fetchBtcAtr(),
+        fetchMarketData(),
+        fetchLog(),
+        fetchProbationData(),
+        fetchCooldownData()
+      ]);
+    }
+
+    updateCoinChips();
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+function applyDashboardState(d) {
+  const mode = d.execution_mode || "PREDICT_ONLY";
+  const badge = document.getElementById('execModeBadge');
+  const sideTitle = document.getElementById('sidebarModeTitle');
+  const sideSub = document.getElementById('sidebarModeSub');
+
+  if (badge) {
+    if (mode === "PREDICT_ONLY") {
+      badge.textContent = "🛡️ PREDICT ONLY";
+      badge.style.borderColor = "var(--cyan)";
+      badge.style.color = "var(--cyan)";
+      badge.style.background = "var(--cyan2)";
+      badge.title = "Simulation Mode: Scoring & Telemetry Only. No live exchange orders.";
+    } else if (mode === "MANAGE_ONLY") {
+      badge.textContent = "⚠️ MANAGE ONLY";
+      badge.style.borderColor = "var(--amber)";
+      badge.style.color = "var(--amber)";
+      badge.style.background = "var(--amber2)";
+      badge.title = "Management Mode: Position monitoring & stop repair. No new entries.";
+    } else {
+      badge.textContent = "⚡ FULL TRADING";
+      badge.style.borderColor = "var(--green)";
+      badge.style.color = "var(--green)";
+      badge.style.background = "var(--green2)";
+      badge.title = "Full Execution: Live market entries enabled.";
+    }
+  }
+
+  if (sideTitle) sideTitle.textContent = mode;
+  if (sideSub) sideSub.textContent = mode === "PREDICT_ONLY" ? "No Exchange Orders" : (mode === "MANAGE_ONLY" ? "Protective Mgmt Only" : "Active Trading");
+
+  if (d.status) {
+    document.getElementById('liveBadge').textContent = 'LIVE';
+    document.getElementById('liveBadge').className   = 'live-badge';
+
+    const wr = d.status.win_rate || 0;
+    const wrEl = document.getElementById('statWR');
+    if (wrEl) {
+      wrEl.textContent = wr ? wr + '%' : '—';
+      wrEl.className = 'stat-value ' + (wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red');
+    }
+    const wrSub = document.getElementById('statWRSub');
+    if (wrSub) wrSub.textContent = (d.status.wins || 0) + ' W / ' + (d.status.losses || 0) + ' L';
+
+    const pnl = d.status.total_pnl || 0;
+    const pnlEl = document.getElementById('statPnl');
+    if (pnlEl) {
+      pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
+      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+
+    const acc = d.status.model_accuracy || '—';
+    ['topAccuracy', 'statModelAcc', 'mh-acc'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = acc;
+    });
+
+    const pairs = d.status.total_monitored_pairs || 25;
+    document.getElementById('topMonitoredCount').textContent = pairs;
+    document.getElementById('statPairsCount').textContent = `${pairs} pairs`;
+  }
+
+  if (d.balance) {
+    const usdt = d.balance.usdt != null ? Number(d.balance.usdt).toFixed(2) : '—';
+    document.getElementById('statBalance').textContent = usdt;
+    document.getElementById('topBalance').textContent  = usdt;
+    document.getElementById('balMain').textContent      = usdt;
+  }
+
+  const tradesData = Array.isArray(d.trades) ? d.trades : [];
+  allTrades = {};
+  tradesData.forEach(t => { if (t && t.symbol) allTrades[t.symbol] = t; });
+
+  const count = tradesData.length;
+  const tradeCountEl = document.getElementById('tradeCount');
+  if (tradeCountEl) {
+    tradeCountEl.textContent = count;
+    tradeCountEl.style.display = count > 0 ? '' : 'none';
+  }
+  const openBadge = document.getElementById('openBadge');
+  if (openBadge) openBadge.textContent = count + ' active';
+  document.getElementById('statOpen').textContent = count;
+
+  const html = count ? tradesData.map(t => renderTradeCard(t)).join('') :
+    '<div class="empty" style="text-align:center;padding:40px;color:var(--text3);"><div style="font-size:36px;margin-bottom:10px;">📭</div><div>No open trades.<br><small>' + (mode === 'PREDICT_ONLY' ? 'Bot is running in PREDICT_ONLY mode.' : 'Bot scans every 15 min.') + '</small></div></div>';
+
+  ['openTradesBody','openTradesFullBody'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
+
+  if (d.config) {
+    ALL_COINS = d.config.symbols || [];
+    COIN_TIERS_MAP = d.config.coin_tiers || {};
+    buildCoinChips();
+    updateCoinChips();
+  }
+
+  if (d.probation && Array.isArray(d.probation.probated_coins)) {
+    probatedCoinsData = d.probation.probated_coins;
+    probatedCoinsSet = new Set(probatedCoinsData.map(c => c.symbol));
+    renderProbationTracker();
+  }
+
+  if (d.cooldown && Array.isArray(d.cooldown.cooldowns)) {
+    cooldownCoinsData = d.cooldown.cooldowns;
+    cooldownCoinsSet = new Set(cooldownCoinsData.map(c => c.symbol));
+    renderCooldownTracker(cooldownCoinsData);
+  }
 }
 
 initTheme();
