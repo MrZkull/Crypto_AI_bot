@@ -58,6 +58,7 @@ env:
   PRODUCTION_MODEL_FILE: "pro_crypto_ai_model.pkl"
 
   STATE_ARTIFACT_NAME: "phase2d-state"
+  F08_SNAPSHOT_PASSPHRASE: ${{ secrets.F08_SNAPSHOT_PASSPHRASE }}
   STATE_DIR: "research_outputs"
 
   CANDIDATE_RELEASE_TAG_DEFAULT: "phase2d-htf-removal-candidate-20260921"
