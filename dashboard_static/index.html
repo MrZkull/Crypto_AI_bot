@@ -1634,6 +1634,8 @@ function applyDashboardState(d) {
     COIN_TIERS_MAP = d.config.coin_tiers || {};
     buildCoinChips();
     updateCoinChips();
+    populateDynamicPicklists();
+    renderConfigUI(d.config);
   }
 
   if (d.probation && Array.isArray(d.probation.probated_coins)) {
@@ -1649,6 +1651,41 @@ function applyDashboardState(d) {
   }
 }
 
+
+function renderConfigUI(cfg) {
+  if (!cfg) return;
+  const bind = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  
+  bind('cfg-act-conf', `BUY ≥${cfg.active_buy_conf ?? 40}% | SELL ≥${cfg.active_sell_conf ?? 45}%`);
+  bind('cfg-act-score', `${cfg.active_score ?? 3} / 6`);
+  bind('cfg-act-adx', cfg.active_adx ?? 15);
+
+  bind('cfg-q-conf', `BUY ≥${(cfg.active_buy_conf ?? 40) + 10}% | SELL ≥${(cfg.active_sell_conf ?? 45) + 10}%`);
+  bind('cfg-q-score', `${cfg.active_score ?? 3} / 6`);
+  bind('cfg-q-adx', (cfg.active_adx ?? 15) + 3);
+
+  bind('cfg-risk-pct', `${cfg.risk_per_trade_pct ?? 3}% of balance`);
+  bind('cfg-max-open', `${cfg.max_open_trades ?? 8} simultaneously`);
+  bind('cfg-max-dir',  `${cfg.max_same_direction ?? 4} BUY or SELL`);
+  bind('cfg-stop-mult', `${cfg.atr_stop_mult ?? 2.5}x ATR`);
+  bind('cfg-tp1-mult',  `${cfg.atr_target1_mult ?? 3.5}x ATR`);
+  bind('cfg-tp2-mult',  `${cfg.atr_target2_mult ?? 7.5}x ATR`);
+  bind('cfg-max-age',   `${cfg.max_trade_age_hours_pre_tp1 ?? 12}h without TP1`);
+  bind('cfgTiersHeader', `Active Monitored Asset Tiers (${ALL_COINS.length} Pairs Across ${Object.keys(COIN_TIERS_MAP).length} Tiers)`);
+
+  const tierGrid = document.getElementById('cfgTiersDynamicGrid');
+  if (tierGrid && Object.keys(COIN_TIERS_MAP).length) {
+    tierGrid.innerHTML = Object.entries(COIN_TIERS_MAP).map(([k, t]) => `
+      <div>
+        <div style="font-size:10px;color:var(--cyan);margin-bottom:6px;font-weight:700;">${(t.label || k).toUpperCase()}</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          ${(t.coins || []).map(c => `<div class="bal-row">${c.replace('USDT','')}</div>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
+}
+   
 async function healTradeBracket(symbol) {
   if (!confirm(`Attach fresh Stop-Loss and Take-Profit brackets to ${symbol} on Deribit?`)) return;
   try {
@@ -2357,6 +2394,18 @@ function getHistFiltered() {
   return list;
 }
 
+function getSymbolTier(symbol, explicitTier) {
+  if (explicitTier && explicitTier.trim() !== '') {
+    return explicitTier.replace(/[👑⚡🏛🤖🧪]/g, '').trim();
+  }
+  for (const [k, tier] of Object.entries(COIN_TIERS_MAP)) {
+    if (tier.coins && tier.coins.includes(symbol)) {
+      return (tier.label || k).replace(/[👑⚡🏛🤖🧪]/g, '').trim();
+    }
+  }
+  return '—';
+}
+   
 function renderHistoryFiltered() {
   populateDynamicPicklists();
   const real  = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
@@ -2393,7 +2442,7 @@ function renderHistoryFiltered() {
     return `<tr>
       <td style="color:var(--text3);font-size:10px">${idx + 1}</td>
       <td style="color:var(--text);font-weight:700">${t.symbol}</td>
-      <td style="color:var(--text3);font-size:10px">${(t.tier||'').replace(/[👑⚡🏛🤖🧪]/g,'').trim()}</td>
+      <td style="color:var(--text3);font-size:10px">${getSymbolTier(t.symbol, t.tier)}</td>
       <td><span class="tag ${t.signal==='BUY'?'buy':'sell'}">${t.signal||'—'}</span></td>
       <td style="color:var(--blue)">${fp(t.entry,dec)}</td>
       <td>${fp(t.close_price,dec)}</td>
