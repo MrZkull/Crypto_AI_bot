@@ -1126,12 +1126,64 @@ def api_model_health():
 @app.route("/api/analytics")
 def api_analytics():
     history = get("trade_history.json", [])
-    real = [t for t in history if t.get("signal") != "RECOVERED" and not t.get("pnl_unverified", False)]
-    pnls = [float(t.get("pnl", 0)) for t in real]
+    real_trades = [t for t in history if t.get("signal") != "RECOVERED" and not t.get("pnl_unverified", False)]
+    pnls = [float(t.get("pnl", 0) or 0) for t in real_trades]
     wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p <= 0]
+    total_trades = len(pnls)
+    win_rate = (len(wins) / total_trades * 100) if total_trades > 0 else 0.0
+    avg_win = (sum(wins) / len(wins)) if wins else 0.0
+    avg_loss = (abs(sum(losses)) / len(losses)) if losses else 0.0
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (round(gross_profit, 2) if gross_profit > 0 else 0.0)
+    expectancy = round((win_rate / 100.0 * avg_win) - ((1.0 - win_rate / 100.0) * avg_loss), 4)
+
+    sharpe, sortino, max_dd = 0.0, 0.0, 0.0
+    if len(pnls) > 3:
+        mean_pnl = sum(pnls) / len(pnls)
+        variance = sum((x - mean_pnl)**2 for x in pnls) / len(pnls)
+        std_dev = math.sqrt(variance) if variance > 0 else 0.001
+        downside_vars = [x**2 for x in losses]
+        downside_std = math.sqrt(sum(downside_vars) / len(pnls)) if downside_vars else 0.001
+        sharpe = round((mean_pnl / std_dev) * math.sqrt(365), 2)
+        sortino = round((mean_pnl / downside_std) * math.sqrt(365), 2)
+        cum_pnl, peak = 0.0, 0.0
+        dds = []
+        for p in pnls:
+            cum_pnl += p
+            if cum_pnl > peak: peak = cum_pnl
+            dds.append(peak - cum_pnl)
+        max_dd = round(max(dds), 2) if dds else 0.0
+
+    daily_pnl_map = {}
+    for t in real_trades:
+        day = (t.get("closed_at") or t.get("opened_at") or "")[:10]
+        if day:
+            daily_pnl_map[day] = round(daily_pnl_map.get(day, 0) + float(t.get("pnl", 0) or 0), 2)
+    daily_points = [{"date": d, "pnl": p} for d, p in sorted(daily_pnl_map.items())]
+
+    bal_data = get("balance.json", {})
+    current_bal = float(bal_data.get("usdt", 100000.0) or 100000.0)
+    running = current_bal - sum(pnls)
+    equity_points = []
+    for t in real_trades[-50:]:
+        running += float(t.get("pnl", 0) or 0)
+        time_str = (t.get("closed_at") or t.get("opened_at") or "")[:10]
+        equity_points.append({"time": time_str, "equity": round(running, 2)})
+
     return jsonify({
-        "ok": True, "sharpe_ratio": 1.84, "sortino_ratio": 2.12, "profit_factor": 1.95,
-        "expectancy_usdt": 4.25, "max_drawdown_usdt": 45.2, "equity_curve": [], "daily_pnl": []
+        "ok": True,
+        "sharpe_ratio": sharpe,
+        "sortino_ratio": sortino,
+        "profit_factor": profit_factor,
+        "expectancy_usdt": expectancy,
+        "max_drawdown_usdt": max_dd,
+        "win_rate": round(win_rate, 1),
+        "avg_win": round(avg_win, 4),
+        "avg_loss": round(avg_loss, 4),
+        "equity_curve": equity_points,
+        "daily_pnl": daily_points
     })
 
 @app.route("/api/log")
