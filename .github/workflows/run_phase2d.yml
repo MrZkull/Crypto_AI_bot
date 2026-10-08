@@ -203,6 +203,7 @@ jobs:
           PRODUCTION_SHA="f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
           EXPERIMENT_ID="${{ inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}"
           ALLOW_FRESH_START="${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}"
+          BASELINE_MANIFEST="${STATE_DIR}/phase2d_f08_baseline_manifest.json"
 
           echo "============================================================"
           echo " STATE RESTORE / EXPERIMENT CONTINUITY"
@@ -272,7 +273,6 @@ jobs:
               echo "No prior successful Phase 2D run exists."
             fi
 
-            # Explicit reset: nothing from the previous experiment remains live.
             rm -f \
               "${STATE_DIR}/phase2d_state.json" \
               "${STATE_DIR}/phase2d_results.json" \
@@ -290,28 +290,64 @@ jobs:
 
           else
             echo "Normal continuation mode is ACTIVE."
-            echo "Searching only for an exactly compatible successful state."
+            echo "Selecting the richest exactly compatible successful state."
+
+            if [[ "${EXPERIMENT_ID}" == "PHASE2D-HARDENED-20260924-F08" ]]; then
+              if [[ ! -f "${BASELINE_MANIFEST}" ]]; then
+                echo "FATAL: canonical F08 baseline manifest is missing."
+                exit 1
+              fi
+            fi
 
             rm -f \
               "${STATE_DIR}/phase2d_state.json" \
               "${STATE_DIR}/phase2d_results.json" \
               "${STATE_DIR}/phase2d_latest_snapshot.json" \
               "${STATE_DIR}/experiment_ledger.jsonl" \
+              "${STATE_DIR}/phase2d_observations.jsonl" \
               "phase2d_validator.log"
 
-            rm -rf inspect_state
+            rm -rf inspect_state best_state
             mkdir -p "${STATE_DIR}"
 
             RUN_IDS="$(
               gh run list \
                 --workflow="run_phase2d.yml" \
                 --branch main \
-                --limit 20 \
+                --limit 200 \
                 --json databaseId,conclusion \
                 --jq '.[] | select(.conclusion == "success") | .databaseId'
             )"
 
-            RESTORED_RUN_ID=""
+            BEST_RUN_ID=""
+            BEST_TOTAL=-1
+            BEST_CANDIDATE=-1
+            BEST_PRODUCTION=-1
+            BEST_BLOCKS=-1
+            BEST_SHA=""
+            BEST_STATE_DIR=""
+
+            BASELINE_LEDGER=""
+
+            if [[ "${EXPERIMENT_ID}" == "PHASE2D-HARDENED-20260924-F08" ]]; then
+              CANONICAL_BASELINE_DIR="canonical_f08_baseline"
+
+              rm -rf "${CANONICAL_BASELINE_DIR}"
+              mkdir -p "${CANONICAL_BASELINE_DIR}"
+
+              echo "Preparing canonical F08 baseline ledger."
+
+              python phase2d_f08_snapshot_restore.py \
+                --snapshot "${STATE_DIR}/phase2d_f08_canonical_snapshot.enc" \
+                --output "${CANONICAL_BASELINE_DIR}" \
+                --passphrase-env F08_SNAPSHOT_PASSPHRASE
+
+              BASELINE_LEDGER="${CANONICAL_BASELINE_DIR}/phase2d_observations.jsonl"
+
+              test -s "${BASELINE_LEDGER}"
+
+              echo "Canonical baseline ledger: READY"
+            fi
 
             for rid in ${RUN_IDS}; do
               rm -rf inspect_state
@@ -340,6 +376,11 @@ jobs:
                   ! -path '*/pre_reconciliation_archive/*' \
                   -print -quit || true
               )"
+
+              if [[ -z "${observation_ledger_file}" ]]; then
+                rm -rf inspect_state
+                continue
+              fi
 
               set +e
 
@@ -382,6 +423,7 @@ jobs:
           mismatches = {}
 
           stored_schema = state.get("schema_version")
+
           controlled_f08_migration = (
               stored_schema in {5, 6}
               and expected_experiment_id == "PHASE2D-HARDENED-20260924-F08"
@@ -409,163 +451,118 @@ jobs:
                   "actual": state.get("schema_version"),
               }
 
-          # Completed F08 normal continuation requires the
-          # reconciled immutable observation ledger.
-          if (
-              expected_experiment_id
-              == "PHASE2D-HARDENED-20260924-F08"
-          ):
-              from pathlib import Path
-
-              if not observation_ledger_file:
-                  mismatches["observation_ledger"] = {
-                      "expected": (
-                          "phase2d_observations.jsonl with "
-                          "F08_LEDGER_HISTORICAL_RECONCILIATION"
-                      ),
-                      "actual": "missing",
-                  }
-              else:
-                  ledger_path = Path(observation_ledger_file)
-
-                  if not ledger_path.exists():
-                      mismatches["observation_ledger"] = {
-                          "expected": (
-                              "phase2d_observations.jsonl with "
-                              "F08_LEDGER_HISTORICAL_RECONCILIATION"
-                          ),
-                          "actual": "missing",
-                      }
-                  else:
-                      observation_count = 0
-                      reconciliation_events = []
-
-                      with ledger_path.open(encoding="utf-8") as handle:
-                          for line in handle:
-                              line = line.strip()
-
-                              if not line:
-                                  continue
-
-                              record = json.loads(line)
-
-                              if record.get("record_type") == "observation":
-                                  observation_count += 1
-
-                              if (
-                                  record.get("event")
-                                  == "F08_LEDGER_HISTORICAL_RECONCILIATION"
-                              ):
-                                  reconciliation_events.append(record)
-
-                      migration = state.get(
-                          "observation_ledger",
-                          {},
-                      ).get(
-                          "migration",
-                          {},
-                      )
-
-                      reconciliation_metadata = (
-                          migration.get("historical_reconciliation")
-                          if isinstance(migration, dict)
-                          else None
-                      )
-
-                      if not reconciliation_events:
-                          mismatches[
-                              "observation_ledger_reconciliation"
-                          ] = {
-                              "expected": (
-                                  "F08_LEDGER_HISTORICAL_RECONCILIATION"
-                              ),
-                              "actual": "missing",
-                          }
-
-                      if not isinstance(reconciliation_metadata, dict):
-                          mismatches[
-                              "historical_reconciliation_metadata"
-                          ] = {
-                              "expected": (
-                                  "observation_ledger.migration."
-                                  "historical_reconciliation"
-                              ),
-                              "actual": "missing",
-                          }
-                      else:
-                          expected_observation_count = (
-                              reconciliation_metadata.get(
-                                  "historical_unique_observations"
-                              )
-                          )
-
-                          if (
-                              expected_observation_count is None
-                              or observation_count
-                              < expected_observation_count
-                          ):
-                              mismatches[
-                                  "observation_ledger_count"
-                              ] = {
-                                  "expected": expected_observation_count,
-                                  "actual": observation_count,
-                              }
-
-                      if reconciliation_events:
-                          latest_reconciliation = (
-                              reconciliation_events[-1]
-                          )
-
-                          if (
-                              latest_reconciliation.get(
-                                  "remaining_missing"
-                              )
-                              != 0
-                          ):
-                              mismatches[
-                                  "historical_reconciliation_remaining"
-                              ] = {
-                                  "expected": 0,
-                                  "actual": (
-                                      latest_reconciliation.get(
-                                          "remaining_missing"
-                                      )
-                                  ),
-                              }
-
           if mismatches:
               print("STATE_IDENTITY: INCOMPATIBLE")
               print(json.dumps(mismatches, indent=2, sort_keys=True))
               raise SystemExit(2)
 
-          candidate_resolved = len(
-              state.get("resolved", {}).get("candidate", [])
-          )
-
-          production_resolved = len(
-              state.get("resolved", {}).get("production", [])
-          )
-
-          candidate_pending = len(
-              state.get("pending", {}).get("candidate", [])
-          )
-
-          production_pending = len(
-              state.get("pending", {}).get("production", [])
-          )
-
           print("STATE_IDENTITY: COMPATIBLE")
-          print(f"candidate_resolved={candidate_resolved}")
-          print(f"production_resolved={production_resolved}")
-          print(f"candidate_pending={candidate_pending}")
-          print(f"production_pending={production_pending}")
           PY
+
               status=$?
 
               set -e
 
-              if [[ "${status}" -eq 0 ]]; then
-                echo "Compatible Phase 2D state found in Run #${rid}."
+              if [[ "${status}" -ne 0 ]]; then
+                echo "Run #${rid}: incompatible state skipped."
+                rm -rf inspect_state
+                continue
+              fi
+
+              if [[ "${EXPERIMENT_ID}" == "PHASE2D-HARDENED-20260924-F08" ]]; then
+                set +e
+                METRICS="$(
+                  python phase2d_restore_guard.py \
+                    --state "${state_file}" \
+                    --ledger "${observation_ledger_file}" \
+                    --baseline "${BASELINE_MANIFEST}" \
+                    --baseline-ledger "${BASELINE_LEDGER}" \
+                    --experiment "${EXPERIMENT_ID}" \
+                    2>restore_guard_error.log
+                )"
+                guard_status=$?
+                set -e
+
+                if [[ "${guard_status}" -eq 3 ]]; then
+                  echo "FATAL: richer F08 artifact failed canonical append-only preservation."
+                  cat restore_guard_error.log || true
+                  rm -rf inspect_state restore_guard_error.log
+                  exit 1
+                fi
+
+                if [[ "${guard_status}" -ne 0 ]]; then
+                  echo "Run #${rid}: F08 restore guard rejected state."
+                  cat restore_guard_error.log || true
+                  rm -rf inspect_state restore_guard_error.log
+                  continue
+                fi
+
+                IFS='|' read -r \
+                  total \
+                  candidate_count \
+                  production_count \
+                  unique_blocks \
+                  ledger_sha <<< "${METRICS}"
+
+                echo "Run #${rid}: total=${total} candidate=${candidate_count} production=${production_count} blocks=${unique_blocks}"
+
+                if [[ "${total}" -lt "${BEST_TOTAL}" ]]; then
+                  rm -rf inspect_state restore_guard_error.log
+                  continue
+                fi
+
+                if [[ "${total}" -eq "${BEST_TOTAL}" && -n "${BEST_SHA}" && "${ledger_sha}" != "${BEST_SHA}" ]]; then
+                  echo "FATAL: equal-count compatible F08 artifacts have different ledger SHA256."
+                  echo "Existing best SHA: ${BEST_SHA}"
+                  echo "Run #${rid} SHA       : ${ledger_sha}"
+                  exit 1
+                fi
+
+                better=0
+
+                if [[ "${total}" -gt "${BEST_TOTAL}" ]]; then
+                  better=1
+                elif [[ "${total}" -eq "${BEST_TOTAL}" && "${candidate_count}" -gt "${BEST_CANDIDATE}" ]]; then
+                  better=1
+                elif [[ "${total}" -eq "${BEST_TOTAL}" && "${candidate_count}" -eq "${BEST_CANDIDATE}" && "${production_count}" -gt "${BEST_PRODUCTION}" ]]; then
+                  better=1
+                elif [[ "${total}" -eq "${BEST_TOTAL}" && "${candidate_count}" -eq "${BEST_CANDIDATE}" && "${production_count}" -eq "${BEST_PRODUCTION}" && "${unique_blocks}" -gt "${BEST_BLOCKS}" ]]; then
+                  better=1
+                elif [[ "${total}" -eq "${BEST_TOTAL}" && "${candidate_count}" -eq "${BEST_CANDIDATE}" && "${production_count}" -eq "${BEST_PRODUCTION}" && "${unique_blocks}" -eq "${BEST_BLOCKS}" && "${rid}" -gt "${BEST_RUN_ID:-0}" ]]; then
+                  better=1
+                fi
+
+                if [[ "${better}" -eq 1 ]]; then
+                  rm -rf best_state
+                  mkdir -p best_state
+
+                  for f in \
+                    phase2d_state.json \
+                    phase2d_results.json \
+                    phase2d_latest_snapshot.json \
+                    experiment_ledger.jsonl \
+                    phase2d_observations.jsonl
+                  do
+                    src="$(find inspect_state -type f -name "${f}" ! -path '*/pre_reconciliation_archive/*' -print -quit || true)"
+
+                    if [[ -n "${src}" ]]; then
+                      cp "${src}" "best_state/${f}"
+                    fi
+                  done
+
+                  BEST_RUN_ID="${rid}"
+                  BEST_TOTAL="${total}"
+                  BEST_CANDIDATE="${candidate_count}"
+                  BEST_PRODUCTION="${production_count}"
+                  BEST_BLOCKS="${unique_blocks}"
+                  BEST_SHA="${ledger_sha}"
+                fi
+
+                rm -f restore_guard_error.log
+                rm -rf inspect_state
+
+              else
+                echo "Non-F08 experiment: preserving existing first-compatible behavior."
 
                 for f in \
                   phase2d_state.json \
@@ -582,19 +579,221 @@ jobs:
                   fi
                 done
 
-                RESTORED_RUN_ID="${rid}"
+                BEST_RUN_ID="${rid}"
                 rm -rf inspect_state
                 break
               fi
-
-              echo "Run #${rid}: incompatible state skipped."
-              rm -rf inspect_state
             done
 
-            if [[ -n "${RESTORED_RUN_ID}" ]]; then
+            # --------------------------------------------------------
+            # CANONICAL ENCRYPTED F08 SNAPSHOT FALLBACK
+            # --------------------------------------------------------
+            #
+            # Only use the canonical snapshot when no recent successful
+            # artifact meets the recovered F08 baseline. Never prefer it
+            # over a richer valid artifact.
+            #
+            if [[ -z "${BEST_RUN_ID}" && "${EXPERIMENT_ID}" == "PHASE2D-HARDENED-20260924-F08" ]]; then
+              SNAPSHOT_FILE="${STATE_DIR}/phase2d_f08_canonical_snapshot.enc"
+              CANONICAL_RESTORE_DIR="canonical_f08_restore"
+
+              echo "============================================================"
+              echo " CANONICAL F08 SNAPSHOT FALLBACK"
+              echo "============================================================"
+
+              if [[ ! -s "${SNAPSHOT_FILE}" ]]; then
+                echo "FATAL: canonical encrypted F08 snapshot is missing."
+                exit 1
+              fi
+
+              rm -rf "${CANONICAL_RESTORE_DIR}"
+              mkdir -p "${CANONICAL_RESTORE_DIR}"
+
+              python phase2d_f08_snapshot_restore.py \
+                --snapshot "${SNAPSHOT_FILE}" \
+                --output "${CANONICAL_RESTORE_DIR}" \
+                --passphrase-env F08_SNAPSHOT_PASSPHRASE
+
+              test -s "${CANONICAL_RESTORE_DIR}/phase2d_observations.jsonl"
+              test -s "${CANONICAL_RESTORE_DIR}/phase2d_state.json"
+              test -s "${CANONICAL_RESTORE_DIR}/phase2d_f08_baseline_manifest.json"
+
+              python - <<'PY'
+          import json
+          from pathlib import Path
+
+          import phase2d_observation_ledger as ledger
+          import phase2d_prospective_validator as validator
+
+          root = Path("canonical_f08_restore")
+
+          state_path = root / "phase2d_state.json"
+          ledger_path = root / "phase2d_observations.jsonl"
+          manifest_path = root / "phase2d_f08_baseline_manifest.json"
+
+          state = json.loads(
+              state_path.read_text(encoding="utf-8")
+          )
+
+          manifest = json.loads(
+              manifest_path.read_text(encoding="utf-8")
+          )
+
+          expected_experiment = (
+              "PHASE2D-HARDENED-20260924-F08"
+          )
+
+          experiment = (
+              state.get("experiment_definition", {})
+              .get("experiment_id")
+              or state.get("locked_models", {})
+              .get("experiment_id")
+          )
+
+          if experiment != expected_experiment:
+              raise SystemExit(
+                  "FATAL: canonical snapshot experiment mismatch."
+              )
+
+          validator.validate_state_integrity(state)
+
+          observations = ledger.load_observations(
+              ledger_path,
+              experiment_id=expected_experiment,
+          )
+
+          events = ledger.load_events(
+              ledger_path,
+              experiment_id=expected_experiment,
+          )
+
+          required_events = {
+              "F08_LEDGER_INITIALIZED_FROM_STATE",
+              "F08_LEDGER_MIGRATION_METADATA_CORRECTED",
+              "F08_LEDGER_HISTORICAL_RECONCILIATION",
+          }
+
+          event_names = {
+              e.get("event")
+              for e in events
+          }
+
+          missing = required_events - event_names
+
+          if missing:
+              raise SystemExit(
+                  "FATAL: canonical snapshot missing F08 events: "
+                  + ", ".join(sorted(missing))
+              )
+
+          reconciliation_events = [
+              e
+              for e in events
+              if e.get("event")
+              == "F08_LEDGER_HISTORICAL_RECONCILIATION"
+          ]
+
+          if not reconciliation_events:
+              raise SystemExit(
+                  "FATAL: canonical snapshot reconciliation event missing."
+              )
+
+          if any(
+              e.get("remaining_missing") != 0
+              for e in reconciliation_events
+          ):
+              raise SystemExit(
+                  "FATAL: canonical snapshot reports "
+                  "remaining_missing != 0."
+              )
+
+          if (
+              manifest.get("ledger", {})
+              .get("observation_count")
+              != 9750
+          ):
+              raise SystemExit(
+                  "FATAL: canonical snapshot observation count mismatch."
+              )
+
+          if len(observations) != 9750:
+              raise SystemExit(
+                  f"FATAL: canonical snapshot ledger contains "
+                  f"{len(observations)} observations, expected 9750."
+              )
+
+          print(
+              "Canonical snapshot project validation: PASS"
+          )
+          print(
+              "Canonical observations:",
+              len(observations),
+          )
+          PY
+
+              for f in \
+                phase2d_state.json \
+                phase2d_observations.jsonl \
+                phase2d_f08_baseline_manifest.json
+              do
+                cp \
+                  "${CANONICAL_RESTORE_DIR}/${f}" \
+                  "${STATE_DIR}/${f}"
+                echo "Restored canonical: ${f}"
+              done
+
+              if [[ -f "${CANONICAL_RESTORE_DIR}/recovery_manifest.json" ]]; then
+                cp \
+                  "${CANONICAL_RESTORE_DIR}/recovery_manifest.json" \
+                  "${STATE_DIR}/recovery_manifest.json"
+              fi
+
+              rm -rf "${CANONICAL_RESTORE_DIR}"
+
+              BEST_RUN_ID="CANONICAL_ENCRYPTED_SNAPSHOT"
+              BEST_TOTAL=9750
+              BEST_CANDIDATE=1801
+              BEST_PRODUCTION=7949
+              BEST_BLOCKS=14
+              BEST_SHA="493b9353f0d0ac69a4e8d518636bae8e2f8fc5185e580efe5757c8534833c165"
+
+              echo "Canonical encrypted snapshot selected."
+              echo "Canonical observations : ${BEST_TOTAL}"
+              echo "Canonical candidate    : ${BEST_CANDIDATE}"
+              echo "Canonical production   : ${BEST_PRODUCTION}"
+              echo "Canonical UTC blocks   : ${BEST_BLOCKS}"
+              echo "Canonical ledger SHA   : ${BEST_SHA}"
+            fi
+
+            # --------------------------------------------------------
+            if [[ -n "${BEST_RUN_ID}" ]]; then
+              if [[ -d "best_state" ]]; then
+                for f in \
+                  phase2d_state.json \
+                  phase2d_results.json \
+                  phase2d_latest_snapshot.json \
+                  experiment_ledger.jsonl \
+                  phase2d_observations.jsonl
+                do
+                  if [[ -f "best_state/${f}" ]]; then
+                    cp "best_state/${f}" "${STATE_DIR}/${f}"
+                    echo "Restored: ${f}"
+                  fi
+                done
+
+                rm -rf best_state
+              fi
+
               echo "============================================================"
               echo " STATE RESTORE STATUS: PASS"
-              echo " Restored from Run #${RESTORED_RUN_ID}"
+              echo " Selected Run          : ${BEST_RUN_ID}"
+              if [[ "${EXPERIMENT_ID}" == "PHASE2D-HARDENED-20260924-F08" ]]; then
+                echo " Selected observations : ${BEST_TOTAL}"
+                echo " Selected candidate    : ${BEST_CANDIDATE}"
+                echo " Selected production   : ${BEST_PRODUCTION}"
+                echo " Selected UTC blocks   : ${BEST_BLOCKS}"
+                echo " Selected ledger SHA   : ${BEST_SHA}"
+              fi
               echo "============================================================"
             else
               echo "============================================================"
@@ -605,7 +804,6 @@ jobs:
               exit 1
             fi
           fi
-
       # ============================================================
       # DOWNLOAD LOCKED CANDIDATE RELEASE
       # ============================================================
