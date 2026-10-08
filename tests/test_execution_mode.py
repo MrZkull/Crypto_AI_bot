@@ -1,4 +1,4 @@
-﻿from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import trade_executor
 
@@ -38,14 +38,25 @@ def test_invalid_execution_mode_fails_closed():
     try:
         trade_executor.config.EXECUTION_MODE = "NOT_A_REAL_MODE"
 
-        try:
-            trade_executor.get_execution_mode()
-        except RuntimeError as exc:
-            assert "Invalid EXECUTION_MODE" in str(exc)
-        else:
-            raise AssertionError(
-                "Invalid execution mode was accepted"
-            )
+        # Force this test into the local-config branch even when the
+        # entire suite is running inside GitHub Actions.
+        with patch.dict(
+            trade_executor.os.environ,
+            {
+                "GITHUB_ACTIONS": "",
+                "GITHUB_EVENT_NAME": "",
+                "EXECUTION_MODE_OVERRIDE": "",
+            },
+            clear=False,
+        ):
+            try:
+                trade_executor.get_execution_mode()
+            except RuntimeError as exc:
+                assert "Invalid EXECUTION_MODE" in str(exc)
+            else:
+                raise AssertionError(
+                    "Invalid execution mode was accepted"
+                )
     finally:
         if original is None:
             try:
