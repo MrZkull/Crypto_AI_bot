@@ -664,6 +664,7 @@ nav {
     <div class="nav-item" onclick="showPage('signals')" id="nav-signals"><span class="nav-icon">⚡</span><span>Signals</span><span class="nav-badge green" id="signalCount">0</span></div>
     <div class="nav-item" onclick="showPage('market')" id="nav-market"><span class="nav-icon">◎</span><span>Market</span></div>
     <div class="nav-item" onclick="showPage('trades')" id="nav-trades"><span class="nav-icon">◈</span><span>Open Trades</span><span class="nav-badge" id="tradeCount">0</span></div>
+    <div class="nav-item" onclick="showPage('paper')" id="nav-paper"><span class="nav-icon">🧪</span><span>Paper Trading</span><span class="nav-badge green" id="paperCount" style="display:none">0</span></div>
     <div class="nav-item" onclick="showPage('history')" id="nav-history"><span class="nav-icon">≡</span><span>History</span></div>
     <div class="nav-item" onclick="showPage('performance')" id="nav-performance"><span class="nav-icon">△</span><span>Performance</span></div>
     <div class="nav-item" onclick="showPage('quant')" id="nav-quant"><span class="nav-icon">📈</span><span>Quant</span></div>
@@ -895,6 +896,114 @@ nav {
       </div>
     </div>
   </div>
+  <!-- NEW: ISOLATED STAGE 2E PAPER TRADING PAGE -->
+  <div class="page" id="page-paper">
+    <div class="panel" style="border-color:var(--cyan);">
+      <div class="panel-header">
+        <div>
+          <span class="panel-title">🧪 Stage 2E Paper Trading</span>
+          <div style="font-size:10px;color:var(--text3);margin-top:5px;">Separate paper ledger · Read-only dashboard · No exchange orders</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="panel-badge" id="paperModeBadge" style="color:var(--cyan);border-color:var(--cyan)">PAPER_ONLY</span>
+          <button id="paperPdfBtn" class="fbtn" onclick="downloadPaperPDF()" style="border-color:var(--blue);color:var(--blue);font-weight:700;">📄 Paper PDF</button>
+          <button class="fbtn" onclick="fetchPaperState()">↻ Refresh</button>
+        </div>
+      </div>
+      <div class="panel-body" style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;">
+        <div style="font-size:11px;color:var(--text2);max-width:850px;">
+          This tab reads <code>paper_state.json</code> and <code>paper_events.jsonl</code> only. Prices and marked PnL are indicative Binance Spot quotes; simulated positions are never Deribit/live positions.
+        </div>
+        <div id="paperStateMeta" style="font-family:var(--mono);font-size:10px;color:var(--text3);">Loading paper state…</div>
+      </div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card c-cyan"><div class="stat-label">Open Paper Positions</div><div class="stat-value cyan" id="paper-active-count">0</div><div class="stat-sub" id="paper-active-sub">of 8 maximum</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Closed Paper Positions</div><div class="stat-value blue" id="paper-closed-count">0</div><div class="stat-sub">from the Stage 2E ledger</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Realized Paper PnL</div><div class="stat-value green" id="paper-realized-pnl">—</div><div class="stat-sub">closed positions; net when recorded</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Estimated Open PnL</div><div class="stat-value" id="paper-open-pnl">—</div><div class="stat-sub">uses latest available spot quote</div></div>
+      <div class="stat-card c-purple"><div class="stat-label">Estimated Paper Equity</div><div class="stat-value purple" id="paper-equity">—</div><div class="stat-sub" id="paper-equity-sub">not exchange balance</div></div>
+      <div class="stat-card c-blue"><div class="stat-label">Entry Decisions</div><div class="stat-value blue" id="paper-decision-count">0</div><div class="stat-sub">opened / skipped / rejected</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Paper Risk &amp; Health Analytics</span>
+        <span class="panel-badge" id="paper-health-badge">Snapshot</span>
+      </div>
+      <div class="panel-body">
+        <div class="stats-row" style="margin:0;">
+          <div class="stat-card c-cyan"><div class="stat-label">Virtual Balance</div>
+            <div class="stat-value cyan" id="paper-virtual-balance">—</div>
+            <div class="stat-sub">starting paper capital</div></div>
+          <div class="stat-card c-green"><div class="stat-label">Win Rate</div>
+            <div class="stat-value green" id="paper-win-rate">—</div>
+            <div class="stat-sub">verified closed positions</div></div>
+          <div class="stat-card c-purple"><div class="stat-label">Profit Factor</div>
+            <div class="stat-value purple" id="paper-profit-factor">—</div>
+            <div class="stat-sub">gross profit / gross loss</div></div>
+          <div class="stat-card c-red"><div class="stat-label">Largest Loss</div>
+            <div class="stat-value red" id="paper-largest-loss">—</div>
+            <div class="stat-sub">verified paper close</div></div>
+          <div class="stat-card c-blue"><div class="stat-label">Open Exposure</div>
+            <div class="stat-value blue" id="paper-open-exposure">—</div>
+            <div class="stat-sub">entry notional</div></div>
+          <div class="stat-card c-amber"><div class="stat-label">Last Event</div>
+            <div class="stat-value amber" id="paper-last-event">—</div>
+            <div class="stat-sub" id="paper-last-event-time">UTC</div></div>
+        </div>
+        <div style="margin-top:12px;padding:10px;border:1px solid var(--border);
+          border-radius:8px;background:var(--bg3);font-size:10px;
+          color:var(--text2);line-height:1.65;">
+          <b style="color:var(--text);">Paper audit status:</b>
+          <span id="paper-audit-status">Loading…</span>
+          &nbsp; | &nbsp;
+          <b style="color:var(--text);">Policy:</b>
+          <span id="paper-health-policy">—</span>
+          &nbsp; | &nbsp;
+          <b style="color:var(--text);">Schema:</b>
+          <span id="paper-health-schema">—</span>
+          &nbsp; | &nbsp;
+          <b style="color:var(--text);">Decisions:</b>
+          <span id="paper-health-decisions">0</span>
+          &nbsp; | &nbsp;
+          <b style="color:var(--text);">Events:</b>
+          <span id="paper-health-events">0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">Open Paper Positions</span><span class="panel-badge" id="paper-open-badge">0 active</span></div>
+      <div class="panel-body" id="paperActiveBody"><div class="empty"><div class="eicon" style="font-size:28px;margin-bottom:8px;">🧪</div><div class="emsg">Loading simulated positions…</div></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">Closed Paper Positions</span><span class="panel-badge">Most recent 100</span></div>
+      <div class="htable-wrapper"><table class="htable">
+        <thead><tr><th>Symbol</th><th>Side</th><th>Exit Reason</th><th>Entry</th><th>Exit</th><th>Opened (UTC)</th><th>Closed (UTC)</th><th>Net PnL</th><th>Result + PnL</th><th>Net R</th><th>Details</th></tr></thead>
+        <tbody id="paperClosedBody"><tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text3)">Loading closed paper positions…</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">Entry Decisions &amp; Skipped Signals</span><span class="panel-badge">Most recent 100</span></div>
+      <div class="htable-wrapper"><table class="htable">
+        <thead><tr><th>Status</th><th>Symbol</th><th>Side</th><th>Timestamp (UTC)</th><th>Prediction ID</th><th>Details</th></tr></thead>
+        <tbody id="paperDecisionsBody"><tr><td colspan="6" style="text-align:center;padding:18px;color:var(--text3)">Loading paper decisions…</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">Paper Lifecycle Event Ledger</span><span class="panel-badge" id="paper-event-count">0 events</span></div>
+      <div class="htable-wrapper"><table class="htable">
+        <thead><tr><th>Event</th><th>Symbol</th><th>Side</th><th>Reason / State</th><th>Time (UTC)</th><th>Prediction ID</th><th>Raw details</th></tr></thead>
+        <tbody id="paperEventsBody"><tr><td colspan="7" style="text-align:center;padding:18px;color:var(--text3)">Loading paper events…</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
   <!-- 5. HISTORY PAGE & INSTITUTIONAL REPORT ENGINE -->
   <div class="page" id="page-history">
     <div class="stats-row">
@@ -992,7 +1101,7 @@ nav {
               <th>Entry</th>
               <th>Close</th>
               <th>PnL (USDT)</th>
-              <th>Result</th>
+              <th>Result + PnL</th>
               <th>Opened</th>
               <th>Duration</th>
               <th>Reason</th>
@@ -1410,6 +1519,7 @@ const PAGES = {
   signals: 'Signals',
   market: 'Market',
   trades: 'Open Trades',
+  paper: 'Paper Trading',
   history: 'History',
   performance: 'Performance',
   quant: 'Quant Analytics',
@@ -1470,6 +1580,7 @@ function showPage(id) {
   if (id === 'performance') fetchHistory();
   if (id === 'market') fetchMarketData();
   if (id === 'trades') fetchOpenTrades();
+  if (id === 'paper') fetchPaperState();
   if (id === 'signals') renderSignals();
   if (id === 'intel') fetchIntel();
 }
@@ -1923,6 +2034,307 @@ async function fetchOpenTrades() {
     const el = document.getElementById(id);
     if (el) el.innerHTML = html;
   });
+}
+
+function paperEsc(value) {
+  return String(value == null ? '—' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function paperMoney(value, digits = 2) {
+  const n = Number(value);
+  return Number.isFinite(n) ? '$' + n.toLocaleString('en-US', {minimumFractionDigits: digits, maximumFractionDigits: digits}) : '—';
+}
+
+function paperNumber(value, digits = 4) {
+  const n = Number(value);
+  return value == null || value === '' || !Number.isFinite(n) ? '—' :
+    n.toLocaleString('en-US', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+}
+
+function paperDate(value) {
+  if (value == null || value === '') return '—';
+  let d;
+  if (typeof value === 'number' || /^\d{10,}$/.test(String(value))) d = new Date(Number(value));
+  else d = new Date(value);
+  return Number.isNaN(d.getTime()) ? paperEsc(value) : d.toISOString().replace('T', ' ').replace('.000Z', ' UTC').replace('Z', ' UTC');
+}
+
+function paperClosedNet(position) {
+  if (position.net_pnl_usd != null && Number.isFinite(Number(position.net_pnl_usd))) return Number(position.net_pnl_usd);
+  const netR = Number(position.net_r), risk = Number(position.initial_risk_usd);
+  if (position.net_r != null && Number.isFinite(netR) && Number.isFinite(risk)) return netR * risk;
+  return null;
+}
+
+function paperOpenNet(position, markPrice) {
+  const mark = Number(markPrice);
+  const entry = Number(position.entry_price ?? position.simulated_entry ?? position.entry_ref);
+  const remaining = Number(position.remaining_qty ?? position.qty ?? 0);
+  if (!Number.isFinite(mark) || mark <= 0 || !Number.isFinite(entry) || entry <= 0 || remaining <= 0) return null;
+  const side = String(position.side || '').toUpperCase();
+  if (side !== 'BUY' && side !== 'SELL') return null;
+  const grossRemaining = (side === 'BUY' ? mark - entry : entry - mark) * remaining;
+  const partialRealized = Number(position.tp1_realized_gross_pnl || 0);
+  const entryFee = Number(position.entry_fee_usd || 0);
+  const tp1Fee = Number(position.tp1_fee_usd || 0);
+  // Estimated exit fee only: a paper position has no real close order.
+  return partialRealized + grossRemaining - entryFee - tp1Fee - mark * remaining * 0.0006;
+}
+
+function paperRawDetails(value) {
+  return `<details style="min-width:150px;"><summary style="cursor:pointer;color:var(--cyan);font-size:10px;">Full record / provenance</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-width:760px;max-height:380px;overflow:auto;background:var(--bg3);padding:10px;border-radius:8px;font-size:10px;color:var(--text2);">${paperEsc(JSON.stringify(value, null, 2))}</pre></details>`;
+}
+
+function renderPaperPosition(position, quotes) {
+  const symbol = String(position.symbol || position.logical_symbol || 'Unknown');
+  const side = String(position.side || 'UNKNOWN').toUpperCase();
+  const isBuy = side === 'BUY';
+  const active = position.status === 'ACTIVE';
+  const entry = Number(position.entry_price ?? position.simulated_entry ?? position.entry_ref);
+  const stop = Number(position.stop), tp1 = Number(position.tp1), tp2 = Number(position.tp2);
+  const qty = Number(position.qty || 0), remaining = Number(position.remaining_qty ?? qty);
+  const mark = Number(quotes?.[symbol]?.lastPrice);
+  const net = active ? paperOpenNet(position, mark) : paperClosedNet(position);
+  const pnlColor = net == null ? 'var(--text3)' : net >= 0 ? 'var(--green)' : 'var(--red)';
+  const pnlLabel = net == null ? 'PnL unavailable' : `${net >= 0 ? '+' : '−'}${paperMoney(Math.abs(net), 4)}`;
+  const risk = Number(position.initial_risk_usd || 0);
+  const contract = position.observation_contract || {};
+  const source = contract.observation_source || {};
+  const lastObs = position.last_observation_close_time || position.entry_observation_close_time || contract.close_time;
+  const safeSymbol = paperEsc(symbol);
+  return `<div class="trade-card ${isBuy ? 'buy' : 'sell'}" style="border-left:4px solid ${active ? 'var(--cyan)' : 'var(--text3)'};">
+    <div class="tc-top">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+        <span class="tc-sym">${safeSymbol}</span><span class="dir-tag ${isBuy ? 'buy' : 'sell'}">${paperEsc(side)}</span>
+        <span class="tag" style="background:var(--cyan2);color:var(--cyan);border:1px solid var(--cyan);">PAPER ONLY</span>
+        <span class="tag" style="background:var(--bg3);color:var(--text2);">${paperEsc(position.state || position.status || '—')}</span>
+      </div>
+      <div style="text-align:right;font-family:var(--mono);font-weight:700;color:${pnlColor};"><div style="font-size:14px;">${pnlLabel}</div><div style="font-size:9px;color:var(--text3);">${active ? 'estimated net open PnL' : 'recorded closed PnL'}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:12px 0;">
+      <div class="price-box"><div class="price-lbl">Simulated Entry</div><div class="price-val entry">${paperMoney(entry, entry < 10 ? 5 : 3)}</div></div>
+      <div class="price-box"><div class="price-lbl">Latest Spot Quote</div><div class="price-val live">${Number.isFinite(mark) && mark > 0 ? paperMoney(mark, mark < 10 ? 5 : 3) : '—'}</div></div>
+      <div class="price-box"><div class="price-lbl">Stop Loss</div><div class="price-val sl">${paperMoney(stop, stop > 0 && stop < 10 ? 5 : 3)}</div></div>
+      <div class="price-box"><div class="price-lbl">Take Profit 1</div><div class="price-val tp">${paperMoney(tp1, tp1 > 0 && tp1 < 10 ? 5 : 3)}</div></div>
+      <div class="price-box"><div class="price-lbl">Take Profit 2</div><div class="price-val tp">${paperMoney(tp2, tp2 > 0 && tp2 < 10 ? 5 : 3)}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px;font-size:10px;color:var(--text2);margin:10px 0 12px;">
+      <div><b>Position ID:</b> <span style="font-family:var(--mono);overflow-wrap:anywhere;">${paperEsc(position.pred_id)}</span></div>
+      <div><b>Status:</b> ${paperEsc(position.status)}</div>
+      <div><b>Original quantity:</b> ${paperNumber(qty, 6)}</div><div><b>Remaining quantity:</b> ${paperNumber(remaining, 6)}</div>
+      <div><b>Entry notional:</b> ${paperMoney(entry * qty, 2)}</div><div><b>Initial risk:</b> ${paperMoney(risk, 2)}</div>
+      <div><b>ATR reference:</b> ${paperNumber(position.atr_ref, 6)}</div><div><b>Entry source:</b> ${paperEsc(position.entry_price_source || '—')}</div>
+      <div><b>Opened (UTC):</b> ${paperDate(position.opened_at_ms || position.open_time)}</div><div><b>Signal generated:</b> ${paperDate(position.generated_at)}</div>
+      <div><b>Bars processed:</b> ${paperEsc(`${Number(position.bars_processed || 0)} / 24`)}</div><div><b>Last processed candle:</b> ${paperDate(position.last_processed_candle_close_time)}</div>
+      <div><b>Last observed candle:</b> ${paperDate(lastObs)}</div><div><b>Exit reason:</b> ${paperEsc(position.exit_reason || '—')}</div>
+      <div><b>Exit price:</b> ${position.exit_price == null ? '—' : paperMoney(position.exit_price, 4)}</div><div><b>Net R:</b> ${position.net_r == null ? '—' : paperNumber(position.net_r, 4) + 'R'}</div>
+      <div><b>Model version:</b> ${paperEsc(position.model_version || '—')}</div><div><b>Confidence:</b> ${position.confidence == null ? '—' : paperNumber(position.confidence, 2) + '%'}</div>
+      <div><b>RSI (15m):</b> ${paperNumber(position.rsi_15m, 2)}</div><div><b>ADX (15m):</b> ${paperNumber(position.adx_15m, 2)}</div>
+      <div><b>Ensemble disagreement:</b> ${paperNumber(position.ensemble_disagreement, 4)}</div><div><b>Execution mode:</b> ${paperEsc(position.execution_mode || 'PAPER_ONLY')}</div>
+      <div><b>Policy version:</b> ${paperEsc(position.paper_policy_version || '—')}</div><div><b>Observation interval:</b> ${paperEsc(contract.interval || position.interval || '—')}</div>
+      <div><b>Observation market:</b> ${paperEsc(contract.observation_market || '—')}</div><div><b>Source exchange / market:</b> ${paperEsc(source.exchange || '—')} / ${paperEsc(source.market_type || '—')}</div>
+      <div><b>Observation open:</b> ${paperDate(contract.open_time)}</div><div><b>Observation close:</b> ${paperDate(contract.close_time)}</div>
+    </div>
+    ${paperRawDetails(position)}
+  </div>`;
+}
+
+let paperRefreshInFlight = false;
+
+function paperPct(v) {
+  return Number.isFinite(Number(v)) ? `${Number(v).toFixed(1)}%` : '—';
+}
+function paperCalcAnalytics(data) {
+  const positions = Array.isArray(data.positions) ? data.positions : [];
+  const closed = positions.filter(p => p.status === 'CLOSED');
+  const active = positions.filter(p => p.status === 'ACTIVE');
+  const pnls = closed.map(p => {
+    for (const key of ['net_pnl_usd', 'net_pnl', 'pnl', 'realized_pnl']) {
+      if (p[key] != null && Number.isFinite(Number(p[key]))) return Number(p[key]);
+    }
+    if (p.net_r != null && p.initial_risk_usd != null &&
+        p.exit_reason !== 'AMBIGUOUS_BARRIER') {
+      const netR = Number(p.net_r), risk = Number(p.initial_risk_usd);
+      if (Number.isFinite(netR) && Number.isFinite(risk)) return netR * risk;
+    }
+    return null;
+  }).filter(v => v != null);
+  const wins = pnls.filter(v => v > 0);
+  const losses = pnls.filter(v => v < 0);
+  const grossProfit = wins.reduce((a,b) => a+b, 0);
+  const grossLoss = Math.abs(losses.reduce((a,b) => a+b, 0));
+  const exposure = active.reduce(
+    (sum,p) => sum + Number(p.entry_price || p.simulated_entry || p.entry_ref || 0) * Number(p.qty || 0), 0
+  );
+  return {
+    winRate: pnls.length ? wins.length / pnls.length * 100 : null,
+    profitFactor: grossLoss ? grossProfit / grossLoss : (grossProfit ? Infinity : null),
+    largestLoss: losses.length ? Math.min(...losses) : null,
+    exposure
+  };
+}
+function renderPaperAnalytics(data) {
+  const a = paperCalcAnalytics(data);
+  const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+  set('paper-virtual-balance', paperMoney(Number(data.initial_balance_usd || 0),2));
+  set('paper-win-rate', a.winRate == null ? '—' : paperPct(a.winRate));
+  set('paper-profit-factor', a.profitFactor == null ? '—' :
+      (a.profitFactor === Infinity ? '∞' : a.profitFactor.toFixed(2)));
+  set('paper-largest-loss', a.largestLoss == null ? '—' :
+      `−${paperMoney(Math.abs(a.largestLoss),2)}`);
+  set('paper-open-exposure', paperMoney(a.exposure,2));
+  const events = Array.isArray(data.events) ? data.events : [];
+  const last = events[0];
+  set('paper-last-event', last?.event || last?.type || '—');
+  set('paper-last-event-time',
+      paperDate(last?.timestamp_ms || last?.candle_close_time || last?.open_time || '') || 'UTC');
+  set('paper-audit-status',
+      data.paper_only ? 'PASS — PAPER_ONLY verified' :
+      `WARNING — mode ${data.execution_mode || 'UNKNOWN'}`);
+  set('paper-health-policy', data.policy_version || '—');
+  set('paper-health-schema', data.schema_version ?? '—');
+  set('paper-health-decisions',
+      String(Array.isArray(data.decisions) ? data.decisions.length : 0));
+  set('paper-health-events',
+      String(data.portfolio?.event_count ?? events.length));
+  const badge=document.getElementById('paper-health-badge');
+  if (badge) {
+    badge.textContent=data.paper_only ? 'PAPER_ONLY' : 'MODE WARNING';
+    badge.style.color=data.paper_only ? 'var(--cyan)' : 'var(--red)';
+  }
+}
+async function downloadPaperPDF() {
+  const btn=document.getElementById('paperPdfBtn');
+  const original=btn?.textContent;
+  if (btn) { btn.textContent='⏳ Building…'; btn.disabled=true; }
+  try {
+    const data=await apiFetch('/api/paper/state', null);
+    if (!data || !data.ok) throw new Error('Paper state unavailable');
+    // Add a separate best-effort spot quote snapshot for the PDF only.
+    // The paper engine/state ledger is not mutated.
+    const quotes = await apiFetch('/api/market', {});
+    data.market_quotes = quotes || {};
+    const response=await fetch('/api/download_paper_report_pdf', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(data)
+    });
+    if (!response.ok) {
+      const body=await response.json().catch(()=>({}));
+      throw new Error(body.message || body.error || `HTTP ${response.status}`);
+    }
+    const blob=await response.blob();
+    const url=window.URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`CryptoBot_Stage2E_Paper_Report_${new Date().toISOString().slice(0,10)}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(`🚨 Paper PDF Generation Failed:\n${error.message}`);
+  } finally {
+    if (btn) { btn.textContent=original; btn.disabled=false; }
+  }
+}
+
+async function fetchPaperState() {
+  if (paperRefreshInFlight) return;
+  paperRefreshInFlight = true;
+  try {
+    const [data, quotes] = await Promise.all([
+      apiFetch('/api/paper/state', null),
+      apiFetch('/api/market', {})
+    ]);
+    if (!data || !data.ok) {
+      const body = document.getElementById('paperActiveBody');
+      if (body) body.innerHTML = '<div class="empty"><div class="emsg">Paper ledger is unavailable. The existing tabs are unaffected.</div></div>';
+      return;
+    }
+    renderPaperAnalytics(data);
+    const positions = Array.isArray(data.positions) ? data.positions : [];
+    const active = positions.filter(position => position.status === 'ACTIVE');
+    const closed = positions.filter(position => position.status === 'CLOSED');
+    const decisions = Array.isArray(data.decisions) ? data.decisions : [];
+    const events = Array.isArray(data.events) ? data.events : [];
+    const balance = Number(data.initial_balance_usd || 10000);
+    const realizedValues = closed.map(paperClosedNet).filter(value => value != null && Number.isFinite(value));
+    const realized = realizedValues.reduce((sum, value) => sum + value, 0);
+    const openValues = active.map(position => paperOpenNet(position, Number(quotes?.[position.symbol]?.lastPrice)));
+    const pricedOpenValues = openValues.filter(value => value != null && Number.isFinite(value));
+    const openPnl = pricedOpenValues.reduce((sum, value) => sum + value, 0);
+    const allOpenPricesAvailable = active.length === pricedOpenValues.length;
+    const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+
+    setText('paper-active-count', active.length);
+    setText('paper-active-sub', `of ${data.portfolio?.max_open_positions || 8} maximum`);
+    setText('paper-closed-count', closed.length);
+    setText('paper-realized-pnl', `${realized >= 0 ? '+' : '−'}${paperMoney(Math.abs(realized), 2)}`);
+    setText('paper-open-pnl', pricedOpenValues.length ? `${openPnl >= 0 ? '+' : '−'}${paperMoney(Math.abs(openPnl), 2)}` : (active.length ? '—' : '$0.00'));
+    setText('paper-equity', allOpenPricesAvailable ? paperMoney(balance + realized + openPnl, 2) : '—');
+    setText('paper-equity-sub', allOpenPricesAvailable ? `starting virtual balance ${paperMoney(balance, 2)}` : 'waiting for quotes on all active positions');
+    setText('paper-decision-count', decisions.length);
+    setText('paper-open-badge', `${active.length} active`);
+    setText('paper-event-count', `${data.portfolio?.event_count ?? events.length} events`);
+    const badge = document.getElementById('paperCount');
+    if (badge) { badge.textContent = active.length; badge.style.display = active.length ? '' : 'none'; }
+    const modeBadge = document.getElementById('paperModeBadge');
+    if (modeBadge) {
+      modeBadge.textContent = data.paper_only ? 'PAPER_ONLY · VERIFIED' : `MODE WARNING: ${data.execution_mode || 'UNKNOWN'}`;
+      modeBadge.style.color = data.paper_only ? 'var(--cyan)' : 'var(--red)';
+      modeBadge.style.borderColor = data.paper_only ? 'var(--cyan)' : 'var(--red)';
+    }
+    setText('paperStateMeta', `Schema ${data.schema_version ?? '—'} · ${data.policy_version || '—'} · refreshed ${new Date().toISOString().slice(11,19)} UTC`);
+
+    const activeBody = document.getElementById('paperActiveBody');
+    if (activeBody) activeBody.innerHTML = active.length
+      ? active.map(position => renderPaperPosition(position, quotes || {})).join('')
+      : '<div class="empty"><div class="eicon" style="font-size:28px;margin-bottom:8px;">🧪</div><div class="emsg">No open paper positions yet.<br><small>Eligible production predictions are considered only on their exact signal candle.</small></div></div>';
+
+    const closedBody = document.getElementById('paperClosedBody');
+    if (closedBody) {
+      const recentClosed = closed.slice().sort((a,b) => Number(b.resolved_at_ms || b.opened_at_ms || 0) - Number(a.resolved_at_ms || a.opened_at_ms || 0)).slice(0,100);
+      closedBody.innerHTML = recentClosed.length ? recentClosed.map(position => {
+        const net = paperClosedNet(position);
+        const color = net == null ? 'var(--text3)' : net >= 0 ? 'var(--green)' : 'var(--red)';
+        const outcomeLabel = net == null ? 'UNVERIFIED' : net > 0 ? 'WIN' : net < 0 ? 'LOSS' : 'BREAKEVEN';
+        const outcomeTagClass = net > 0 ? 'win' : net < 0 ? 'loss' : '';
+        const outcomeColor = net == null ? 'var(--text3)' : net > 0 ? 'var(--green)' : net < 0 ? 'var(--red)' : 'var(--amber)';
+        const outcomeAmount = net == null ? '—' : `${net > 0 ? '+' : net < 0 ? '-' : ''}${paperMoney(Math.abs(net), 4)} USDT`;
+        return `<tr><td style="font-weight:700;color:var(--text);">${paperEsc(position.symbol || position.logical_symbol)}</td>
+          <td>${paperEsc(position.side)}</td><td>${paperEsc(position.exit_reason || position.state || position.status)}</td>
+          <td>${paperMoney(position.entry_price ?? position.simulated_entry ?? position.entry_ref, 4)}</td>
+          <td>${position.exit_price == null ? '—' : paperMoney(position.exit_price, 4)}</td>
+          <td>${paperDate(position.opened_at_ms || position.open_time)}</td><td>${paperDate(position.resolved_at_ms)}</td>
+          <td style="color:${color};font-weight:700;">${net == null ? 'AMBIGUOUS / UNVERIFIED' : `${net >= 0 ? '+' : '−'}${paperMoney(Math.abs(net), 4)}`}</td>
+          <td class="paper-result-pnl"><span class="tag ${outcomeTagClass}" style="${net == null || net === 0 ? 'background:var(--bg3);color:var(--text3);border:1px solid var(--border2);' : ''}">${outcomeLabel}</span> <span style="color:${outcomeColor};font-weight:700;font-family:var(--mono)">${outcomeAmount}</span></td>
+          <td>${position.net_r == null ? '—' : paperNumber(position.net_r, 4) + 'R'}</td><td>${paperRawDetails(position)}</td></tr>`;
+      }).join('') : '<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text3)">No closed paper positions recorded yet.</td></tr>';
+    }
+
+    const decisionsBody = document.getElementById('paperDecisionsBody');
+    if (decisionsBody) decisionsBody.innerHTML = decisions.length ? decisions.slice(0,100).map(decision => `<tr>
+      <td style="font-weight:700;color:${String(decision.status || '').includes('OPENED') ? 'var(--green)' : 'var(--text2)'}">${paperEsc(decision.status || decision.reason || 'UNKNOWN')}</td>
+      <td>${paperEsc(decision.symbol)}</td><td>${paperEsc(decision.side)}</td><td>${paperDate(decision.timestamp_ms || decision.generated_at)}</td>
+      <td style="font-family:var(--mono);overflow-wrap:anywhere;">${paperEsc(decision.pred_id)}</td><td>${paperRawDetails(decision)}</td></tr>`).join('')
+      : '<tr><td colspan="6" style="text-align:center;padding:18px;color:var(--text3)">No entry decisions recorded yet.</td></tr>';
+
+    const eventsBody = document.getElementById('paperEventsBody');
+    if (eventsBody) eventsBody.innerHTML = events.length ? events.slice(0,100).map(event => `<tr>
+      <td style="font-weight:700;color:var(--text);">${paperEsc(event.event || event.type || 'EVENT')}</td><td>${paperEsc(event.symbol)}</td><td>${paperEsc(event.side)}</td>
+      <td>${paperEsc(event.reason || event.state || event.exit_reason || '—')}</td><td>${paperDate(event.timestamp_ms || event.candle_close_time || event.open_time)}</td>
+      <td style="font-family:var(--mono);overflow-wrap:anywhere;">${paperEsc(event.pred_id)}</td><td>${paperRawDetails(event)}</td></tr>`).join('')
+      : '<tr><td colspan="7" style="text-align:center;padding:18px;color:var(--text3)">The paper event ledger is empty.</td></tr>';
+  } catch (error) {
+    const body = document.getElementById('paperActiveBody');
+    if (body) body.innerHTML = '<div class="empty"><div class="emsg">Unable to render paper state. Other dashboard tabs remain unchanged.</div></div>';
+    console.warn('[Paper Trading] refresh failed', error);
+  } finally {
+    paperRefreshInFlight = false;
+  }
 }
 
 function renderTradeCard(t) {
@@ -2447,7 +2859,7 @@ function renderHistoryFiltered() {
       <td style="color:var(--blue)">${fp(t.entry,dec)}</td>
       <td>${fp(t.close_price,dec)}</td>
       <td style="color:${win?'var(--green)':'var(--red)'};font-weight:700">${(parseFloat(t.pnl || 0)>0?'+':'')}${(parseFloat(t.pnl || 0)).toFixed(4)}</td>
-      <td><span class="tag ${win?'win':'loss'}">${win?'WIN':'LOSS'}</span></td>
+      <td><span class="tag ${win?'win':'loss'}">${win?'WIN':'LOSS'}</span> <span class="history-result-pnl" style="color:${parseFloat(t.pnl || 0)>=0?'var(--green)':'var(--red)'};font-weight:700;font-family:var(--mono)">${(parseFloat(t.pnl || 0)>0?'+':'')}${(parseFloat(t.pnl || 0)).toFixed(4)} USDT</span></td>
       <td style="color:var(--text3)">${t.opened_at?new Date(t.opened_at).toLocaleDateString():' —'}</td>
       <td style="color:var(--text3)">${dur}</td>
       <td style="color:var(--text3);font-size:10px">${t.close_reason||'—'}</td>
@@ -3222,6 +3634,10 @@ async function fetchEmailTracker() {
 initTheme();
 refreshAll();
 setInterval(refreshAll, 25000);
+setInterval(() => {
+  const paperPage = document.getElementById('page-paper');
+  if (paperPage && paperPage.classList.contains('active')) fetchPaperState();
+}, 25000);
 
 setInterval(() => {
   const t  = new Date().toLocaleTimeString('en-GB',{timeZone:'UTC'});
