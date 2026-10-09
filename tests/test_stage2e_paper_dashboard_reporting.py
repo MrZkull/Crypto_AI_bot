@@ -7,7 +7,7 @@ INDEX = (ROOT / "dashboard_static" / "index.html").read_text(encoding="utf-8")
 
 def test_history_result_and_separate_paper_pdf():
     assert "<th>Result + PnL</th>" in INDEX
-    assert "history-result-pnl" in INDEX
+    assert "history-result-pnl" not in INDEX
     assert '@app.route("/api/download_report_pdf"' in DASH
     assert '@app.route("/api/download_paper_report_pdf"' in DASH
     assert "def generate_pdf_bytes(scope: str, summary: dict, trades: list)" in DASH

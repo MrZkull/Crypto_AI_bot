@@ -2859,7 +2859,7 @@ function renderHistoryFiltered() {
       <td style="color:var(--blue)">${fp(t.entry,dec)}</td>
       <td>${fp(t.close_price,dec)}</td>
       <td style="color:${win?'var(--green)':'var(--red)'};font-weight:700">${(parseFloat(t.pnl || 0)>0?'+':'')}${(parseFloat(t.pnl || 0)).toFixed(4)}</td>
-      <td><span class="tag ${win?'win':'loss'}">${win?'WIN':'LOSS'}</span> <span class="history-result-pnl" style="color:${parseFloat(t.pnl || 0)>=0?'var(--green)':'var(--red)'};font-weight:700;font-family:var(--mono)">${(parseFloat(t.pnl || 0)>0?'+':'')}${(parseFloat(t.pnl || 0)).toFixed(4)} USDT</span></td>
+      <td><span class="tag ${win?'win':'loss'}">${win?'WIN':'LOSS'}</span></td>
       <td style="color:var(--text3)">${t.opened_at?new Date(t.opened_at).toLocaleDateString():' —'}</td>
       <td style="color:var(--text3)">${dur}</td>
       <td style="color:var(--text3);font-size:10px">${t.close_reason||'—'}</td>
