@@ -2,7 +2,7 @@ name: CryptoBot AI — Hourly Research Pipeline
 
 on:
   schedule:
-    - cron: '10 * * * *'
+    - cron: '10 */6 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -45,254 +45,7 @@ jobs:
           [ -f coin_dossier.json ]         || echo '{}' > coin_dossier.json
           [ -f trade_history.json ]        || echo '[]' > trade_history.json
           [ -f adaptation_proposals.json ] || echo '[]' > adaptation_proposals.json
-          mkdir -p research_outputs data
-
-      # ------------------------------------------------------------------
-      # Phase 2D LOCKED MODEL INPUTS
-      # ------------------------------------------------------------------
-
-      - name: Restore previous Phase 2D state
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -e
-
-          RUN_ID=$(gh run list \
-            --workflow="hourly_research_pipeline.yml" \
-            --limit 20 \
-            --json databaseId,conclusion \
-            --jq '.[] | select(.conclusion == "success") | .databaseId' \
-            | grep -v "^${{ github.run_id }}$" \
-            | head -n 1 || true)
-
-          if [ -z "$RUN_ID" ]; then
-            RUN_ID=$(gh run list \
-              --workflow="run_phase2d.yml" \
-              --limit 20 \
-              --json databaseId,conclusion \
-              --jq '.[] | select(.conclusion == "success") | .databaseId' \
-              | head -n 1 || true)
-          fi
-
-          if [ -n "$RUN_ID" ]; then
-            echo "Restoring Phase 2D state from successful run $RUN_ID"
-
-            rm -rf /tmp/phase2d_restore
-            mkdir -p /tmp/phase2d_restore
-
-            gh run download "$RUN_ID" \
-              -n phase2d-state \
-              -D /tmp/phase2d_restore
-
-            mkdir -p research_outputs
-
-            for file in \
-              phase2d_state.json \
-              phase2d_results.json \
-              phase2d_latest_snapshot.json
-            do
-              if [ -f "/tmp/phase2d_restore/$file" ]; then
-                cp "/tmp/phase2d_restore/$file" "research_outputs/$file"
-                echo "Restored $file"
-              fi
-            done
-          else
-            echo "No previous Phase 2D state artifact found. Using repository state."
-          fi
-
-      - name: Download locked HTF-removal candidate from archived release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -e
-
-          rm -rf phase2d_candidate
-          mkdir -p phase2d_candidate
-
-          gh release download phase2d-htf-removal-candidate \
-            --repo "${{ github.repository }}" \
-            --pattern 'candidate_model.pkl' \
-            --dir phase2d_candidate \
-            --clobber
-
-          cp phase2d_candidate/candidate_model.pkl ./candidate_model.pkl
-
-          test -s candidate_model.pkl
-
-      - name: Verify locked candidate
-        run: |
-          set -e
-
-          python - <<'PY'
-          import hashlib
-          import joblib
-          from pathlib import Path
-
-          expected_sha = (
-              "7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
-          )
-
-          path = Path("candidate_model.pkl")
-          actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
-
-          print("candidate SHA256:", actual_sha)
-
-          if actual_sha != expected_sha:
-              raise SystemExit(
-                  "FATAL: candidate SHA does not match locked HTF-removal candidate"
-              )
-
-          model = joblib.load(path)
-
-          if not isinstance(model, dict):
-              raise SystemExit(
-                  "FATAL: unexpected candidate model type"
-              )
-
-          required = {
-              "all_features",
-              "selector",
-              "ensemble",
-              "label_map",
-              "best_features",
-          }
-
-          missing = required - set(model)
-
-          if missing:
-              raise SystemExit(
-                  f"FATAL: candidate model missing keys: {sorted(missing)}"
-              )
-
-          declared = [
-              str(x)
-              for x in model["all_features"]
-          ]
-
-          selected = [
-              str(x)
-              for x in model["best_features"]
-          ]
-
-          print("candidate declared features:", len(declared))
-          print("candidate selected features:", len(selected))
-          print("candidate trained_at:", model.get("trained_at"))
-          print("candidate selected feature list:", selected)
-
-          if len(declared) != 25:
-              raise SystemExit(
-                  "FATAL: expected 25 candidate declared features"
-              )
-
-          if len(selected) != 25:
-              raise SystemExit(
-                  "FATAL: expected 25 candidate selected features"
-              )
-
-          missing_from_declared = [
-              f for f in selected
-              if f not in declared
-          ]
-
-          if missing_from_declared:
-              raise SystemExit(
-                  "FATAL: candidate best_features contains features "
-                  f"not present in all_features: {missing_from_declared}"
-              )
-          PY
-
-      - name: Download locked production model v2.0
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -e
-
-          gh release download v2.0             --repo "${{ github.repository }}"             --pattern 'pro_crypto_ai_model.pkl'             --dir .             --clobber
-
-          test -s pro_crypto_ai_model.pkl
-          ls -lh pro_crypto_ai_model.pkl
-
-      - name: Verify locked production model
-        run: |
-          set -e
-
-          python - <<'PY'
-          import hashlib
-          import joblib
-          from pathlib import Path
-
-          expected_sha = (
-              "f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
-          )
-
-          path = Path("pro_crypto_ai_model.pkl")
-          actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
-
-          print("production SHA256:", actual_sha)
-
-          if actual_sha != expected_sha:
-              raise SystemExit(
-                  "FATAL: production SHA does not match locked v2.0 model"
-              )
-
-          model = joblib.load(path)
-
-          if not isinstance(model, dict):
-              raise SystemExit(
-                  "FATAL: unexpected production model type"
-              )
-
-          required = {
-              "all_features",
-              "selector",
-              "ensemble",
-              "label_map",
-              "best_features",
-          }
-
-          missing = required - set(model)
-
-          if missing:
-              raise SystemExit(
-                  f"FATAL: production model missing keys: {sorted(missing)}"
-              )
-
-          declared = [
-              str(x)
-              for x in model["all_features"]
-          ]
-
-          selected = [
-              str(x)
-              for x in model["best_features"]
-          ]
-
-          print("production declared features:", len(declared))
-          print("production selected features:", len(selected))
-          print("production trained_at:", model.get("trained_at"))
-          print("production selected feature list:", selected)
-
-          if len(declared) != 63:
-              raise SystemExit(
-                  "FATAL: expected 63 production declared features"
-              )
-
-          if len(selected) != 35:
-              raise SystemExit(
-                  "FATAL: expected 35 production selected features"
-              )
-
-          missing_from_declared = [
-              f for f in selected
-              if f not in declared
-          ]
-
-          if missing_from_declared:
-              raise SystemExit(
-                  "FATAL: production best_features contains features "
-                  f"not present in all_features: {missing_from_declared}"
-              )
-          PY
+          mkdir -p data
 
       # ------------------------------------------------------------------
       # RESEARCH
@@ -303,12 +56,6 @@ jobs:
 
       - name: Step 2 — Run Failure Taxonomy
         run: python failure_taxonomy.py
-
-      - name: Step 3 — Run Phase 2D Prospective Shadow Validator
-        env:
-          DERIBIT_CLIENT_ID: ${{ secrets.DERIBIT_CLIENT_ID }}
-          DERIBIT_CLIENT_SECRET: ${{ secrets.DERIBIT_CLIENT_SECRET }}
-        run: python phase2d_prospective_validator.py
 
       # ------------------------------------------------------------------
       # STATE SYNC
@@ -329,16 +76,14 @@ jobs:
 
           cp adaptation_proposals.json             /tmp/cryptobot_research/adaptation_proposals.json             2>/dev/null || echo '[]' > /tmp/cryptobot_research/adaptation_proposals.json
 
-          # CRITICAL: Phase 2D outputs must also survive git reset/pull.
-          cp research_outputs/phase2d_state.json             /tmp/cryptobot_research/phase2d_state.json             2>/dev/null || true
-
-          cp research_outputs/phase2d_results.json             /tmp/cryptobot_research/phase2d_results.json             2>/dev/null || true
-
-          cp research_outputs/phase2d_latest_snapshot.json             /tmp/cryptobot_research/phase2d_latest_snapshot.json             2>/dev/null || true
-
       - name: Sync and Commit Research State
         if: always()
         run: |
+          if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+            echo "Skipping auxiliary state sync on non-main ref: ${GITHUB_REF:-unknown}"
+            echo "Refusing to reset, rebase, stage, or push from a feature branch."
+            exit 0
+          fi
           set -e
 
           git config --global user.name "github-actions[bot]"
@@ -358,19 +103,6 @@ jobs:
           cp /tmp/cryptobot_research/trade_history.json             trade_history.json
 
           cp /tmp/cryptobot_research/adaptation_proposals.json             adaptation_proposals.json
-
-          # CRITICAL: restore Phase 2D outputs after reset/pull.
-          if [ -f /tmp/cryptobot_research/phase2d_state.json ]; then
-            cp /tmp/cryptobot_research/phase2d_state.json               research_outputs/phase2d_state.json
-          fi
-
-          if [ -f /tmp/cryptobot_research/phase2d_results.json ]; then
-            cp /tmp/cryptobot_research/phase2d_results.json               research_outputs/phase2d_results.json
-          fi
-
-          if [ -f /tmp/cryptobot_research/phase2d_latest_snapshot.json ]; then
-            cp /tmp/cryptobot_research/phase2d_latest_snapshot.json               research_outputs/phase2d_latest_snapshot.json
-          fi
 
           python - <<'PY'
           import json
@@ -532,11 +264,10 @@ jobs:
           git add coin_dossier.json
           git add trade_history.json
           git add adaptation_proposals.json
-          git add research_outputs/
           git add data/
 
           if ! git diff --cached --quiet; then
-            git commit               -m "chore(research): hourly audit and Phase 2D sync [skip ci]"
+            git commit               -m "chore(research): hourly auxiliary state sync [skip ci]"
 
             # State writers can race. Retry once after rebasing.
             if ! git push origin main; then
@@ -547,15 +278,3 @@ jobs:
           else
             echo "No research-state changes to commit."
           fi
-
-      - name: Upload Phase 2D state artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: phase2d-state
-          path: |
-            research_outputs/phase2d_state.json
-            research_outputs/phase2d_results.json
-            research_outputs/phase2d_latest_snapshot.json
-          if-no-files-found: error
-          retention-days: 20
