@@ -1251,6 +1251,425 @@ def api_close_trade():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+@app.route("/api/paper/state")
+def api_paper_state():
+    # Read-only Stage 2E paper ledger endpoint; never accesses the exchange.
+    try:
+        state = get("paper_state.json", {})
+        if not isinstance(state, dict):
+            state = {}
+
+        raw_positions = state.get("positions", {})
+        if not isinstance(raw_positions, dict):
+            raw_positions = {}
+
+        predictions = get(PREDICTIONS_FILE, [])
+        if not isinstance(predictions, list):
+            predictions = []
+        predictions_by_id = {
+            str(item.get("pred_id")): item
+            for item in predictions
+            if isinstance(item, dict) and item.get("pred_id") not in (None, "")
+        }
+
+        positions = []
+        enrich_fields = (
+            "confidence",
+            "rsi_15m",
+            "adx_15m",
+            "ensemble_disagreement",
+            "high_disagreement",
+            "score",
+        )
+        for pred_id, raw_position in raw_positions.items():
+            if not isinstance(raw_position, dict):
+                continue
+            position = dict(raw_position)
+            position.setdefault("pred_id", str(pred_id))
+            prediction = predictions_by_id.get(str(pred_id), {})
+            position.setdefault(
+                "side",
+                prediction.get("predicted_signal") or prediction.get("signal"),
+            )
+            for field in enrich_fields:
+                if position.get(field) is None and prediction.get(field) is not None:
+                    position[field] = prediction[field]
+            positions.append(position)
+
+        positions.sort(
+            key=lambda item: int(item.get("opened_at_ms") or item.get("open_time") or 0),
+            reverse=True,
+        )
+
+        raw_decisions = state.get("decisions", {})
+        if not isinstance(raw_decisions, dict):
+            raw_decisions = {}
+        decisions = []
+        for pred_id, raw_decision in raw_decisions.items():
+            if not isinstance(raw_decision, dict):
+                continue
+            decision = dict(raw_decision)
+            decision.setdefault("pred_id", str(pred_id))
+            prediction = predictions_by_id.get(str(pred_id), {})
+            decision.setdefault("symbol", prediction.get("symbol") or prediction.get("logical_symbol"))
+            decision.setdefault("side", prediction.get("predicted_signal") or prediction.get("signal"))
+            decision.setdefault("generated_at", prediction.get("generated_at"))
+            decisions.append(decision)
+        decisions.sort(key=lambda item: int(item.get("timestamp_ms") or 0), reverse=True)
+
+        raw_events = get("paper_events.jsonl", "")
+        if isinstance(raw_events, list):
+            event_lines = raw_events
+        elif isinstance(raw_events, str):
+            event_lines = raw_events.splitlines()
+        else:
+            event_lines = []
+
+        event_count = sum(1 for line in event_lines if str(line).strip())
+        events = []
+        # Parse only a bounded tail; the append-only source file is never mutated.
+        for line in event_lines[-500:]:
+            if isinstance(line, dict):
+                event = line
+            else:
+                try:
+                    event = json.loads(str(line))
+                except (TypeError, json.JSONDecodeError):
+                    continue
+            if isinstance(event, dict):
+                events.append(event)
+        events = events[-100:][::-1]
+
+        mode = str(state.get("execution_mode") or "PAPER_ONLY")
+        active_count = sum(1 for item in positions if item.get("status") == "ACTIVE")
+        closed_count = sum(1 for item in positions if item.get("status") == "CLOSED")
+
+        return jsonify({
+            "ok": True,
+            "paper_only": mode == "PAPER_ONLY",
+            "execution_mode": mode,
+            "policy_version": state.get("policy_version", "stage2e-v1"),
+            "schema_version": state.get("schema_version"),
+            "initial_balance_usd": state.get("initial_balance_usd", 10000.0),
+            "risk_per_trade": state.get("risk_per_trade"),
+            "positions": positions,
+            "decisions": decisions[:100],
+            "events": events,
+            "portfolio": {
+                "active_positions": active_count,
+                "closed_positions": closed_count,
+                "decision_count": len(decisions),
+                "event_count": event_count,
+                "max_open_positions": 8,
+                "max_same_direction": 4,
+            },
+        })
+    except Exception:
+        log.exception("Stage 2E paper state endpoint failed")
+        return jsonify({"ok": False, "error": "Paper state is temporarily unavailable"}), 500
+
+
+def generate_paper_pdf_bytes(snapshot: dict) -> bytes:
+    # Separate Stage 2E template. Existing History PDF is intentionally untouched.
+    if not HAS_REPORTLAB:
+        raise ImportError("ReportLab package is not installed on this server.")
+    snapshot = snapshot or {}
+    positions = [p for p in snapshot.get("positions", []) if isinstance(p, dict)]
+    decisions = [d for d in snapshot.get("decisions", []) if isinstance(d, dict)]
+    events = [e for e in snapshot.get("events", []) if isinstance(e, dict)]
+    portfolio = snapshot.get("portfolio") or {}
+
+    def num(v, default=0.0):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    def pnl(p):
+        # Stage 2E stores the verified close amount as net_pnl_usd.
+        for key in ("net_pnl_usd", "net_pnl", "pnl", "realized_pnl"):
+            if p.get(key) is not None:
+                try:
+                    return float(p[key])
+                except (TypeError, ValueError):
+                    pass
+
+        # net_r is only converted when a real resolved R value and matching
+        # initial risk are present. Ambiguous outcomes remain unverified.
+        if p.get("net_r") is not None and p.get("initial_risk_usd") is not None:
+            try:
+                if p.get("exit_reason") == "AMBIGUOUS_BARRIER":
+                    return None
+                return float(p["net_r"]) * float(p["initial_risk_usd"])
+            except (TypeError, ValueError):
+                pass
+        return None
+
+    active = [p for p in positions if p.get("status") == "ACTIVE"]
+    closed = [p for p in positions if p.get("status") == "CLOSED"]
+    values = [pnl(p) for p in closed]
+    values = [v for v in values if v is not None]
+    wins = [v for v in values if v > 0]
+    losses = [v for v in values if v < 0]
+    realized = sum(values)
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    win_rate = (len(wins) / len(values) * 100.0) if values else 0.0
+    pf = gross_profit / gross_loss if gross_loss else None
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=(letter[1], letter[0]), rightMargin=28, leftMargin=28,
+        topMargin=30, bottomMargin=34
+    )
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle(
+        "Stage2ETitle", parent=styles["Heading1"], fontSize=15, leading=18,
+        textColor=colors.HexColor("#0891b2"), spaceAfter=3,
+        fontName="Helvetica-Bold"
+    )
+    sub = ParagraphStyle(
+        "Stage2ESub", parent=styles["Normal"], fontSize=8, leading=10,
+        textColor=colors.HexColor("#64748b"), spaceAfter=8
+    )
+    sec = ParagraphStyle(
+        "Stage2ESec", parent=styles["Heading2"], fontSize=10, leading=13,
+        textColor=colors.HexColor("#0f172a"), spaceBefore=9, spaceAfter=5,
+        fontName="Helvetica-Bold"
+    )
+    cell = ParagraphStyle(
+        "Stage2ECell", parent=styles["Normal"], fontSize=6.5, leading=8,
+        textColor=colors.HexColor("#334155")
+    )
+    bold = ParagraphStyle("Stage2EBold", parent=cell, fontName="Helvetica-Bold")
+    green = ParagraphStyle(
+        "Stage2EGreen", parent=cell, textColor=colors.HexColor("#059669"),
+        fontName="Helvetica-Bold"
+    )
+    red = ParagraphStyle(
+        "Stage2ERed", parent=cell, textColor=colors.HexColor("#dc2626"),
+        fontName="Helvetica-Bold"
+    )
+    head = ParagraphStyle(
+        "Stage2EHead", parent=cell, textColor=colors.white,
+        fontName="Helvetica-Bold", alignment=1
+    )
+
+    mode = str(snapshot.get("execution_mode") or "PAPER_ONLY")
+    paper_only = bool(snapshot.get("paper_only"))
+    policy = str(snapshot.get("policy_version") or "stage2e-v1")
+    schema = str(snapshot.get("schema_version") or "—")
+    initial = num(snapshot.get("initial_balance_usd"))
+
+    elements = [
+        Paragraph("CryptoBot AI — Stage 2E Paper Trading Report", title),
+        Paragraph(
+            "Paper-only operational, performance & lifecycle audit. "
+            "This is a separate template from the existing History report.",
+            sub
+        ),
+        Paragraph(
+            f"<b>Generated:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} "
+            f"| <b>Mode:</b> {mode} | <b>Paper-only:</b> "
+            f"{'PASS' if paper_only else 'WARNING'}",
+            cell
+        ),
+        Paragraph(
+            f"<b>Policy:</b> {policy} | <b>Schema:</b> {schema} | "
+            f"<b>Starting virtual balance:</b> {initial:.2f} USDT",
+            cell
+        )
+    ]
+
+    summary = [
+        ["Metric", "Value", "Metric", "Value"],
+        ["Active positions", str(len(active)), "Closed positions", str(len(closed))],
+        ["Verified closes", str(len(values)), "Win rate", f"{win_rate:.1f}%"],
+        ["Realized paper PnL", f"{realized:+.4f} USDT",
+         "Profit factor", f"{pf:.2f}" if pf is not None else "—"],
+        ["Largest win", f"{max(wins):+.4f} USDT" if wins else "—",
+         "Largest loss", f"{min(losses):+.4f} USDT" if losses else "—"],
+        ["Entry decisions", str(len(decisions)),
+         "Lifecycle events", str(len(events))]
+    ]
+    table = Table(
+        [[Paragraph(str(x), head if r == 0 else cell) for x in row]
+         for r, row in enumerate(summary)],
+        colWidths=[110, 135, 110, 135], repeatRows=1
+    )
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
+        ("PADDING", (0, 0), (-1, -1), 4)
+    ]))
+    elements += [Spacer(1, 7), Paragraph("Paper Portfolio & Safety Summary", sec), table]
+
+    def add_table(title_text, headers, rows, widths, header_color="#0f172a"):
+        elements.append(Paragraph(title_text, sec))
+        all_rows = [[Paragraph(str(x), head) for x in headers]]
+        all_rows.extend(rows)
+        if len(all_rows) == 1:
+            all_rows.append([Paragraph("No records available.", cell)] + [Paragraph("", cell)] * (len(headers)-1))
+        t = Table(all_rows, colWidths=widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_color)),
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+            ("PADDING", (0, 0), (-1, -1), 3),
+            ("VALIGN", (0, 0), (-1, -1), "TOP")
+        ]))
+        elements.append(t)
+
+    active_rows = []
+    quotes = snapshot.get("market_quotes") if isinstance(snapshot.get("market_quotes"), dict) else {}
+    for p in active:
+        symbol = str(p.get("symbol") or p.get("logical_symbol") or "")
+        quote = quotes.get(symbol, {}) if isinstance(quotes.get(symbol, {}), dict) else {}
+        mark_price = num(quote.get("lastPrice"))
+        entry_price = num(p.get("entry_price", p.get("simulated_entry", p.get("entry_ref"))))
+        remaining_qty = num(p.get("remaining_qty", p.get("qty")))
+        side = str(p.get("side") or "").upper()
+        estimated_open_pnl = None
+        if mark_price > 0 and entry_price > 0 and remaining_qty > 0 and side in ("BUY", "SELL"):
+            estimated_open_pnl = ((mark_price-entry_price) if side == "BUY" else (entry_price-mark_price)) * remaining_qty
+            estimated_open_pnl -= num(p.get("entry_fee_usd")) + num(p.get("tp1_fee_usd"))
+            estimated_open_pnl -= mark_price * remaining_qty * 0.0006
+            estimated_open_pnl += num(p.get("tp1_realized_gross_pnl"))
+        active_rows.append([
+            Paragraph(str(p.get("symbol") or p.get("logical_symbol") or "—"), bold),
+            Paragraph(str(p.get("side") or "—"), cell),
+            Paragraph("PAPER ONLY", cell),
+            Paragraph(f'{mark_price:.6f}' if mark_price > 0 else "—", cell),
+            Paragraph(f'{estimated_open_pnl:+.4f}' if estimated_open_pnl is not None else "—", green if estimated_open_pnl is not None and estimated_open_pnl >= 0 else red if estimated_open_pnl is not None else cell),
+            Paragraph(f'{num(p.get("entry_price") or p.get("simulated_entry") or p.get("entry_ref")):.6f}', cell),
+            Paragraph(f'{num(p.get("qty")):.6f}', cell),
+            Paragraph(f'{num(p.get("remaining_qty", p.get("qty"))):.6f}', cell),
+            Paragraph(f'{num(p.get("stop", p.get("stop_loss"))):.6f}', cell),
+            Paragraph(f'{num(p.get("tp1")):.6f}', cell),
+            Paragraph(f'{num(p.get("tp2")):.6f}', cell),
+            Paragraph(f'{num(p.get("confidence")):.2f}%' if p.get("confidence") is not None else "—", cell),
+            Paragraph(f'{num(p.get("adx_15m")):.2f}' if p.get("adx_15m") is not None else "—", cell),
+            Paragraph(f'{num(p.get("initial_risk_usd", p.get("initial_risk"))):.4f}', cell)
+        ])
+    add_table(
+        "Open Paper Positions",
+        ["Symbol","Side","Status","Mark","Open PnL*","Entry","Qty","Remaining","SL","TP1","TP2","Confidence","ADX","Risk"],
+        active_rows, [46,30,44,50,60,50,42,45,43,43,43,52,36,45], "#0891b2"
+    )
+
+    closed_rows = []
+    for i, p in enumerate(closed[:100], 1):
+        value = pnl(p)
+        style = green if value is not None and value >= 0 else red if value is not None else cell
+        closed_rows.append([
+            Paragraph(str(i), cell),
+            Paragraph(str(p.get("symbol") or p.get("logical_symbol") or "—"), bold),
+            Paragraph(str(p.get("side") or "—"), cell),
+            Paragraph(str(p.get("exit_reason") or p.get("state") or p.get("status") or "—")[:26], cell),
+            Paragraph(f'{num(p.get("entry_price")):.6f}', cell),
+            Paragraph(f'{num(p.get("exit_price")):.6f}' if p.get("exit_price") is not None else "—", cell),
+            Paragraph(f"{value:+.4f}" if value is not None else "AMBIGUOUS / UNVERIFIED", style),
+            Paragraph(f'{num(p.get("net_r")):.4f}R' if p.get("net_r") is not None else "—", cell),
+            Paragraph(f'{num(p.get("confidence")):.2f}%' if p.get("confidence") is not None else "—", cell),
+            Paragraph(f'{num(p.get("adx_15m")):.2f}' if p.get("adx_15m") is not None else "—", cell)
+        ])
+    add_table(
+        "Closed Paper Positions & Outcomes",
+        ["#","Symbol","Side","Exit reason","Entry","Exit","Net PnL","Net R","Confidence","ADX"],
+        closed_rows, [18,52,36,72,52,52,62,45,58,40]
+    )
+
+    decision_rows = []
+    for d in decisions[:100]:
+        decision_rows.append([
+            Paragraph(str(d.get("status") or "UNKNOWN"), cell),
+            Paragraph(str(d.get("symbol") or "—"), bold),
+            Paragraph(str(d.get("side") or "—"), cell),
+            Paragraph(str(d.get("timestamp_ms") or d.get("generated_at") or "—"), cell),
+            Paragraph(str(d.get("pred_id") or "—")[:28], cell),
+            Paragraph(str(d.get("reason") or d.get("state") or d.get("exit_reason") or "—")[:80], cell)
+        ])
+    add_table(
+        "Entry Decisions / Signal Handling",
+        ["Status","Symbol","Side","Time UTC","Prediction ID","Decision detail"],
+        decision_rows, [65,55,40,95,90,145], "#475569"
+    )
+
+    reconciliation = snapshot.get("reconciliation") or {}
+    evidence = [
+        f"<b>Execution mode:</b> {mode}",
+        f"<b>Paper-only flag:</b> {'PASS' if paper_only else 'WARNING'}",
+        f"<b>Reconciliation:</b> {reconciliation.get('ok', 'not present')}",
+        f"<b>Active / closed:</b> {len(active)} / {len(closed)}",
+        f"<b>Max open / same direction:</b> {portfolio.get('max_open_positions', 8)} / {portfolio.get('max_same_direction', 4)}",
+        f"<b>Risk per trade:</b> {num(portfolio.get('risk_per_trade')):.4f}",
+        f"<b>Initial virtual balance:</b> {initial:.2f} USDT",
+        "<b>Safety:</b> simulated paper positions; this report does not prove exchange execution."
+    ]
+    elements += [Paragraph("Lifecycle & Reconciliation Evidence", sec),
+                 Paragraph("<br/>".join(evidence), cell)]
+
+    event_rows = []
+    for e in events[:100]:
+        event_rows.append([
+            Paragraph(str(e.get("event") or e.get("type") or "EVENT"), cell),
+            Paragraph(str(e.get("symbol") or "—"), bold),
+            Paragraph(str(e.get("side") or "—"), cell),
+            Paragraph(str(e.get("reason") or e.get("state") or e.get("exit_reason") or "—")[:50], cell),
+            Paragraph(str(e.get("timestamp_ms") or e.get("candle_close_time") or e.get("open_time") or "—"), cell),
+            Paragraph(str(e.get("pred_id") or "—")[:28], cell)
+        ])
+    add_table(
+        "Recent Paper Lifecycle Events",
+        ["Event","Symbol","Side","Reason / State","Time UTC","Prediction ID"],
+        event_rows, [100,55,40,130,95,70]
+    )
+
+    def footer(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        canvas_obj.setFont("Helvetica", 6.5)
+        canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+        canvas_obj.drawString(
+            28, 20,
+            "CryptoBot AI — Stage 2E PAPER ONLY. Open PnL is indicative using latest spot quotes; no exchange execution is represented."
+        )
+        canvas_obj.drawRightString(doc_obj.pagesize[0] - 28, 20, f"Page {doc_obj.page}")
+        canvas_obj.restoreState()
+
+    doc.build(elements, onFirstPage=footer, onLaterPages=footer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+@app.route("/api/download_paper_report_pdf", methods=["POST", "OPTIONS"])
+def api_download_paper_report_pdf():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    if not HAS_REPORTLAB:
+        return jsonify({
+            "ok": False, "error": "REPORTLAB_MISSING",
+            "message": "ReportLab not installed on this server."
+        }), 500
+    data = request.get_json(silent=True) or {}
+    try:
+        pdf_bytes = generate_paper_pdf_bytes(data)
+    except Exception as exc:
+        log.error(f"Stage 2E paper PDF generation failed: {exc}")
+        return jsonify({
+            "ok": False, "error": "PAPER_PDF_GENERATION_FAILED",
+            "message": str(exc)
+        }), 500
+    buffer = BytesIO(pdf_bytes)
+    buffer.seek(0)
+    filename = (
+        "CryptoBot_Stage2E_Paper_Report_"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+    )
+    return send_file(
+        buffer, mimetype="application/pdf",
+        as_attachment=True, download_name=filename
+    )
+
 @app.route("/health")
 def health(): return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
 
