@@ -921,7 +921,6 @@ def reconcile_state(state: dict) -> dict:
                 "tp1",
                 "tp2",
                 "qty",
-                "remaining_qty",
                 "initial_risk_usd",
             ):
                 value = float(trade.get(field, 0))
@@ -931,9 +930,18 @@ def reconcile_state(state: dict) -> dict:
                     )
 
             status = trade.get("status")
-            if status == "ACTIVE" and float(
-                trade.get("remaining_qty", 0)
-            ) <= 0:
+            try:
+                remaining_qty = float(
+                    trade.get("remaining_qty", float("nan"))
+                )
+            except (TypeError, ValueError, OverflowError):
+                remaining_qty = float("nan")
+
+            if not math.isfinite(remaining_qty) or remaining_qty < 0:
+                failures.append(
+                    f"{pred_id}:INVALID_REMAINING_QTY"
+                )
+            elif status == "ACTIVE" and remaining_qty <= 0:
                 failures.append(
                     f"{pred_id}:ACTIVE_WITHOUT_REMAINING_QTY"
                 )

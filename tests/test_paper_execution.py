@@ -458,6 +458,50 @@ class TestPaperExecution(unittest.TestCase):
         self.assertEqual(position["remaining_qty"], 0.0)
         self.assertIsNotNone(position["net_r"])
 
+    def test_reconciliation_accepts_closed_position_with_zero_remaining_qty(self):
+        state = paper._new_state()
+        pred = paper._normalize_prediction(prediction())
+        position = paper._build_position(pred)
+
+        position.update({
+            "status": "CLOSED",
+            "state": "CLOSED",
+            "exit_reason": "STOP_LOSS",
+            "remaining_qty": 0.0,
+            "net_r": -1.0,
+        })
+        state["positions"][pred["pred_id"]] = position
+
+        with patch.object(
+            paper,
+            "PAPER_EVENTS_FILE",
+            self.events,
+        ):
+            result = paper.reconcile_state(state)
+
+        self.assertTrue(result["ok"], result["failures"])
+
+    def test_reconciliation_rejects_active_position_with_zero_remaining_qty(self):
+        state = paper._new_state()
+        pred = paper._normalize_prediction(prediction())
+        position = paper._build_position(pred)
+
+        position["remaining_qty"] = 0.0
+        state["positions"][pred["pred_id"]] = position
+
+        with patch.object(
+            paper,
+            "PAPER_EVENTS_FILE",
+            self.events,
+        ):
+            result = paper.reconcile_state(state)
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            f"{pred['pred_id']}:ACTIVE_WITHOUT_REMAINING_QTY",
+            result["failures"],
+        )
+
     def test_reconciliation_fails_on_identity_tamper(self):
         state = paper._new_state()
         pred = paper._normalize_prediction(prediction())
