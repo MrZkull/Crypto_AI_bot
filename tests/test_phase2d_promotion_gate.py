@@ -485,5 +485,107 @@ class TestPhase2DPromotionGate(unittest.TestCase):
             temp.cleanup()
 
 
+    def _coverage_frames_with_equivalent_units(self, reference):
+        start_offset = 25921
+        regime_pairs = (
+            [(0.004, 0.4)] * 5
+            + [(0.010, 1.0)] * 5
+            + [(0.020, 2.0)] * 5
+        )
+
+        candidate_records = []
+        production_records = []
+
+        for day_index, (candidate_fraction, production_points) in enumerate(
+            regime_pairs
+        ):
+            candidate_records.extend(
+                self._records(
+                    1,
+                    0.1,
+                    offset=start_offset + day_index,
+                    model="candidate",
+                    regime_atr_pct=candidate_fraction,
+                )
+            )
+            production_records.extend(
+                self._records(
+                    1,
+                    0.1,
+                    offset=start_offset + day_index,
+                    model="production",
+                    regime_atr_pct=production_points,
+                )
+            )
+
+        self._write_reference(reference)
+        candidate = gate._clean(candidate_records)
+        production = gate._clean(production_records)
+        paired = gate._paired_daily_means(candidate, production)
+        return candidate, production, paired
+
+    def test_candidate_fraction_and_production_percentage_point_regimes_match(self):
+        temp, audit, state, reference = self._paths()
+        try:
+            candidate, production, paired = (
+                self._coverage_frames_with_equivalent_units(reference)
+            )
+            coverage = gate._coverage_gate(
+                paired,
+                candidate,
+                production,
+                "PHASE2D-HARDENED-20260924-F08",
+                reference,
+            )
+
+            expected_counts = {"LOW": 5, "MID": 5, "HIGH": 5}
+            self.assertTrue(coverage["ready"], coverage)
+            self.assertEqual(
+                coverage["regime_details"]["candidate"]["counts"],
+                expected_counts,
+            )
+            self.assertEqual(
+                coverage["regime_details"]["production"]["counts"],
+                expected_counts,
+            )
+        finally:
+            temp.cleanup()
+
+    def test_coverage_normalization_does_not_mutate_source_values(self):
+        temp, audit, state, reference = self._paths()
+        try:
+            candidate, production, paired = (
+                self._coverage_frames_with_equivalent_units(reference)
+            )
+            candidate_before = candidate["regime_atr_pct"].tolist()
+            production_before = production["regime_atr_pct"].tolist()
+
+            coverage = gate._coverage_gate(
+                paired,
+                candidate,
+                production,
+                "PHASE2D-HARDENED-20260924-F08",
+                reference,
+            )
+
+            self.assertTrue(coverage["ready"], coverage)
+            self.assertEqual(
+                candidate["regime_atr_pct"].tolist(), candidate_before
+            )
+            self.assertEqual(
+                production["regime_atr_pct"].tolist(), production_before
+            )
+            self.assertEqual(
+                candidate_before,
+                [0.004] * 5 + [0.010] * 5 + [0.020] * 5,
+            )
+            self.assertEqual(
+                production_before,
+                [0.4] * 5 + [1.0] * 5 + [2.0] * 5,
+            )
+        finally:
+            temp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()
