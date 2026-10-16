@@ -33,6 +33,12 @@ on:
         default: false
         type: boolean
 
+      approve_f08_gate_amendment:
+        description: "Authorize first amendment append after approval; actor must match PHASE2D_F08_APPROVER"
+        required: false
+        default: false
+        type: boolean
+
   # External scheduler contract:
   # cron-job.org is the 2-hour scheduler for this workflow.
   #
@@ -193,6 +199,44 @@ jobs:
       # ============================================================
       # RESTORE / RESET POLICY
       # ============================================================
+      - name: Validate F08 amendment-only dispatch preconditions
+        if: ${{ inputs.approve_f08_gate_amendment == true }}
+        env:
+          PHASE2D_F08_APPROVER: ${{ vars.PHASE2D_F08_APPROVER }}
+          PHASE2D_EXPERIMENT_ID: ${{ inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}
+          PHASE2D_ALLOW_FRESH_START: ${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" || "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+            echo "FATAL: Amendment-only mode requires a manual workflow_dispatch on main." >&2
+            exit 2
+          fi
+
+          if [[ "${PHASE2D_EXPERIMENT_ID:-}" != "PHASE2D-HARDENED-20260924-F08" ]]; then
+            echo "FATAL: Amendment-only mode is restricted to the canonical F08 experiment." >&2
+            exit 2
+          fi
+
+          if [[ "${PHASE2D_ALLOW_FRESH_START:-false}" == "true" ]]; then
+            echo "FATAL: Amendment-only mode cannot be combined with a fresh start." >&2
+            exit 2
+          fi
+
+          if [[ -z "${PHASE2D_F08_APPROVER:-}" ]]; then
+            echo "FATAL: Repository variable PHASE2D_F08_APPROVER is not configured." >&2
+            exit 2
+          fi
+
+          if [[ "${GITHUB_ACTOR,,}" != "${PHASE2D_F08_APPROVER,,}" ]]; then
+            echo "FATAL: The workflow actor is not the designated F08 approver." >&2
+            exit 2
+          fi
+
+          echo "PASS: F08 amendment-only preconditions verified."
+          echo "The existing state will be restored; no fresh start is allowed."
+
       - name: Restore previous Phase 2D state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1093,6 +1137,7 @@ jobs:
           required_files=(
             "phase2d_prospective_validator.py"
             "phase2d_promotion_gate.py"
+            "phase2d_gate_amendment.py"
             "feature_engineering.py"
             "market_data_integrity.py"
             "phase2d_observation_ledger.py"
@@ -1114,6 +1159,7 @@ jobs:
           python -m py_compile \
             phase2d_prospective_validator.py \
             phase2d_promotion_gate.py \
+            phase2d_gate_amendment.py \
             feature_engineering.py \
             market_data_integrity.py \
             phase2d_observation_ledger.py
@@ -1143,11 +1189,13 @@ jobs:
       # ============================================================
       # RUN PROSPECTIVE VALIDATOR
       # ============================================================
-      - name: Run Phase 2D validator
+      - name: Record F08 amendment or run Phase 2D validator
         shell: bash
         env:
           PYTHONUNBUFFERED: "1"
           PHASE2D_EXPERIMENT_ID: ${{ inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT }}
+          PHASE2D_APPROVE_F08_GATE_AMENDMENT: ${{ inputs.approve_f08_gate_amendment || false }}
+          PHASE2D_F08_APPROVER: ${{ vars.PHASE2D_F08_APPROVER }}
         run: |
           set -euo pipefail
 
@@ -1164,9 +1212,23 @@ jobs:
           echo "Fresh-start authorized : ${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}"
           echo "============================================================"
 
-          python phase2d_prospective_validator.py \
-            ${FRESH_START_ARG} \
-            2>&1 | tee phase2d_validator.log
+          # An explicit approval dispatch is amendment-only.
+          # Preflight ran before state restoration, so this path cannot reset state.
+          if [[ "${PHASE2D_APPROVE_F08_GATE_AMENDMENT:-false}" == "true" ]]; then
+            python phase2d_gate_amendment.py
+            echo "AMENDMENT-ONLY MODE: prospective validator is skipped; C25 is not evaluated."
+          else
+            # Ordinary F08 runs verify the amendment before evaluating new checkpoints.
+            if [[ "${GITHUB_REF:-}" == "refs/heads/main" && "${PHASE2D_EXPERIMENT_ID:-}" == "PHASE2D-HARDENED-20260924-F08" ]]; then
+              python phase2d_gate_amendment.py
+            else
+              echo "F08 amendment recorder not invoked: non-main ref or non-F08 experiment."
+            fi
+
+            python phase2d_prospective_validator.py \
+              ${FRESH_START_ARG} \
+              2>&1 | tee phase2d_validator.log
+          fi
 
           echo
           echo "============================================================"
@@ -1181,6 +1243,17 @@ jobs:
         shell: bash
         run: |
           set -u
+
+          if [[ "${{ inputs.approve_f08_gate_amendment || false }}" == "true" ]]; then
+            echo "F08 AMENDMENT-ONLY RUN SUMMARY"
+            echo "Workflow actor: ${GITHUB_ACTOR:-unknown}"
+            echo "Workflow run ID: ${GITHUB_RUN_ID:-unknown}"
+            echo "Prospective validator: intentionally skipped"
+            echo "New checkpoint evaluated: NO"
+            echo "Promotion authorized: NO"
+            echo "Inspect the amendment-processing step log for APPENDED versus ALREADY_PRESENT."
+            exit 0
+          fi
 
           echo "============================================================"
           echo " PHASE 2D RESULT SUMMARY"
@@ -1280,6 +1353,20 @@ jobs:
         shell: bash
         run: |
           set -u
+
+          if [[ "${{ inputs.approve_f08_gate_amendment || false }}" == "true" ]]; then
+            {
+              echo "# F08 Amendment-Only Run"
+              echo
+              echo "- **Workflow actor:** ${GITHUB_ACTOR:-unknown}"
+              echo "- **Workflow run ID:** ${GITHUB_RUN_ID:-unknown}"
+              echo "- **Amendment recorder:** See the amendment-processing step log."
+              echo "- **Prospective validator:** Not executed."
+              echo "- **New F08 checkpoint evaluated:** No."
+              echo "- **Model promotion authorized:** No."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
 
           CANDIDATE_TAG="${{ inputs.candidate_release_tag || github.event.client_payload.candidate_release_tag || env.CANDIDATE_RELEASE_TAG_DEFAULT }}"
           PRODUCTION_TAG="${{ inputs.production_release_tag || github.event.client_payload.production_release_tag || env.PRODUCTION_RELEASE_TAG_DEFAULT }}"
@@ -1455,6 +1542,13 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      - name: Reject conflicting F08 workflow modes
+        if: ${{ inputs.approve_f08_gate_amendment == true }}
+        shell: bash
+        run: |
+          echo "FATAL: Amendment-only approval and historical ledger reconciliation cannot run together." >&2
+          exit 2
+
       # ============================================================
       # CHECKOUT
       # ============================================================

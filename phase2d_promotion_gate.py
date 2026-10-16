@@ -731,6 +731,17 @@ def _coverage_gate(
                 )
             ].copy()
 
+            # F08 amendment proposal: frozen cutoffs are in
+            # percentage points. Candidate regime values are
+            # fractions; production regime values are already
+            # percentage points. Normalize only the temporary
+            # coverage-comparison values, not source observations
+            # or model feature inputs.
+            if model_name == "candidate":
+                model_days["mean_atr_pct"] = (
+                    model_days["mean_atr_pct"] * 100.0
+                )
+
             model_days[
                 "tercile"
             ] = model_days[
