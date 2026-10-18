@@ -34,6 +34,11 @@
       "status": "MISSED_ENTRY_WINDOW",
       "timestamp_ms": 1792150554343
     },
+    "ADAUSDT_1792349970178": {
+      "latest_closed_open_time": 1792354500000,
+      "status": "MISSED_ENTRY_WINDOW",
+      "timestamp_ms": 1792355483177
+    },
     "BCHUSDT_1792315430920": {
       "status": "OPENED",
       "timestamp_ms": 1792315725967
@@ -96,6 +101,11 @@
       "latest_closed_open_time": 1792189800000,
       "status": "MISSED_ENTRY_WINDOW",
       "timestamp_ms": 1792190760068
+    },
+    "CRVUSDT_1792341949892": {
+      "latest_closed_open_time": 1792354500000,
+      "status": "MISSED_ENTRY_WINDOW",
+      "timestamp_ms": 1792355482521
     },
     "DOGEUSDT_1791585673354": {
       "latest_closed_open_time": 1791591300000,
@@ -348,6 +358,11 @@
       "status": "MISSED_ENTRY_WINDOW",
       "timestamp_ms": 1791997358476
     },
+    "TRUMPUSDT_1792330118492": {
+      "latest_closed_open_time": 1792354500000,
+      "status": "MISSED_ENTRY_WINDOW",
+      "timestamp_ms": 1792355481864
+    },
     "TRXUSDT_1791679807729": {
       "latest_closed_open_time": 1791682200000,
       "status": "MISSED_ENTRY_WINDOW",
@@ -426,6 +441,11 @@
     "XRPUSDT_1792315422704": {
       "status": "OPENED",
       "timestamp_ms": 1792315727905
+    },
+    "ZECUSDT_1792349977122": {
+      "latest_closed_open_time": 1792354500000,
+      "status": "MISSED_ENTRY_WINDOW",
+      "timestamp_ms": 1792355483833
     }
   },
   "execution_mode": "PAPER_ONLY",
@@ -546,7 +566,7 @@
     },
     "BCHUSDT_1792315430920": {
       "atr_ref": 1.0087593770547856,
-      "bars_processed": 2,
+      "bars_processed": 3,
       "entry_fee_usd": 19.63520781123254,
       "entry_observation_close_time": 1792314899999,
       "entry_observation_identity": [
@@ -561,22 +581,27 @@
       "entry_price_source": "SIGNAL_CLOSE_PROXY",
       "entry_ref": 275.1,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 267.53430467208915,
+      "exit_reason": "TAKE_PROFIT",
+      "final_exit_fee_usd": 9.547603905616267,
+      "final_exit_qty": 59.47900100337011,
       "generated_at": "2026-10-18T09:23:50.920915+00:00",
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1792343699999,
+      "last_observation_close_time": 1792355399999,
       "last_observation_identity": [
         "BCHUSDT",
-        1792342800000,
+        1792354500000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1792342800000,
-      "last_processed_candle_close_time": 1792343699999,
+      "last_observation_open_time": 1792354500000,
+      "last_processed_candle_close_time": 1792355399999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "BCHUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": 2.0704186145917967,
       "observation_contract": {
         "btc_source": {
           "close_time": 1792314899999,
@@ -638,11 +663,14 @@
       "paper_policy_version": "stage2e-v1",
       "pred_id": "BCHUSDT_1792315430920",
       "qty": 118.95800200674022,
-      "remaining_qty": 59.47900100337011,
+      "realized_gross_pnl": 660.0000000000041,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1792355484498,
+      "resolved_candle_close_time": 1792355399999,
       "side": "SELL",
       "simulated_entry": 275.1,
-      "state": "PARTIAL_TP1",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 277.62189844263696,
       "symbol": "BCHUSDT",
       "tp1": 271.5693421803083,
@@ -1101,7 +1129,7 @@
     },
     "SOLUSDT_1792315420780": {
       "atr_ref": 0.3404990236043383,
-      "bars_processed": 2,
+      "bars_processed": 3,
       "entry_fee_usd": 21.957419791863273,
       "entry_observation_close_time": 1792314899999,
       "entry_observation_identity": [
@@ -1116,22 +1144,27 @@
       "entry_price_source": "SIGNAL_CLOSE_PROXY",
       "entry_ref": 103.84,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 101.28625732296747,
+      "exit_reason": "TAKE_PROFIT",
+      "final_exit_fee_usd": 10.708709895931637,
+      "final_exit_qty": 176.21195903845077,
       "generated_at": "2026-10-18T09:23:40.781062+00:00",
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1792343699999,
+      "last_observation_close_time": 1792355399999,
       "last_observation_identity": [
         "SOLUSDT",
-        1792342800000,
+        1792354500000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1792342800000,
-      "last_processed_candle_close_time": 1792343699999,
+      "last_observation_open_time": 1792354500000,
+      "last_processed_candle_close_time": 1792355399999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "SOLUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": 2.0549372013875784,
       "observation_contract": {
         "btc_source": {
           "close_time": 1792314899999,
@@ -1193,11 +1226,14 @@
       "paper_policy_version": "stage2e-v1",
       "pred_id": "SOLUSDT_1792315420780",
       "qty": 352.42391807690154,
-      "remaining_qty": 176.21195903845077,
+      "realized_gross_pnl": 660.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1792355485153,
+      "resolved_candle_close_time": 1792355399999,
       "side": "SELL",
       "simulated_entry": 103.84,
-      "state": "PARTIAL_TP1",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 104.69124755901085,
       "symbol": "SOLUSDT",
       "tp1": 102.64825341738482,
@@ -1207,7 +1243,7 @@
     },
     "XRPUSDT_1792315422704": {
       "atr_ref": 0.0037574966912069597,
-      "bars_processed": 2,
+      "bars_processed": 3,
       "entry_fee_usd": 24.87379435854619,
       "entry_observation_close_time": 1792314899999,
       "entry_observation_identity": [
@@ -1222,22 +1258,27 @@
       "entry_price_source": "SIGNAL_CLOSE_PROXY",
       "entry_ref": 1.2981,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 1.2699187748159477,
+      "exit_reason": "TAKE_PROFIT",
+      "final_exit_fee_usd": 12.166897179273093,
+      "final_exit_qty": 15968.077933483673,
       "generated_at": "2026-10-18T09:23:42.705103+00:00",
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1792343699999,
+      "last_observation_close_time": 1792355399999,
       "last_observation_identity": [
         "XRPUSDT",
-        1792342800000,
+        1792354500000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1792342800000,
-      "last_processed_candle_close_time": 1792343699999,
+      "last_observation_open_time": 1792354500000,
+      "last_processed_candle_close_time": 1792355399999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "XRPUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": 2.035494704276352,
       "observation_contract": {
         "btc_source": {
           "close_time": 1792314899999,
@@ -1299,11 +1340,14 @@
       "paper_policy_version": "stage2e-v1",
       "pred_id": "XRPUSDT_1792315422704",
       "qty": 31936.155866967347,
-      "remaining_qty": 15968.077933483673,
+      "realized_gross_pnl": 659.9999999999978,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1792355485811,
+      "resolved_candle_close_time": 1792355399999,
       "side": "SELL",
       "simulated_entry": 1.2981,
-      "state": "PARTIAL_TP1",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 1.3074937417280175,
       "symbol": "XRPUSDT",
       "tp1": 1.2849487615807758,
