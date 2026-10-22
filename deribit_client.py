@@ -46,6 +46,14 @@ SYMBOL_MAP = {
 TRADEABLE_SYMBOLS: list = []
 
 
+class PositionQueryError(RuntimeError):
+    """Position data could not be verified as a complete exchange snapshot."""
+
+    def __init__(self, message: str, *, failed_currencies: tuple[str, ...] = ()):
+        self.failed_currencies = tuple(failed_currencies)
+        super().__init__(message)
+
+
 def _calc_decimals(val: float) -> int:
     if val <= 0:
         return 4
@@ -617,23 +625,104 @@ class DeribitClient:
             pass
         return fallback
 
-    def get_position_size(self, symbol: str) -> float:
+    def position_size_from_record(self, position: dict) -> float:
+        """Return signed base quantity for bot-managed linear USDC perpetuals."""
+        if not isinstance(position, dict):
+            raise PositionQueryError("Position row is not an object")
+
+        instrument = position.get("instrument_name")
+        if not isinstance(instrument, str) or not instrument.strip():
+            raise PositionQueryError("Position row has no valid instrument name")
+        if not instrument.endswith("_USDC-PERPETUAL"):
+            raise PositionQueryError(
+                f"Unsupported instrument for linear USDC position normalization: {instrument}"
+            )
+
+        raw_size = position.get("size")
+        if raw_size is None or isinstance(raw_size, bool):
+            raise PositionQueryError(
+                f"Position size is missing or invalid for {instrument}"
+            )
         try:
-            instrument = self.get_instrument_name(symbol)
-            for p in self.get_positions():
-                if p.get("instrument_name") == instrument:
-                    size = float(p.get("size", 0) or 0)
-                    base_ccy = instrument.split("_")[0].upper()
-                    size_ccy = str(p.get("size_currency", "") or "").upper()
-                    if size_ccy and base_ccy and size_ccy != base_ccy:
-                        mark = float(p.get("mark_price", 0) or 0)
-                        if mark > 0:
-                            return size / mark
-                    return size
+            size = float(raw_size)
+        except (TypeError, ValueError) as exc:
+            raise PositionQueryError(
+                f"Position size is invalid for {instrument}"
+            ) from exc
+        if not math.isfinite(size):
+            raise PositionQueryError(
+                f"Position size is non-finite for {instrument}"
+            )
+        if size < 0:
+            raise PositionQueryError(
+                f"Position size must be a non-negative magnitude for {instrument}"
+            )
+
+        # Deribit reports size_currency as a numeric base-currency quantity,
+        # not a currency-code string. Use that native quantity for linear orders.
+        raw_base_size = position.get("size_currency")
+        if raw_base_size is None or isinstance(raw_base_size, bool):
+            raise PositionQueryError(
+                f"Base position quantity is missing or invalid for {instrument}"
+            )
+        try:
+            base_size = float(raw_base_size)
+        except (TypeError, ValueError) as exc:
+            raise PositionQueryError(
+                f"Base position quantity is invalid for {instrument}"
+            ) from exc
+        if not math.isfinite(base_size):
+            raise PositionQueryError(
+                f"Base position quantity is non-finite for {instrument}"
+            )
+        if base_size < 0:
+            raise PositionQueryError(
+                f"Base position quantity must be non-negative for {instrument}"
+            )
+
+        direction = position.get("direction")
+        size = abs(size)
+        base_size = abs(base_size)
+
+        if size == 0 and base_size == 0 and direction == "zero":
             return 0.0
-        except Exception as e:
-            log.warning(f"  get_position_size {symbol}: {e}")
+
+        if size == 0 or base_size == 0:
+            raise PositionQueryError(
+                f"Position size and base quantity are inconsistent for {instrument}"
+            )
+
+        if direction not in ("buy", "sell"):
+            raise PositionQueryError(
+                f"Position direction is missing or invalid for {instrument}"
+            )
+
+        return base_size if direction == "buy" else -base_size
+
+    def get_position_size(self, symbol: str) -> float:
+        """Return a verified position size; raise when the exchange read is uncertain.
+
+        Zero is returned only after get_positions() has verified every configured
+        settlement-currency query successfully and no matching position exists.
+        """
+        instrument = self.get_instrument_name(symbol)
+        if not instrument or not isinstance(instrument, str):
+            raise PositionQueryError(
+                f"Cannot resolve a Deribit instrument for symbol {symbol!r}"
+            )
+
+        matches = [
+            position
+            for position in self.get_positions()
+            if position.get("instrument_name") == instrument
+        ]
+        if not matches:
             return 0.0
+        if len(matches) != 1:
+            raise PositionQueryError(
+                f"Position snapshot contains duplicate rows for {instrument}"
+            )
+        return self.position_size_from_record(matches[0])
 
     def get_all_balances(self) -> dict:
         balances = {}
@@ -652,15 +741,93 @@ class DeribitClient:
         return round(sum(v["equity_usd"] for v in self.get_all_balances().values()), 2)
 
     def get_positions(self) -> list:
-        """Isolated position queries prioritizing USDC linear settlement."""
+        """Return a complete, verified position snapshot or raise PositionQueryError.
+
+        A partial response must never be interpreted as a flat account. Any
+        failed currency query or malformed row invalidates the whole snapshot.
+        """
         positions = []
-        for cur in ["USDC", "BTC", "ETH"]:
+        seen_instruments: set[str] = set()
+        failures: dict[str, Exception] = {}
+        for cur in ("USDC", "BTC", "ETH"):
             try:
-                r = self._get("/private/get_positions", {"currency": cur, "kind": "future"})
-                if isinstance(r, list):
-                    positions.extend(p for p in r if float(p.get("size", 0) or 0) != 0)
-            except Exception as e:
-                log.debug(f"  get_positions note for {cur}: {e}")
+                response = self._get(
+                    "/private/get_positions",
+                    {"currency": cur, "kind": "future"},
+                )
+                if not isinstance(response, list):
+                    raise ValueError("unexpected response type")
+
+                currency_positions = []
+                for position in response:
+                    if not isinstance(position, dict):
+                        raise ValueError("position row is not an object")
+
+                    instrument = position.get("instrument_name")
+                    if not isinstance(instrument, str) or not instrument.strip():
+                        raise ValueError("position instrument name is invalid")
+                    if instrument in seen_instruments:
+                        raise ValueError("duplicate position instrument")
+                    seen_instruments.add(instrument)
+
+                    raw_size = position.get("size")
+                    if raw_size is None or isinstance(raw_size, bool):
+                        raise ValueError("position size is missing or invalid")
+                    try:
+                        size = float(raw_size)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("position size is invalid") from exc
+                    if not math.isfinite(size):
+                        raise ValueError("position size is non-finite")
+                    if size < 0:
+                        raise ValueError("position size must be non-negative")
+
+                    direction = position.get("direction")
+                    if direction not in ("buy", "sell", "zero"):
+                        raise ValueError("position direction is missing or invalid")
+
+                    raw_base_size = position.get("size_currency")
+                    if size == 0 and direction == "zero" and raw_base_size is None:
+                        continue
+                    if raw_base_size is None or isinstance(raw_base_size, bool):
+                        raise ValueError("position base quantity is missing or invalid")
+                    try:
+                        base_size = float(raw_base_size)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("position base quantity is invalid") from exc
+                    if not math.isfinite(base_size):
+                        raise ValueError("position base quantity is non-finite")
+                    if base_size < 0:
+                        raise ValueError("position base quantity must be non-negative")
+
+                    if size == 0 and base_size == 0 and direction == "zero":
+                        continue
+                    if size == 0 or base_size == 0 or direction == "zero":
+                        raise ValueError(
+                            "position size, base quantity, and direction are inconsistent"
+                        )
+
+                    currency_positions.append(position)
+                positions.extend(currency_positions)
+            except Exception as exc:
+                # Do not include raw exception text; HTTP/API errors may contain
+                # request parameters. Preserve only currency and exception type.
+                failures[cur] = exc
+                log.warning(
+                    "Deribit position query failed for currency %s (%s); "
+                    "complete snapshot unavailable",
+                    cur,
+                    type(exc).__name__,
+                )
+
+        if failures:
+            failed = tuple(failures)
+            message = (
+                "Incomplete Deribit position snapshot; failed currencies: "
+                + ", ".join(failed)
+            )
+            raise PositionQueryError(message, failed_currencies=failed) from None
+
         return positions
 
     def get_order(self, order_id: str) -> dict:

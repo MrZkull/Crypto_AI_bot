@@ -648,23 +648,25 @@ def _check_funding_rate(deribit, symbol: str, signal: str) -> float:
         return 0.0
 
 def _wait_for_position(deribit, symbol: str, side: str, entry_oid: str, timeout: float = 8.0) -> bool:
+    """Confirm a position from a successful position read; order status is not enough."""
     deadline = time.time() + timeout
-    step     = 0.5
+    step = 0.5
     while time.time() < deadline:
         time.sleep(step)
         try:
             size = deribit.get_position_size(symbol)
-            if abs(size) > 0:
-                log.info(f"  ✅ Position confirmed: {symbol} size={size}")
-                return True
-        except Exception: pass
-        if entry_oid:
-            try:
-                chk = deribit.get_order(entry_oid)
-                if chk.get("order_state", "") == "filled": return True
-            except Exception: pass
+        except Exception as exc:
+            log.critical(
+                "  %s: position verification failed (%s); refusing to treat order status as a position",
+                symbol,
+                type(exc).__name__,
+            )
+            return False
+        if abs(size) > 0:
+            log.info(f"  ✅ Position confirmed: {symbol} size={size}")
+            return True
         step = min(step * 1.5, 2.0)
-    log.warning(f"  ⚠️ {symbol}: position not confirmed after {timeout}s")
+    log.critical(f"  {symbol}: position not confirmed after {timeout}s — FAIL-CLOSED")
     return False
 
 def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, label: str, trade: dict, key: str, dec: int) -> str:
@@ -710,7 +712,13 @@ def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, 
             return ""
 
     except Exception as e:
-        log.debug(f"  {label} pre-check {symbol}: {e}")
+        log.warning(
+            "  %s pre-check %s failed (%s); refusing replacement order",
+            label,
+            symbol,
+            type(e).__name__,
+        )
+        return ""
 
     # ── 3. PLACE ORDER WITH REFINED CAPACITY ──
     try:
@@ -748,20 +756,29 @@ def _get_safe_close_info(deribit: DeribitClient, symbol: str, trade: dict) -> tu
     for attempt in range(2):
         try:
             actual_pos = deribit.get_position_size(symbol)
-            if abs(actual_pos) > 0:
-                close_side = "SELL" if actual_pos > 0 else "BUY"
-                close_qty = deribit.round_amount(symbol, abs(actual_pos))
-                return close_side, close_qty
-        except Exception as e:
-            log.debug(f"  _get_safe_close_info {symbol} attempt {attempt+1} failed: {e}")
-            if attempt == 0: time.sleep(0.3)
+            close_side = "SELL" if actual_pos > 0 else "BUY"
+            if abs(actual_pos) <= 1e-8:
+                # A verified flat result is different from a failed position read.
+                return close_side, 0.0
+            close_qty = deribit.round_amount(symbol, abs(actual_pos))
+            if close_qty <= 0:
+                return close_side, 0.0
+            return close_side, close_qty
+        except Exception as exc:
+            log.warning(
+                "  _get_safe_close_info %s attempt %s failed (%s)",
+                symbol,
+                attempt + 1,
+                type(exc).__name__,
+            )
+            if attempt == 0:
+                time.sleep(0.3)
 
-    signal = trade.get("signal", "BUY")
-    close_side = "SELL" if signal == "BUY" else "BUY"
-    recorded_qty = float(trade.get("qty_tp2", 0)) if trade.get("tp1_hit") else float(trade.get("qty", 0))
-    return close_side, recorded_qty
+    raise RuntimeError(
+        f"Cannot verify Deribit position for {symbol}; refusing tracked-quantity close fallback"
+    ) from None
 
-def _verify_actually_closed(deribit: DeribitClient, symbol: str, tolerance: float = 0.01) -> bool:
+def _verify_actually_closed(deribit: DeribitClient, symbol: str, tolerance: float = 1e-8) -> bool:
     try:
         remaining = abs(deribit.get_position_size(symbol))
         return remaining <= tolerance
@@ -1686,8 +1703,12 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
     try:
         real_pos = abs(deribit.get_position_size(symbol))
     except Exception as e:
-        real_pos = 0.0
-        log.debug(f"  {symbol}: real position check failed ({e})")
+        log.critical(
+            "  %s: real position check failed (%s) — FAIL-CLOSED, skip entry",
+            symbol,
+            type(e).__name__,
+        )
+        return False
 
     if real_pos >= min_lot:
         log.warning(f"  🚫 {symbol}: real exchange position ({real_pos}) >= min lot ({min_lot}) — SKIPPING entry.")
@@ -1837,11 +1858,27 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
             log.critical(f"  🚨 {symbol}: NO AUTHORITATIVE ENTRY FILL — refusing fabricated P&L/risk state")
             try:
                 emergency_pos = abs(deribit.get_position_size(symbol))
-                if emergency_pos > 0:
+            except Exception as read_error:
+                log.critical(
+                    "  %s: position read failed after unreconciled entry fill (%s); "
+                    "using reduce-only order quantity as recovery attempt",
+                    symbol,
+                    type(read_error).__name__,
+                )
+                emergency_pos = abs(float(eo.get("filled_amount", 0) or total_q))
+            if emergency_pos > 0:
+                try:
                     deribit.place_market_order(symbol, sl_side, emergency_pos, reduce_only=True)
-                    log.critical(f"  🚨 {symbol}: emergency flattened {emergency_pos} after unreconciled entry fill")
-            except Exception as flatten_e:
-                log.critical(f"  🚨🚨 {symbol}: emergency flatten after unreconciled fill FAILED: {flatten_e}")
+                    if _verify_actually_closed(deribit, symbol):
+                        log.critical("  %s: emergency reduce-only recovery verified flat", symbol)
+                    else:
+                        log.critical("  %s: emergency reduce-only recovery unverified; manual inspection required", symbol)
+                except Exception as flatten_e:
+                    log.critical(
+                        "  %s: emergency reduce-only recovery failed (%s); manual inspection required",
+                        symbol,
+                        type(flatten_e).__name__,
+                    )
             return False
         
         o_state = eo.get("order_state", "").lower()
@@ -1859,7 +1896,26 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         
         position_confirmed = _wait_for_position(deribit, symbol, side, order_ids.get("entry", ""))
         if not position_confirmed:
-            log.warning(f"  ⚠️ {symbol}: position unconfirmed — SL/TP will retry next scan")
+            log.critical(
+                "  %s: filled entry lacks a verified position snapshot; "
+                "refusing bracket deployment and attempting reduce-only recovery",
+                symbol,
+            )
+            try:
+                recovery_qty = abs(float(eo.get("filled_amount", 0) or total_q))
+                if recovery_qty > 0:
+                    deribit.place_market_order(symbol, sl_side, recovery_qty, reduce_only=True)
+                    if _verify_actually_closed(deribit, symbol):
+                        log.critical("  %s: reduce-only recovery verified flat", symbol)
+                    else:
+                        log.critical("  %s: reduce-only recovery was not verified; manual review required", symbol)
+            except Exception as recovery_error:
+                log.critical(
+                    "  %s: reduce-only recovery failed (%s); manual exchange inspection required",
+                    symbol,
+                    type(recovery_error).__name__,
+                )
+            return False
 
         if signal == "BUY":
             recomputed_stop = deribit.round_price(symbol, actual_entry - atr * effective_stop_mult)
@@ -1899,7 +1955,21 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 if emergency_pos > 0:
                     deribit.place_market_order(symbol, sl_side, emergency_pos, reduce_only=True)
             except Exception as flatten_e:
-                log.critical(f"  🚨🚨 {symbol}: risk-invariant emergency flatten FAILED: {flatten_e}")
+                log.critical(
+                    "  %s: risk-invariant position read failed (%s); attempting reduce-only fallback quantity",
+                    symbol,
+                    type(flatten_e).__name__,
+                )
+                try:
+                    deribit.place_market_order(symbol, sl_side, total_q, reduce_only=True)
+                    if not _verify_actually_closed(deribit, symbol):
+                        log.critical("  %s: risk-invariant fallback closure is unverified; manual inspection required", symbol)
+                except Exception as fallback_e:
+                    log.critical(
+                        "  %s: risk-invariant reduce-only fallback failed (%s); manual inspection required",
+                        symbol,
+                        type(fallback_e).__name__,
+                    )
             return False
 
         tick = deribit.get_tick_size(symbol)
@@ -1909,15 +1979,67 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
         sl_qty = total_q
         try:
             actual_pos_size = abs(deribit.get_position_size(symbol))
-            if actual_pos_size >= min_lot:
-                sl_qty = actual_pos_size
-                if actual_pos_size < total_q:
-                    qty_tp1 = min(qty_tp1, actual_pos_size)
-                    qty_tp2 = min(qty_tp2, max(0.0, actual_pos_size - qty_tp1))
-                    qty_tp1 = deribit.round_amount(symbol, qty_tp1)
-                    qty_tp2 = deribit.round_amount(symbol, qty_tp2)
+            if actual_pos_size < min_lot:
+                log.critical(
+                    "  %s: verified post-fill position %.8f is below minimum lot %.8f; refusing bracket deployment",
+                    symbol,
+                    actual_pos_size,
+                    min_lot,
+                )
+                if actual_pos_size > 0:
+                    try:
+                        deribit.place_market_order(
+                            symbol, sl_side, actual_pos_size, reduce_only=True
+                        )
+                        if _verify_actually_closed(deribit, symbol):
+                            log.critical(
+                                "  %s: sub-lot reduce-only recovery verified flat",
+                                symbol,
+                            )
+                        else:
+                            log.critical(
+                                "  %s: sub-lot reduce-only recovery unverified; "
+                                "manual exchange inspection required",
+                                symbol,
+                            )
+                    except Exception as recovery_error:
+                        log.critical(
+                            "  %s: sub-lot reduce-only recovery failed (%s); "
+                            "manual exchange inspection required",
+                            symbol,
+                            type(recovery_error).__name__,
+                        )
+                else:
+                    log.critical(
+                        "  %s: verified flat after fill; no brackets deployed",
+                        symbol,
+                    )
+                return False
+            sl_qty = actual_pos_size
+            if actual_pos_size < total_q:
+                qty_tp1 = min(qty_tp1, actual_pos_size)
+                qty_tp2 = min(qty_tp2, max(0.0, actual_pos_size - qty_tp1))
+                qty_tp1 = deribit.round_amount(symbol, qty_tp1)
+                qty_tp2 = deribit.round_amount(symbol, qty_tp2)
         except Exception as pos_e:
-            log.debug(f"  Position size check: {pos_e}")
+            log.critical(
+                "  %s: post-fill position read failed (%s); refusing bracket deployment and attempting reduce-only recovery",
+                symbol,
+                type(pos_e).__name__,
+            )
+            try:
+                deribit.place_market_order(symbol, sl_side, total_q, reduce_only=True)
+                if _verify_actually_closed(deribit, symbol):
+                    log.critical("  %s: reduce-only recovery verified flat", symbol)
+                else:
+                    log.critical("  %s: reduce-only recovery not verified; manual exchange inspection required", symbol)
+            except Exception as recovery_error:
+                log.critical(
+                    "  %s: reduce-only recovery failed (%s); manual exchange inspection required",
+                    symbol,
+                    type(recovery_error).__name__,
+                )
+            return False
 
         order_plan = [("SL", sl_qty, sl_limit, stop, "stop_loss"), ("TP1", qty_tp1, tp1, None, "tp1")]
         if qty_tp2 > 0:
@@ -2147,13 +2269,29 @@ def check_open_trades(deribit: DeribitClient):
 
     live_positions = set()
     try:
-        for p in deribit.get_positions():
+        verified_positions = deribit.get_positions()
+        for p in verified_positions:
             if float(p.get("size", 0)) != 0:
                 inst = p.get("instrument_name", "")
-                base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-                live_positions.add(f"{base}USDT")
+                if not isinstance(inst, str) or not inst.endswith("_USDC-PERPETUAL"):
+                    continue
+                base = inst.split("_", 1)[0]
+                symbol = f"{base}USDT"
+                if deribit.get_instrument_name(symbol) != inst:
+                    log.warning(
+                        "  %s: position does not match the bot's linear instrument mapping; "
+                        "not associating it with %s",
+                        inst,
+                        symbol,
+                    )
+                    continue
+                live_positions.add(symbol)
     except Exception as e:
-        log.warning(f"  Could not fetch live positions: {e}")
+        log.error(
+            "  Open-trade management skipped: live position snapshot unavailable (%s)",
+            type(e).__name__,
+        )
+        return
 
     for symbol, trade in list(trades.items()):
         if trade.get("closed"):
@@ -2186,7 +2324,15 @@ def check_open_trades(deribit: DeribitClient):
 
         risk_usd = float(trade.get("risk_usd", 0))
         if risk_usd > 0:
-            close_side, mae_qty = _get_safe_close_info(deribit, symbol, trade)
+            try:
+                close_side, mae_qty = _get_safe_close_info(deribit, symbol, trade)
+            except Exception as position_error:
+                log.error(
+                    "  %s: MAE management skipped because position could not be verified (%s)",
+                    symbol,
+                    type(position_error).__name__,
+                )
+                continue
             mae_diff = (live - entry) if signal == "BUY" else (entry - live)
             mae_pnl  = round(mae_diff * mae_qty, 4)
 
@@ -2311,12 +2457,15 @@ def check_open_trades(deribit: DeribitClient):
                     fill2   = fp(o, tp2_p) if (tp2_order_filled or tp2_partial) else live
                     pnl2    = _pnl(trade, fill2, "tp2")
 
+                    tp1_was_hit = bool(trade.get("tp1_hit"))
+                    tp1_filled_during_check = False
                     tp1_leftover_pnl = 0.0
                     if not trade.get("tp1_hit"):
                         tp1_o = _safe_get_order(deribit, str(oids.get("tp1", "")))
                         tp1_really_filled = deribit.is_order_filled(tp1_o)
                         if tp1_really_filled:
                             trade["tp1_hit"] = True
+                            tp1_filled_during_check = True
                         else:
                             qty_t1  = float(trade.get("qty_tp1", 0))
                             tp_side = "SELL" if signal == "BUY" else "BUY"
@@ -2333,6 +2482,39 @@ def check_open_trades(deribit: DeribitClient):
                             except Exception as le:
                                 log.error(f"  🚨 {symbol}: leftover TP1 close failed: {le}")
                             trade["tp1_hit"] = True
+
+                    if not _verify_actually_closed(deribit, symbol):
+                        # TP2 implies an exit, but a residual may remain after a
+                        # partial fill or failed TP1-leftover recovery. Retry only
+                        # from a fresh, verified position quantity.
+                        try:
+                            residual_side, residual_qty = _get_safe_close_info(
+                                deribit, symbol, trade
+                            )
+                            if residual_qty > 0:
+                                deribit.place_market_order(
+                                    symbol,
+                                    residual_side,
+                                    residual_qty,
+                                    reduce_only=True,
+                                )
+                        except Exception as residual_error:
+                            log.critical(
+                                "  %s: TP2 residual close could not be verified (%s); "
+                                "trade tracking retained",
+                                symbol,
+                                type(residual_error).__name__,
+                            )
+
+                        if not _verify_actually_closed(deribit, symbol):
+                            if not tp1_was_hit and not tp1_filled_during_check:
+                                trade["tp1_hit"] = False
+                            log.critical(
+                                "  %s: TP2 observed but exchange is not verified flat; "
+                                "retaining trade tracking",
+                                symbol,
+                            )
+                            continue
 
                     pnl2 = round(pnl2 + tp1_leftover_pnl, 4)
                     trade["tp2_hit"] = True
@@ -2357,7 +2539,7 @@ def check_open_trades(deribit: DeribitClient):
                 if not sl_hit and sl_state == "not_found":
                     try:
                         real_pos_size = abs(deribit.get_position_size(symbol))
-                        already_flat  = real_pos_size <= 0.01
+                        already_flat  = real_pos_size <= 1e-8
                     except Exception: already_flat = False
                     if already_flat: sl_hit = True
 
@@ -2435,8 +2617,13 @@ def check_stale_trades(deribit: DeribitClient):
             pos_size = abs(deribit.get_position_size(symbol))
             if pos_size <= 0.0001:
                 continue
-        except Exception:
-            pass
+        except Exception as position_error:
+            log.error(
+                "  %s: position read unavailable; stale-time exit deferred (%s)",
+                symbol,
+                type(position_error).__name__,
+            )
+            continue
 
         try:
             opened_str = str(trade.get("opened_at", "")).replace("Z", "+00:00")
@@ -2454,9 +2641,9 @@ def check_stale_trades(deribit: DeribitClient):
         log.warning(f"  ⏰ {symbol}: {age_h:.1f}h exceeds {max_allowed_age}h ({tier_label}) — time exit")
 
         try:
-            _cancel_all_open_orders_for_symbol(deribit, symbol)
-            live = deribit.get_live_price(symbol)
             close_side, close_qty = _get_safe_close_info(deribit, symbol, trade)
+            live = deribit.get_live_price(symbol)
+            _cancel_all_open_orders_for_symbol(deribit, symbol)
             if close_qty > 0:
                 try:
                     deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
@@ -2482,11 +2669,30 @@ def clean_ghost_trades(deribit: DeribitClient):
     trades = load_trades()
     if not trades: return
     live_pos = {}
-    for p in deribit.get_positions():
+    try:
+        verified_positions = deribit.get_positions()
+    except Exception as e:
+        log.error(
+            "  Ghost-trade cleanup skipped: live position snapshot unavailable (%s)",
+            type(e).__name__,
+        )
+        return
+    for p in verified_positions:
         if float(p.get("size", 0)) != 0:
             inst = p.get("instrument_name", "")
-            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-            live_pos[f"{base}USDT"] = True
+            if not isinstance(inst, str) or not inst.endswith("_USDC-PERPETUAL"):
+                continue
+            base = inst.split("_", 1)[0]
+            symbol = f"{base}USDT"
+            if deribit.get_instrument_name(symbol) != inst:
+                log.warning(
+                    "  %s: position does not match the bot's linear instrument mapping; "
+                    "not associating it with %s",
+                    inst,
+                    symbol,
+                )
+                continue
+            live_pos[symbol] = True
 
     to_remove = []
     for symbol, trade in trades.items():
@@ -2508,14 +2714,30 @@ def clean_ghost_trades(deribit: DeribitClient):
             continue
             
         if float(trade.get("score", 1)) == 0 and float(trade.get("confidence", 1)) == 0:
-            try: actual = deribit.get_position_size(symbol)
-            except Exception: actual = 0
+            try:
+                actual = deribit.get_position_size(symbol)
+            except Exception as e:
+                log.error(
+                    "  Broken ghost record %s retained: position read unavailable (%s)",
+                    symbol,
+                    type(e).__name__,
+                )
+                continue
             if abs(actual) > 0:
                 try:
                     _cancel_all_open_orders_for_symbol(deribit, symbol)
                     close_side = "SELL" if actual > 0 else "BUY"
                     deribit.place_market_order(symbol, close_side, abs(actual), reduce_only=True)
-                except Exception: pass
+                    if not _verify_actually_closed(deribit, symbol):
+                        log.error("  Broken ghost record %s retained: closure not verified", symbol)
+                        continue
+                except Exception as close_error:
+                    log.error(
+                        "  Broken ghost record %s retained: reduce-only close failed (%s)",
+                        symbol,
+                        type(close_error).__name__,
+                    )
+                    continue
             _close_record(trade, float(trade.get("entry", 0)), 0.0, "Ghost — broken record")
             to_remove.append(symbol)
             continue
@@ -2853,20 +3075,44 @@ def _run_execution_scan_locked():
 
         try:
             raw_positions = deribit.get_positions()
+            # Normalize the entire snapshot before taking any action. If one row
+            # is malformed, do not partially reconcile/flatten the account.
+            normalized_positions = []
+            for position in raw_positions:
+                instrument = position.get("instrument_name", "")
+                if not isinstance(instrument, str) or not instrument:
+                    raise ValueError("position row has no valid instrument name")
+
+                # This bot reconciles only mapped linear USDC perpetuals.
+                # Never alias an inverse contract such as BTC-PERPETUAL to BTCUSDT.
+                if not instrument.endswith("_USDC-PERPETUAL"):
+                    log.warning(
+                        "  [3c] unmanaged/non-linear position %s left untouched; "
+                        "orphan reconciliation is restricted to linear USDC perpetuals",
+                        instrument,
+                    )
+                    continue
+
+                base = instrument.split("_", 1)[0]
+                symbol = f"{base}USDT"
+                if deribit.get_instrument_name(symbol) != instrument:
+                    raise ValueError(
+                        f"position instrument does not match bot symbol mapping: {instrument}"
+                    )
+                size = deribit.position_size_from_record(position)
+                normalized_positions.append((symbol, size))
             fetch_succeeded = True
         except Exception as e:
             raw_positions = []
+            normalized_positions = []
             fetch_succeeded = False
-            log.warning(f"  [3c] could not fetch live positions: {e}")
+            log.warning(
+                "  [3c] live position snapshot/normalization failed (%s); "
+                "preserving orphan tracker and taking no flatten action",
+                type(e).__name__,
+            )
 
-        for p in raw_positions:
-            inst = p.get("instrument_name", "")
-            if not inst:
-                continue
-            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-            sym  = f"{base}USDT"
-            size = deribit.get_position_size(sym)
-
+        for sym, size in normalized_positions:
             if abs(size) <= 0.0001:
                 continue
 
