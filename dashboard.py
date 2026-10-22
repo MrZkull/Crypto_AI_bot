@@ -1337,48 +1337,148 @@ def api_scan():
 
 @app.route("/api/kill_switch", methods=["POST", "OPTIONS"])
 def api_kill_switch():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
     client = deribit_client()
-    if not client: return jsonify({"ok": False, "error": "Deribit client not available"}), 500
+    if not client:
+        return jsonify({"ok": False, "error": "Deribit client unavailable"}), 500
+
     try:
         positions = client.get_positions()
-        cancelled, flattened = 0, 0
-        for p in positions:
-            inst = p.get("instrument_name", "")
-            base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-            sym = f"{base}USDT"
-            for o in client.get_open_orders(sym):
-                oid = str(o.get("order_id", ""))
-                if oid: client.cancel_order(oid); cancelled += 1
-            size = float(p.get("size", 0) or 0)
-            if abs(size) > 0.0005:
-                side = "SELL" if size > 0 else "BUY"
-                amount = client.round_amount(sym, abs(size))
-                if amount > 0:
-                    client.place_market_order(sym, side, amount, reduce_only=True)
-                    flattened += 1
-        return jsonify({"ok": True, "cancelled_orders": cancelled, "flattened_positions": flattened})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        cancelled = 0
+        flattened = 0
+        unverified = []
+        ignored = []
+
+        for position in positions:
+            instrument = position.get("instrument_name", "")
+            if (
+                not isinstance(instrument, str)
+                or not instrument.endswith("_USDC-PERPETUAL")
+            ):
+                ignored.append(instrument if isinstance(instrument, str) and instrument else "unknown")
+                continue
+
+            base = instrument.split("_", 1)[0]
+            symbol = f"{base}USDT"
+            if client.get_instrument_name(symbol) != instrument:
+                ignored.append(instrument)
+                continue
+
+            signed_size = client.position_size_from_record(position)
+            if abs(signed_size) <= 1e-8:
+                continue
+
+            amount = client.round_amount(symbol, abs(signed_size))
+            if amount <= 0:
+                unverified.append(symbol)
+                continue
+
+            close_side = "SELL" if signed_size > 0 else "BUY"
+            client.place_market_order(
+                symbol, close_side, amount, reduce_only=True
+            )
+
+            try:
+                remaining = client.get_position_size(symbol)
+            except Exception:
+                unverified.append(symbol)
+                continue
+
+            if abs(remaining) > 1e-8:
+                unverified.append(symbol)
+                continue
+
+            flattened += 1
+
+            # Cancel resting protection only after the close is verified.
+            try:
+                for order in client.get_open_orders(symbol):
+                    order_id = str(order.get("order_id", ""))
+                    if order_id:
+                        client.cancel_order(order_id)
+                        cancelled += 1
+            except Exception:
+                unverified.append(symbol)
+
+        unverified = sorted(set(unverified))
+        ignored = sorted(set(ignored))
+        success = not unverified and not ignored
+        return jsonify({
+            "ok": success,
+            "cancelled_orders": cancelled,
+            "flattened_positions": flattened,
+            "unverified_positions": unverified,
+            "ignored_unmanaged_positions": ignored,
+        }), (200 if success else 409)
+
+    except Exception as exc:
+        app.logger.error("Kill switch failed (%s)", type(exc).__name__)
+        return jsonify({
+            "ok": False,
+            "error": "Kill switch failed; exchange state requires manual inspection",
+        }), 500
 
 @app.route("/api/close_trade", methods=["POST", "OPTIONS"])
 def api_close_trade():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    data = request.get_json() or {}
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+    data = request.get_json(silent=True) or {}
     symbol = str(data.get("symbol", "")).strip().upper()
+    if not symbol:
+        return jsonify({"ok": False, "error": "Symbol is required"}), 400
+
     client = deribit_client()
-    if not client: return jsonify({"ok": False, "error": "Client unavailable"}), 500
+    if not client:
+        return jsonify({"ok": False, "error": "Client unavailable"}), 500
+
     try:
-        pos = client.get_position_size(symbol)
-        if abs(pos) > 0.0005:
-            client.place_market_order(symbol, "SELL" if pos > 0 else "BUY", client.round_amount(symbol, abs(pos)), reduce_only=True)
+        position = client.get_position_size(symbol)
+        if abs(position) > 1e-8:
+            amount = client.round_amount(symbol, abs(position))
+            if amount <= 0:
+                return jsonify({
+                    "ok": False,
+                    "error": "No actionable close quantity; trade record retained",
+                }), 409
+
+            side = "SELL" if position > 0 else "BUY"
+            client.place_market_order(symbol, side, amount, reduce_only=True)
+
+            try:
+                remaining = client.get_position_size(symbol)
+            except Exception:
+                return jsonify({
+                    "ok": False,
+                    "error": "Close submitted, but flatness is unverified; trade record retained",
+                }), 503
+
+            if abs(remaining) > 1e-8:
+                return jsonify({
+                    "ok": False,
+                    "error": "Position remains after close attempt; trade record retained",
+                }), 409
+
+        # Do not remove local tracking before verified flatness and order cleanup.
+        for order in client.get_open_orders(symbol):
+            order_id = str(order.get("order_id", ""))
+            if order_id:
+                client.cancel_order(order_id)
+
         trades = get("trades.json", {})
         trades.pop(symbol, None)
         gh_push("trades.json", trades)
         bust("trades.json")
-        return jsonify({"ok": True, "status": "closed", "pnl": 0.0})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": True, "status": "closed", "pnl": 0.0}), 200
+
+    except Exception as exc:
+        app.logger.error("Close trade failed (%s)", type(exc).__name__)
+        return jsonify({
+            "ok": False,
+            "error": "Close failed; exchange state requires inspection",
+        }), 500
 
 @app.route("/health")
 def health():
