@@ -13,7 +13,8 @@ class TestPaperExecutionWorkflow(unittest.TestCase):
 
         self.assertIn("cron: '9 * * * *'", workflow)
         self.assertNotIn("cron: '9,24,39,54 * * * *'", workflow)
-        self.assertIn("python paper_execution.py", workflow)
+        self.assertIn("python paper_execution_v2.py", workflow)
+        self.assertIn("git add paper_state_v2.json paper_events_v2.jsonl", workflow)
         self.assertIn("permissions:\n  contents: write", workflow)
         self.assertNotIn("deribit", workflow.lower())
         self.assertNotIn("execute_trade", workflow)

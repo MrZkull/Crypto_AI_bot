@@ -1,0 +1,1876 @@
+#!/usr/bin/env python3
+"""Stage 2E v2 chronological paper execution and reconciliation.
+
+PAPER ONLY:
+- Consumes accepted production predictions from predictions.json.
+- Requires a valid Stage 2C Observation Contract.
+- Uses the existing closed-candle shadow lifecycle for TP1/TP2/SL.
+- Adds the fixed 24-bar prospective horizon as an EXPIRED outcome.
+- Never imports or calls the live exchange execution path.
+- Never mutates predictions.json or production trade state.
+
+The paper layer is intentionally separate from F08 evidence and from the
+candidate shadow state/ledger.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+import os
+import time
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from datetime import datetime, timezone
+from pathlib import Path
+
+from filelock import FileLock
+
+import candidate_market_monitor as monitor
+from execution_policy import fee, gross_pnl
+from market_data_integrity import (
+    observation_identity,
+    validate_observation_contract,
+)
+
+log = logging.getLogger(__name__)
+
+PAPER_STATE_FILE = Path("paper_state_v2.json")
+PAPER_EVENTS_FILE = Path("paper_events_v2.jsonl")
+PREDICTIONS_FILE = Path("predictions.json")
+
+PAPER_SCHEMA_VERSION = 2
+PAPER_POLICY_VERSION = "stage2e-v2"
+PAPER_EXECUTION_MODE = "PAPER_ONLY"
+
+PAPER_INITIAL_BALANCE_USD = 10_000.0
+PAPER_RISK_PER_TRADE = 0.03
+PAPER_MAX_OPEN_POSITIONS = 8
+PAPER_MAX_SAME_DIRECTION = 4
+
+PAPER_STOP_MULT = 2.5
+PAPER_TP1_MULT = 3.5
+PAPER_TP2_MULT = 7.5
+PAPER_FEE_RATE = 0.0006
+
+CANDLE_INTERVAL_MS = 15 * 60 * 1000
+PAPER_HORIZON_BARS = 24
+
+
+def _load_json(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _save_json_atomic(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(path) + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+
+
+def _read_events() -> list[dict]:
+    if not PAPER_EVENTS_FILE.exists():
+        return []
+
+    events = []
+    with PAPER_EVENTS_FILE.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"Corrupt paper event ledger at line {line_no}: {exc}"
+                ) from exc
+            if not isinstance(record, dict):
+                raise RuntimeError(
+                    f"Paper event at line {line_no} is not an object"
+                )
+            events.append(record)
+    return events
+
+
+def _event_exists(event_id: str) -> bool:
+    return any(
+        item.get("event_id") == event_id
+        for item in _read_events()
+    )
+
+
+def _append_event(event: dict) -> bool:
+    event_id = str(event.get("event_id") or "").strip()
+    if not event_id:
+        raise ValueError("Paper event requires event_id")
+
+    lock = FileLock(str(PAPER_EVENTS_FILE) + ".lock")
+    with lock:
+        if _event_exists(event_id):
+            return False
+
+        PAPER_EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with PAPER_EVENTS_FILE.open(
+            "a",
+            encoding="utf-8",
+            newline="\n",
+        ) as handle:
+            handle.write(
+                json.dumps(
+                    event,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+    return True
+
+
+def _new_state() -> dict:
+    initialized_ms = int(time.time() * 1000)
+    start_ms = initialized_ms + 1
+    initialized_at = datetime.fromtimestamp(
+        initialized_ms / 1000, timezone.utc
+    ).isoformat()
+
+    return {
+        "schema_version": PAPER_SCHEMA_VERSION,
+        "policy_version": PAPER_POLICY_VERSION,
+        "execution_mode": PAPER_EXECUTION_MODE,
+        "initial_balance_usd": PAPER_INITIAL_BALANCE_USD,
+        "risk_per_trade": PAPER_RISK_PER_TRADE,
+        "prospective_initialized_at_ms": initialized_ms,
+        "prospective_initialized_at_utc": initialized_at,
+        "prospective_start_time_ms": start_ms,
+        "prospective_start_at_utc": datetime.fromtimestamp(
+            start_ms / 1000, timezone.utc
+        ).isoformat(),
+        "prospective_baseline_max_prediction_generated_at_ms": None,
+        "positions": {},
+        "decisions": {},
+    }
+
+
+def _load_state_v1() -> dict:
+    state = _load_json(PAPER_STATE_FILE, None)
+    if not isinstance(state, dict) or not state:
+        return _new_state()
+
+    if state.get("schema_version") != PAPER_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Unsupported paper state schema: {state.get('schema_version')!r}"
+        )
+    if state.get("policy_version") != PAPER_POLICY_VERSION:
+        raise RuntimeError(
+            f"Paper policy mismatch: {state.get('policy_version')!r}"
+        )
+    if state.get("execution_mode") != PAPER_EXECUTION_MODE:
+        raise RuntimeError(
+            f"Paper execution mode mismatch: {state.get('execution_mode')!r}"
+        )
+
+    state.setdefault("positions", {})
+    state.setdefault("decisions", {})
+    return state
+
+
+def _save_state(state: dict) -> None:
+    lock = FileLock(str(PAPER_STATE_FILE) + ".lock")
+    with lock:
+        _save_json_atomic(PAPER_STATE_FILE, state)
+
+
+def _normalize_prediction_v1(prediction: dict) -> dict | None:
+    if not isinstance(prediction, dict):
+        return None
+
+    pred_id = str(prediction.get("pred_id") or "").strip()
+    signal = str(prediction.get("predicted_signal") or "").upper().strip()
+
+    if not pred_id or signal not in {"BUY", "SELL"}:
+        return None
+
+    if prediction.get("reject_reason") not in (None, ""):
+        return None
+
+    contract = prediction.get("observation_contract")
+    if not isinstance(contract, dict):
+        return None
+
+    validate_observation_contract(contract)
+    identity = tuple(observation_identity(contract))
+
+    logical_symbol = str(
+        prediction.get("logical_symbol") or ""
+    ).upper()
+    interval = str(prediction.get("interval") or "")
+
+    if identity[0] != logical_symbol:
+        raise ValueError(f"Prediction logical symbol mismatch: {pred_id}")
+    if identity[1] != int(prediction.get("open_time", 0)):
+        raise ValueError(f"Prediction observation timestamp mismatch: {pred_id}")
+    if identity[2] != interval:
+        raise ValueError(f"Prediction interval mismatch: {pred_id}")
+    if identity[3] != "binance" or identity[4] != "spot":
+        raise ValueError(
+            f"Non-canonical observation source in prediction: {pred_id}"
+        )
+
+    entry = float(prediction.get("entry_ref", 0.0))
+    atr = float(prediction.get("atr_ref", 0.0))
+
+    if not math.isfinite(entry) or entry <= 0:
+        raise ValueError(f"Invalid prediction entry_ref: {pred_id}")
+    if not math.isfinite(atr) or atr <= 0:
+        raise ValueError(f"Invalid prediction atr_ref: {pred_id}")
+
+    return {
+        "pred_id": pred_id,
+        "symbol": identity[0],
+        "side": signal,
+        "open_time": identity[1],
+        "interval": identity[2],
+        "entry_ref": entry,
+        "atr_ref": atr,
+        "observation_contract": contract,
+        "observation_identity": list(identity),
+        "was_executed_live": bool(prediction.get("was_executed", False)),
+        "model_version": prediction.get("model_version"),
+        "generated_at": prediction.get("generated_at"),
+    }
+
+
+def _latest_candle_open_time(candle: dict) -> int:
+    return int(candle["close_time"]) - CANDLE_INTERVAL_MS + 1
+
+
+def _candle_observation_identity(trade: dict, candle: dict) -> list:
+    """Build the canonical Binance Spot identity for a closed lifecycle candle."""
+    close_time = int(candle["close_time"])
+    derived_open_time = _latest_candle_open_time(candle)
+
+    supplied_open_time = candle.get("open_time")
+    if supplied_open_time is not None:
+        supplied_open_time = int(supplied_open_time)
+        if supplied_open_time != derived_open_time:
+            raise ValueError(
+                f"Lifecycle candle open/close mismatch for {trade['pred_id']}"
+            )
+
+    return [
+        str(trade["logical_symbol"]).upper(),
+        derived_open_time,
+        str(trade["interval"]),
+        "binance",
+        "spot",
+    ]
+
+
+def _active_positions(state: dict) -> list[dict]:
+    return [
+        value
+        for value in state.get("positions", {}).values()
+        if value.get("status") == "ACTIVE"
+    ]
+
+
+def _symbol_is_active(state: dict, symbol: str) -> bool:
+    symbol = symbol.upper()
+    return any(
+        str(position.get("symbol", "")).upper() == symbol
+        for position in _active_positions(state)
+    )
+
+
+def _direction_count(state: dict, side: str) -> int:
+    return sum(
+        1
+        for position in _active_positions(state)
+        if str(position.get("side", "")).upper() == side
+    )
+
+
+def _build_position_v1(prediction: dict) -> dict:
+    entry = float(prediction["entry_ref"])
+    atr = float(prediction["atr_ref"])
+
+    if prediction["side"] == "BUY":
+        stop = entry - atr * PAPER_STOP_MULT
+        tp1 = entry + atr * PAPER_TP1_MULT
+        tp2 = entry + atr * PAPER_TP2_MULT
+    else:
+        stop = entry + atr * PAPER_STOP_MULT
+        tp1 = entry - atr * PAPER_TP1_MULT
+        tp2 = entry - atr * PAPER_TP2_MULT
+
+    stop_distance = abs(entry - stop)
+    initial_risk_usd = PAPER_INITIAL_BALANCE_USD * PAPER_RISK_PER_TRADE
+    qty = initial_risk_usd / stop_distance
+
+    values = (stop, tp1, tp2, qty, initial_risk_usd)
+    if not all(math.isfinite(float(value)) for value in values):
+        raise ValueError(
+            f"Non-finite paper brackets for {prediction['pred_id']}"
+        )
+    if min(stop, tp1, tp2, qty, initial_risk_usd) <= 0:
+        raise ValueError(
+            f"Invalid paper brackets for {prediction['pred_id']}"
+        )
+
+    return {
+        "pred_id": prediction["pred_id"],
+        "symbol": prediction["symbol"],
+        "logical_symbol": prediction["symbol"],
+        "side": prediction["side"],
+        "open_time": prediction["open_time"],
+        "interval": prediction["interval"],
+        "observation_contract": prediction["observation_contract"],
+        "observation_identity": prediction["observation_identity"],
+        "entry_observation_open_time": prediction["open_time"],
+        "entry_observation_close_time": int(
+            prediction["observation_contract"]["close_time"]
+        ),
+        "entry_observation_identity": list(
+            prediction["observation_identity"]
+        ),
+        "model_version": prediction.get("model_version"),
+        "generated_at": prediction.get("generated_at"),
+
+        "opened_at_ms": int(time.time() * 1000),
+        "execution_mode": PAPER_EXECUTION_MODE,
+        "paper_policy_version": PAPER_POLICY_VERSION,
+
+        "entry_price": prediction["entry_ref"],
+        "entry_price_source": "SIGNAL_CLOSE_PROXY",
+        "simulated_entry": prediction["entry_ref"],
+        "entry_ref": prediction["entry_ref"],
+        "atr_ref": prediction["atr_ref"],
+        "stop": stop,
+        "tp1": tp1,
+        "tp2": tp2,
+
+        "qty": qty,
+        "remaining_qty": qty,
+        "initial_risk_usd": initial_risk_usd,
+        "entry_fee_usd": fee(
+            prediction["entry_ref"] * qty,
+            PAPER_FEE_RATE,
+        ),
+
+        "state": "OPEN",
+        "status": "ACTIVE",
+        "bars_processed": 0,
+        "last_processed_candle_close_time": int(prediction["observation_contract"]["close_time"]),
+
+        "live_was_executed_at_signal": prediction["was_executed_live"],
+    }
+
+
+def _decision_event_id(pred_id: str, reason: str) -> str:
+    return f"DECISION:{pred_id}:{reason}"
+
+
+def _lifecycle_event_id(
+    pred_id: str,
+    event_name: str,
+    candle_close_time: int,
+) -> str:
+    return f"{event_name}:{pred_id}:{int(candle_close_time)}"
+
+
+def _record_decision(
+    state: dict,
+    pred: dict,
+    reason: str,
+    **extra,
+) -> None:
+    state["decisions"][pred["pred_id"]] = {
+        "status": reason,
+        "timestamp_ms": int(time.time() * 1000),
+        **extra,
+    }
+
+    _append_event({
+        "event": "PAPER_DECISION",
+        "event_id": _decision_event_id(pred["pred_id"], reason),
+        "reason": reason,
+        "pred_id": pred["pred_id"],
+        "symbol": pred["symbol"],
+        "side": pred["side"],
+        "open_time": pred["open_time"],
+        "observation_identity": pred["observation_identity"],
+        "execution_mode": PAPER_EXECUTION_MODE,
+        "paper_policy_version": PAPER_POLICY_VERSION,
+        **extra,
+    })
+
+
+def _new_decision_report_v1() -> dict:
+    return {
+        "records_loaded": 0,
+        "valid_predictions": 0,
+        "rejected_predictions": 0,
+        "rejection_reasons": {},
+        "already_processed": 0,
+        "waiting_for_signal_candle": 0,
+        "missed_entry_window": 0,
+        "duplicate_symbol_active": 0,
+        "capacity_full": 0,
+        "direction_limit": 0,
+        "opened": 0,
+    }
+
+
+def _new_lifecycle_report_v1() -> dict:
+    return {
+        "active_positions_seen": 0,
+        "candles_processed": 0,
+        "no_candle_available": 0,
+        "already_consumed_candle": 0,
+        "events_emitted": 0,
+        "tp1_partial": 0,
+        "updated": 0,
+        "closed": 0,
+        "closed_by_reason": {},
+        "expired": 0,
+    }
+
+
+def _open_eligible_predictions_v1(
+    state: dict,
+    predictions: list[dict],
+    report: dict | None = None,
+) -> tuple[bool, list[dict]]:
+    dirty = False
+    actions: list[dict] = []
+    report = report if report is not None else _new_decision_report()
+    report["records_loaded"] = len(predictions)
+
+    normalized = []
+    for raw in predictions:
+        try:
+            pred = _normalize_prediction(raw)
+        except (TypeError, ValueError, KeyError):
+            report["rejected_predictions"] += 1
+            key = "MALFORMED_OR_INVALID"
+            report["rejection_reasons"][key] = report["rejection_reasons"].get(key, 0) + 1
+            continue
+        if pred is not None:
+            report["valid_predictions"] += 1
+            normalized.append(pred)
+        else:
+            report["rejected_predictions"] += 1
+            key = (
+                "EXPLICIT_REJECT"
+                if isinstance(raw, dict) and raw.get("reject_reason") not in (None, "")
+                else "INVALID_PREDICTION"
+            )
+            report["rejection_reasons"][key] = report["rejection_reasons"].get(key, 0) + 1
+
+    normalized.sort(
+        key=lambda item: (item["open_time"], item["pred_id"])
+    )
+
+    if normalized:
+        latest = normalized[-1]
+        report["latest_prediction"] = {
+            "pred_id": latest["pred_id"],
+            "symbol": latest["symbol"],
+            "side": latest["side"],
+            "open_time": latest["open_time"],
+            "generated_at": latest.get("generated_at"),
+        }
+    else:
+        report["latest_prediction"] = None
+
+    for pred in normalized:
+        pred_id = pred["pred_id"]
+
+        if pred_id in state["positions"] or pred_id in state["decisions"]:
+            report["already_processed"] += 1
+            continue
+
+        active = _active_positions(state)
+
+        if len(active) >= PAPER_MAX_OPEN_POSITIONS:
+            report["capacity_full"] += 1
+            continue
+
+        if _symbol_is_active(state, pred["symbol"]):
+            report["duplicate_symbol_active"] += 1
+            _record_decision(
+                state,
+                pred,
+                "DUPLICATE_SYMBOL_ACTIVE",
+            )
+            dirty = True
+            continue
+
+        if _direction_count(state, pred["side"]) >= PAPER_MAX_SAME_DIRECTION:
+            report["direction_limit"] += 1
+            continue
+
+        candle = monitor.fetch_latest_candle(pred["symbol"])
+        if not candle:
+            report["waiting_for_signal_candle"] += 1
+            continue
+
+        latest_open_time = _latest_candle_open_time(candle)
+
+        if latest_open_time < pred["open_time"]:
+            report["waiting_for_signal_candle"] += 1
+            continue
+
+        # A production prediction is executable only on its exact signal candle.
+        # A later candle means the simulated entry window has been missed; never
+        # fabricate an entry at a later market price.
+        if latest_open_time > pred["open_time"]:
+            report["missed_entry_window"] += 1
+            _record_decision(
+                state,
+                pred,
+                "MISSED_ENTRY_WINDOW",
+                latest_closed_open_time=latest_open_time,
+            )
+            dirty = True
+            continue
+
+        position = _build_position(pred)
+        validate_observation_contract(
+            position["observation_contract"]
+        )
+
+        if tuple(position["observation_identity"]) != tuple(
+            observation_identity(position["observation_contract"])
+        ):
+            raise ValueError(
+                f"Paper observation identity mismatch: {pred_id}"
+            )
+
+        state["positions"][pred_id] = position
+        state["decisions"][pred_id] = {
+            "status": "OPENED",
+            "timestamp_ms": int(time.time() * 1000),
+        }
+
+        _append_event({
+            "event": "PAPER_POSITION_OPENED",
+            "event_id": f"OPEN:{pred_id}",
+            "pred_id": pred_id,
+            "symbol": pred["symbol"],
+            "side": pred["side"],
+            "open_time": pred["open_time"],
+            "entry_price": pred["entry_ref"],
+            "entry_price_source": "SIGNAL_CLOSE_PROXY",
+            "entry_observation_open_time": pred["open_time"],
+            "entry_observation_close_time": int(
+                pred["observation_contract"]["close_time"]
+            ),
+            "entry_observation_identity": list(
+                pred["observation_identity"]
+            ),
+            "atr_ref": pred["atr_ref"],
+            "stop": position["stop"],
+            "tp1": position["tp1"],
+            "tp2": position["tp2"],
+            "qty": position["qty"],
+            "initial_risk_usd": position["initial_risk_usd"],
+            "entry_fee_usd": position["entry_fee_usd"],
+            "observation_identity": pred["observation_identity"],
+            "execution_mode": PAPER_EXECUTION_MODE,
+            "paper_policy_version": PAPER_POLICY_VERSION,
+            "live_was_executed_at_signal": pred["was_executed_live"],
+        })
+
+        actions.append({
+            "action": "OPENED",
+            "pred_id": pred_id,
+            "symbol": pred["symbol"],
+        })
+        report["opened"] += 1
+        dirty = True
+
+    return dirty, actions
+
+
+def _expire_position(
+    trade: dict,
+    candle: dict,
+) -> dict:
+    """Close any remaining paper quantity at the horizon candle close."""
+    exit_price = float(candle["close"])
+    if not math.isfinite(exit_price) or exit_price <= 0:
+        raise ValueError(
+            f"Invalid expiry price for {trade['pred_id']}"
+        )
+
+    remaining_qty = float(
+        trade.get(
+            "remaining_qty",
+            trade.get("qty", 0.0),
+        )
+    )
+    if remaining_qty <= 0:
+        raise ValueError(
+            f"Invalid remaining quantity at expiry: {trade['pred_id']}"
+        )
+
+    final_gross = gross_pnl(
+        trade["side"],
+        float(trade["entry_price"]),
+        exit_price,
+        remaining_qty,
+    )
+    exit_fee = fee(
+        exit_price * remaining_qty,
+        PAPER_FEE_RATE,
+    )
+
+    total_gross = (
+        float(trade.get("tp1_realized_gross_pnl", 0.0))
+        + final_gross
+    )
+    total_fees = (
+        float(trade.get("entry_fee_usd", 0.0))
+        + float(trade.get("tp1_fee_usd", 0.0))
+        + exit_fee
+    )
+    net_pnl_usd = total_gross - total_fees
+    initial_risk_usd = float(trade["initial_risk_usd"])
+    net_r = net_pnl_usd / initial_risk_usd
+
+    trade.update({
+        "status": "CLOSED",
+        "state": "CLOSED",
+        "exit_price": exit_price,
+        "realized_gross_pnl": total_gross,
+        "final_exit_fee_usd": exit_fee,
+        "total_fees_usd": total_fees,
+        "net_pnl_usd": net_pnl_usd,
+        "net_r": net_r,
+        "exit_reason": "EXPIRED",
+        "remaining_qty": 0.0,
+        "final_exit_qty": remaining_qty,
+        "resolved_at_ms": int(time.time() * 1000),
+        "resolved_candle_close_time": int(candle["close_time"]),
+    })
+
+    return {
+        "event": "PAPER_EXPIRED",
+        "event_id": _lifecycle_event_id(
+            trade["pred_id"],
+            "PAPER_EXPIRED",
+            int(candle["close_time"]),
+        ),
+        "pred_id": trade["pred_id"],
+        "symbol": trade["symbol"],
+        "side": trade["side"],
+        "open_time": trade["open_time"],
+        "candle_close_time": int(candle["close_time"]),
+        "candle_open_time": _latest_candle_open_time(candle),
+        "candle_observation_identity": _candle_observation_identity(trade, candle),
+        "exit_price": exit_price,
+        "exit_reason": "EXPIRED",
+        "remaining_qty": remaining_qty,
+        "realized_gross_pnl": total_gross,
+        "total_fees_usd": total_fees,
+        "net_pnl_usd": net_pnl_usd,
+        "net_r": net_r,
+        "observation_identity": trade["observation_identity"],
+        "execution_mode": PAPER_EXECUTION_MODE,
+        "paper_policy_version": PAPER_POLICY_VERSION,
+    }
+
+
+def _monitor_open_positions_v1(
+    state: dict,
+    report: dict | None = None,
+) -> tuple[bool, list[dict]]:
+    dirty = False
+    actions: list[dict] = []
+    report = report if report is not None else _new_lifecycle_report()
+
+    for pred_id, trade in list(state["positions"].items()):
+        if trade.get("status") != "ACTIVE":
+            continue
+
+        report["active_positions_seen"] += 1
+        candle = monitor.fetch_latest_candle(str(trade["symbol"]))
+        if not candle:
+            report["no_candle_available"] += 1
+            continue
+
+        candle_close_time = int(candle["close_time"])
+        if candle_close_time <= int(
+            trade.get("last_processed_candle_close_time", 0)
+        ):
+            report["already_consumed_candle"] += 1
+            continue
+
+        report["candles_processed"] += 1
+        outcome = monitor.process_trade_candle(trade, candle)
+        candle_open_time = _latest_candle_open_time(candle)
+        candle_identity = _candle_observation_identity(trade, candle)
+        trade["last_observation_open_time"] = candle_open_time
+        trade["last_observation_close_time"] = candle_close_time
+        trade["last_observation_identity"] = candle_identity
+
+        trade["last_processed_candle_close_time"] = candle_close_time
+        trade["bars_processed"] = int(trade.get("bars_processed", 0)) + 1
+        # Persist candle-consumption progress even when the lifecycle itself
+        # produces no TP/SL/state event. Otherwise the same closed candle can
+        # be reprocessed on the next workflow run after an otherwise no-op bar.
+        dirty = True
+
+        lifecycle_events = outcome.get("events", [])
+        report["events_emitted"] += len(lifecycle_events)
+        for lifecycle_event in lifecycle_events:
+            event = dict(lifecycle_event)
+            if str(event.get("event", "")) == "PARTIAL_TP1_FILLED":
+                report["tp1_partial"] += 1
+            event.update({
+                "event_id": _lifecycle_event_id(
+                    pred_id,
+                    str(event.get("event", "LIFECYCLE")),
+                    candle_close_time,
+                ),
+                "pred_id": pred_id,
+                "symbol": trade["symbol"],
+                "side": trade["side"],
+                "open_time": trade["open_time"],
+                "candle_open_time": candle_open_time,
+                "candle_close_time": candle_close_time,
+                "candle_observation_identity": candle_identity,
+                "observation_identity": trade["observation_identity"],
+                "execution_mode": PAPER_EXECUTION_MODE,
+                "paper_policy_version": PAPER_POLICY_VERSION,
+            })
+            _append_event(event)
+
+        if outcome.get("modified"):
+            dirty = True
+
+        if outcome.get("closed"):
+            trade["resolved_at_ms"] = int(time.time() * 1000)
+            trade["resolved_candle_close_time"] = candle_close_time
+            close_reason = str(trade.get("exit_reason") or "UNKNOWN")
+            report["closed"] += 1
+            report["closed_by_reason"][close_reason] = report["closed_by_reason"].get(close_reason, 0) + 1
+            actions.append({
+                "action": "CLOSED",
+                "pred_id": pred_id,
+                "symbol": trade["symbol"],
+                "reason": trade.get("exit_reason"),
+                "net_r": trade.get("net_r"),
+            })
+            dirty = True
+            continue
+
+        if (
+            trade["bars_processed"] >= PAPER_HORIZON_BARS
+            and trade.get("status") == "ACTIVE"
+        ):
+            expiry_event = _expire_position(trade, candle)
+            _append_event(expiry_event)
+            report["closed"] += 1
+            report["expired"] += 1
+            report["closed_by_reason"]["EXPIRED"] = report["closed_by_reason"].get("EXPIRED", 0) + 1
+            actions.append({
+                "action": "CLOSED",
+                "pred_id": pred_id,
+                "symbol": trade["symbol"],
+                "reason": "EXPIRED",
+                "net_r": trade.get("net_r"),
+            })
+            dirty = True
+
+        elif outcome.get("modified"):
+            report["updated"] += 1
+            actions.append({
+                "action": "UPDATED",
+                "pred_id": pred_id,
+                "symbol": trade["symbol"],
+                "state": trade.get("state"),
+            })
+
+    return dirty, actions
+
+
+def _reconcile_state_v1(state: dict) -> dict:
+    """Fail-closed structural reconciliation of paper state and event ledger."""
+    checked = 0
+    failures: list[str] = []
+
+    if state.get("execution_mode") != PAPER_EXECUTION_MODE:
+        failures.append("EXECUTION_MODE_NOT_PAPER_ONLY")
+
+    if state.get("policy_version") != PAPER_POLICY_VERSION:
+        failures.append("PAPER_POLICY_VERSION_MISMATCH")
+
+    try:
+        events = _read_events()
+    except RuntimeError as exc:
+        failures.append(str(exc))
+        events = []
+
+    event_ids = [str(event.get("event_id") or "") for event in events]
+    duplicates = {
+        event_id
+        for event_id in event_ids
+        if event_id and event_ids.count(event_id) > 1
+    }
+    if duplicates:
+        failures.append(
+            "DUPLICATE_EVENT_IDS:" + ",".join(sorted(duplicates))
+        )
+
+    for pred_id, trade in state.get("positions", {}).items():
+        checked += 1
+
+        try:
+            contract = trade["observation_contract"]
+            validate_observation_contract(contract)
+            identity = list(observation_identity(contract))
+
+            if identity != trade.get("observation_identity"):
+                failures.append(
+                    f"{pred_id}:OBSERVATION_IDENTITY_MISMATCH"
+                )
+            if identity[0] != str(
+                trade.get("logical_symbol") or ""
+            ).upper():
+                failures.append(
+                    f"{pred_id}:LOGICAL_SYMBOL_MISMATCH"
+                )
+            if int(trade.get("open_time", 0)) != int(identity[1]):
+                failures.append(
+                    f"{pred_id}:OPEN_TIME_MISMATCH"
+                )
+            if trade.get("execution_mode") != PAPER_EXECUTION_MODE:
+                failures.append(
+                    f"{pred_id}:EXECUTION_MODE_MISMATCH"
+                )
+
+            entry_identity = trade.get("entry_observation_identity")
+            if entry_identity is not None:
+                if list(entry_identity) != list(identity):
+                    failures.append(
+                        f"{pred_id}:ENTRY_OBSERVATION_IDENTITY_MISMATCH"
+                    )
+
+                if int(
+                    trade.get("entry_observation_open_time", 0)
+                ) != int(identity[1]):
+                    failures.append(
+                        f"{pred_id}:ENTRY_OBSERVATION_OPEN_TIME_MISMATCH"
+                    )
+
+                expected_entry_close = (
+                    int(identity[1]) + CANDLE_INTERVAL_MS - 1
+                )
+                if int(
+                    trade.get("entry_observation_close_time", 0)
+                ) != expected_entry_close:
+                    failures.append(
+                        f"{pred_id}:ENTRY_OBSERVATION_CLOSE_TIME_MISMATCH"
+                    )
+
+            if trade.get("status") == "ACTIVE":
+                last_processed = int(
+                    trade.get(
+                        "last_processed_candle_close_time",
+                        identity[1] + CANDLE_INTERVAL_MS - 1,
+                    )
+                )
+                entry_close = int(
+                    trade["observation_contract"]["close_time"]
+                )
+
+                if last_processed > entry_close:
+                    last_open = trade.get("last_observation_open_time")
+                    last_close = trade.get("last_observation_close_time")
+                    last_identity = trade.get("last_observation_identity")
+
+                    if (
+                        last_open is None
+                        or last_close is None
+                        or last_identity is None
+                    ):
+                        failures.append(
+                            f"{pred_id}:MISSING_LAST_OBSERVATION_PROVENANCE"
+                        )
+                    else:
+                        expected_last_identity = [
+                            identity[0],
+                            int(last_open),
+                            identity[2],
+                            identity[3],
+                            identity[4],
+                        ]
+
+                        if list(last_identity) != expected_last_identity:
+                            failures.append(
+                                f"{pred_id}:LAST_OBSERVATION_IDENTITY_MISMATCH"
+                            )
+
+                        if int(last_close) != last_processed:
+                            failures.append(
+                                f"{pred_id}:LAST_OBSERVATION_CLOSE_TIME_MISMATCH"
+                            )
+
+                        if int(last_close) < entry_close:
+                            failures.append(
+                                f"{pred_id}:LAST_OBSERVATION_BEFORE_ENTRY"
+                            )
+
+            for field in (
+                "entry_price",
+                "atr_ref",
+                "stop",
+                "tp1",
+                "tp2",
+                "qty",
+                "initial_risk_usd",
+            ):
+                value = float(trade.get(field, 0))
+                if not math.isfinite(value) or value <= 0:
+                    failures.append(
+                        f"{pred_id}:INVALID_{field.upper()}"
+                    )
+
+            status = trade.get("status")
+            try:
+                remaining_qty = float(
+                    trade.get("remaining_qty", float("nan"))
+                )
+            except (TypeError, ValueError, OverflowError):
+                remaining_qty = float("nan")
+
+            if not math.isfinite(remaining_qty) or remaining_qty < 0:
+                failures.append(
+                    f"{pred_id}:INVALID_REMAINING_QTY"
+                )
+            elif status == "ACTIVE" and remaining_qty <= 0:
+                failures.append(
+                    f"{pred_id}:ACTIVE_WITHOUT_REMAINING_QTY"
+                )
+
+            if status == "CLOSED":
+                reason = trade.get("exit_reason")
+                if reason == "AMBIGUOUS_BARRIER":
+                    pass
+                elif trade.get("net_r") is None:
+                    failures.append(
+                        f"{pred_id}:CLOSED_WITHOUT_NET_R"
+                    )
+
+        except (KeyError, TypeError, ValueError):
+            failures.append(
+                f"{pred_id}:INVALID_OBSERVATION_CONTRACT"
+            )
+
+    return {
+        "ok": not failures,
+        "checked_positions": checked,
+        "failures": failures,
+        "paper_policy_version": PAPER_POLICY_VERSION,
+        "execution_mode": PAPER_EXECUTION_MODE,
+        "event_count": len(events),
+    }
+
+
+def _prediction_source_status(predictions) -> str:
+    if not PREDICTIONS_FILE.exists():
+        return "MISSING_FILE"
+    if not isinstance(predictions, list):
+        return "INVALID_FORMAT"
+    if not predictions:
+        return "PRESENT_EMPTY"
+    return "PRESENT"
+
+
+def _run_once_v2_impl() -> dict:
+    state_file_existed = PAPER_STATE_FILE.exists()
+    state = _load_state()
+    predictions = _load_json(PREDICTIONS_FILE, [])
+    prediction_list = predictions if isinstance(predictions, list) else []
+
+    if not state_file_existed:
+        generated_times = []
+        for raw in prediction_list:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                generated_ms = _parse_generated_at_ms(
+                    raw.get("generated_at")
+                )
+            except (TypeError, ValueError, OverflowError):
+                continue
+            generated_times.append(generated_ms)
+
+        archive_max_ms = max(generated_times, default=0)
+        initialized_ms = int(state["prospective_initialized_at_ms"])
+        start_ms = max(initialized_ms, archive_max_ms) + 1
+
+        state["prospective_start_time_ms"] = start_ms
+        state["prospective_start_at_utc"] = datetime.fromtimestamp(
+            start_ms / 1000, timezone.utc
+        ).isoformat()
+        state["prospective_baseline_max_prediction_generated_at_ms"] = (
+            archive_max_ms if generated_times else None
+        )
+
+        # Save the fixed baseline before attempting market-data access.
+        _save_state(state)
+
+    decision_report = _new_decision_report()
+    lifecycle_report = _new_lifecycle_report()
+
+    dirty_open, open_actions = _open_eligible_predictions(
+        state,
+        prediction_list,
+        report=decision_report,
+    )
+    dirty_monitor, monitor_actions = _monitor_open_positions(
+        state,
+        report=lifecycle_report,
+    )
+
+    reconciliation = reconcile_state(state)
+    if not reconciliation["ok"]:
+        raise RuntimeError(
+            "Paper reconciliation failed: "
+            + ", ".join(reconciliation["failures"])
+        )
+
+    dirty = dirty_open or dirty_monitor
+
+    if dirty:
+        _save_state(state)
+
+    active = len(_active_positions(state))
+    closed = sum(
+        1
+        for position in state.get("positions", {}).values()
+        if position.get("status") == "CLOSED"
+    )
+
+    return {
+        "report_version": 1,
+        "run": {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "workflow": "stage2e-paper-execution",
+            "paper_policy_version": PAPER_POLICY_VERSION,
+            "execution_mode": PAPER_EXECUTION_MODE,
+        },
+        "input": {
+            "predictions_file": str(PREDICTIONS_FILE),
+            "source_status": _prediction_source_status(predictions),
+            "records_loaded": decision_report["records_loaded"],
+            "valid_predictions": decision_report["valid_predictions"],
+            "rejected_predictions": decision_report["rejected_predictions"],
+            "rejection_reasons": decision_report["rejection_reasons"],
+            "latest_prediction": decision_report.get("latest_prediction"),
+        },
+        "decisions": decision_report,
+        "lifecycle": lifecycle_report,
+        "portfolio": {
+            "initial_balance_usd": PAPER_INITIAL_BALANCE_USD,
+            "risk_per_trade": PAPER_RISK_PER_TRADE,
+            "max_open_positions": PAPER_MAX_OPEN_POSITIONS,
+            "max_same_direction": PAPER_MAX_SAME_DIRECTION,
+            "active_positions": active,
+            "closed_positions": closed,
+        },
+        "open_actions": open_actions,
+        "monitor_actions": monitor_actions,
+        "reconciliation": reconciliation,
+        "state_changed": dirty,
+    }
+
+
+
+# ---- Stage 2E v2 chronological catch-up layer -----------------------------
+# Separate state/ledger files and policy version deliberately prevent silent
+# reinterpretation of the legacy stage2e-v1 paper history.
+
+PAPER_MAX_CANDLES_PER_POSITION_PER_RUN = 2000
+PAPER_CANDLE_PAGE_SIZE = 1000
+PAPER_CANDLE_MAX_PAGES = 2
+
+
+def _parse_generated_at_ms(value) -> int:
+    """Accept timezone-aware ISO timestamps only; never guess a local timezone."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Prediction generated_at must be a timezone-aware ISO timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Prediction generated_at is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("Prediction generated_at must include a timezone")
+    return int(parsed.astimezone(timezone.utc).timestamp() * 1000)
+
+
+def _next_bar_open_time_after(timestamp_ms: int) -> int:
+    """Return the first 15m candle open strictly after the timestamp."""
+    timestamp_ms = int(timestamp_ms)
+    return (timestamp_ms // CANDLE_INTERVAL_MS + 1) * CANDLE_INTERVAL_MS
+
+
+def fetch_closed_candles(
+    symbol: str,
+    start_open_time_ms: int,
+    end_time_ms: int | None = None,
+) -> list[dict]:
+    """Fetch chronological closed Binance Spot 15m candles from a persistent cursor.
+
+    A response failure raises rather than masquerading as an empty history.
+    The per-run page cap bounds API calls; the caller persists its next cursor
+    so the following run resumes without skipping older bars.
+    """
+    if not isinstance(symbol, str) or not symbol.isalnum():
+        raise ValueError("Invalid Binance Spot symbol")
+    start_ms = int(start_open_time_ms)
+    end_ms = int(time.time() * 1000) if end_time_ms is None else int(end_time_ms)
+    if start_ms <= 0 or end_ms < start_ms:
+        return []
+
+    endpoints = (
+        "https://data-api.binance.vision/api/v3/klines",
+        "https://api.binance.com/api/v3/klines",
+    )
+    headers = {"User-Agent": "CryptoBotAI-Stage2E-Paper/2"}
+    collected = {}
+    request_start = start_ms
+
+    for _page in range(PAPER_CANDLE_MAX_PAGES):
+        query = urlencode({
+            "symbol": symbol,
+            "interval": "15m",
+            "startTime": request_start,
+            "endTime": end_ms,
+            "limit": PAPER_CANDLE_PAGE_SIZE,
+        })
+        payload = None
+        error_types = []
+
+        for endpoint in endpoints:
+            try:
+                request = Request(f"{endpoint}?{query}", headers=headers)
+                with urlopen(request, timeout=8) as response:
+                    if response.status != 200:
+                        raise RuntimeError("Unexpected Binance HTTP status")
+                    candidate = json.loads(response.read().decode("utf-8"))
+                if not isinstance(candidate, list):
+                    raise ValueError("Unexpected Binance klines response type")
+                payload = candidate
+                break
+            except Exception as exc:
+                error_types.append(type(exc).__name__)
+
+        if payload is None:
+            error_summary = ",".join(error_types) or "UnknownError"
+            raise RuntimeError(
+                f"Historical candle fetch failed for {symbol} ({error_summary})"
+            )
+
+        for row in payload:
+            if not isinstance(row, list) or len(row) < 7:
+                raise RuntimeError("Malformed Binance kline row")
+
+            try:
+                candle_open = int(row[0])
+                candle_close = int(row[6])
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError("Invalid Binance kline timestamps") from exc
+
+            if candle_open < request_start or candle_close > end_ms:
+                continue
+            if candle_open % CANDLE_INTERVAL_MS != 0:
+                raise RuntimeError("Binance candle open time is not interval-aligned")
+            if candle_close != candle_open + CANDLE_INTERVAL_MS - 1:
+                raise RuntimeError("Binance candle open/close times are inconsistent")
+
+            try:
+                opn, high, low, close = (
+                    float(row[1]), float(row[2]), float(row[3]), float(row[4])
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError("Invalid Binance kline prices") from exc
+
+            prices = (opn, high, low, close)
+            if not all(math.isfinite(value) and value > 0 for value in prices):
+                raise RuntimeError("Non-finite or non-positive Binance candle price")
+            if high < low or high < max(opn, close) or low > min(opn, close):
+                raise RuntimeError("Inconsistent Binance candle OHLC values")
+            if candle_open in collected:
+                raise RuntimeError("Duplicate Binance candle open time")
+
+            collected[candle_open] = {
+                "open_time": candle_open,
+                "close_time": candle_close,
+                "open": opn,
+                "high": high,
+                "low": low,
+                "close": close,
+            }
+
+        raw_open_times = []
+        for row in payload:
+            try:
+                raw_open_times.append(int(row[0]))
+            except (TypeError, ValueError, IndexError, OverflowError):
+                continue
+
+        if not raw_open_times or len(payload) < PAPER_CANDLE_PAGE_SIZE:
+            break
+
+        next_start = max(raw_open_times) + CANDLE_INTERVAL_MS
+        if next_start <= request_start or next_start > end_ms:
+            break
+        request_start = next_start
+
+    return [collected[key] for key in sorted(collected)]
+
+
+def _load_state() -> dict:
+    """Load v2 state strictly; an existing corrupt file must not reset the book."""
+    if not PAPER_STATE_FILE.exists():
+        return _new_state()
+    try:
+        with PAPER_STATE_FILE.open("r", encoding="utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Stage 2E v2 state cannot be read; refusing state reset") from exc
+
+    if not isinstance(state, dict) or not state:
+        raise RuntimeError("Stage 2E v2 state is not a valid object")
+    if state.get("schema_version") != PAPER_SCHEMA_VERSION:
+        raise RuntimeError("Stage 2E v2 schema mismatch")
+    if state.get("policy_version") != PAPER_POLICY_VERSION:
+        raise RuntimeError("Stage 2E v2 policy mismatch")
+    if state.get("execution_mode") != PAPER_EXECUTION_MODE:
+        raise RuntimeError("Stage 2E v2 execution mode mismatch")
+    if not isinstance(state.get("positions"), dict):
+        raise RuntimeError("Stage 2E v2 positions field is invalid")
+    if not isinstance(state.get("decisions"), dict):
+        raise RuntimeError("Stage 2E v2 decisions field is invalid")
+
+    initialized_ms = state.get("prospective_initialized_at_ms")
+    start_ms = state.get("prospective_start_time_ms")
+    if (
+        isinstance(initialized_ms, bool)
+        or not isinstance(initialized_ms, int)
+        or initialized_ms <= 0
+        or isinstance(start_ms, bool)
+        or not isinstance(start_ms, int)
+        or start_ms <= initialized_ms
+    ):
+        raise RuntimeError(
+            "Stage 2E v2 state lacks a valid prospective baseline; "
+            "refusing historical replay"
+        )
+    return state
+
+
+def _normalize_prediction(prediction: dict) -> dict | None:
+    normalized = _normalize_prediction_v1(prediction)
+    if normalized is None:
+        return None
+    if normalized["interval"] != "15m":
+        raise ValueError("Stage 2E v2 requires 15m predictions")
+
+    generated_at_ms = _parse_generated_at_ms(normalized.get("generated_at"))
+    signal_close_time = int(normalized["observation_contract"]["close_time"])
+    if generated_at_ms <= signal_close_time:
+        raise ValueError("Prediction generated_at is not after its signal candle close")
+
+    normalized["generated_at_ms"] = generated_at_ms
+    normalized["entry_bar_open_time_ms"] = _next_bar_open_time_after(generated_at_ms)
+    return normalized
+
+
+def _new_decision_report() -> dict:
+    report = _new_decision_report_v1()
+    report.update({
+        "history_fetch_failed": 0,
+        "entry_gap_invalidated": 0,
+    })
+    return report
+
+
+def _new_lifecycle_report() -> dict:
+    report = _new_lifecycle_report_v1()
+    report.update({
+        "history_fetch_failed": 0,
+        "gap_invalidated": 0,
+        "bars_caught_up": 0,
+    })
+    return report
+
+
+def _entry_candle_identity(trade_or_prediction: dict, candle: dict) -> list:
+    return [
+        str(trade_or_prediction.get("logical_symbol") or trade_or_prediction.get("symbol") or "").upper(),
+        int(candle["open_time"]),
+        str(trade_or_prediction["interval"]),
+        "binance",
+        "spot",
+    ]
+
+
+def _build_position(prediction: dict, entry_candle: dict) -> dict:
+    """Build a position filled at the next bar's open, never at a later close."""
+    entry_open = int(entry_candle["open_time"])
+    entry_close = int(entry_candle["close_time"])
+    expected_open = int(prediction["entry_bar_open_time_ms"])
+    if entry_open != expected_open:
+        raise ValueError("Entry candle does not match the expected next-bar open")
+    if entry_close != entry_open + CANDLE_INTERVAL_MS - 1:
+        raise ValueError("Entry candle timestamps are inconsistent")
+    if entry_open <= int(prediction["generated_at_ms"]):
+        raise ValueError("Entry candle is not strictly after prediction generated_at")
+
+    entry_price = float(entry_candle["open"])
+    if not math.isfinite(entry_price) or entry_price <= 0:
+        raise ValueError("Invalid next-bar paper entry price")
+
+    base_prediction = dict(prediction)
+    base_prediction["entry_ref"] = entry_price
+    position = _build_position_v1(base_prediction)
+
+    position.update({
+        "entry_price": entry_price,
+        "simulated_entry": entry_price,
+        "entry_price_source": "NEXT_BAR_OPEN",
+        "opened_at_ms": entry_open,
+        "generated_at_ms": int(prediction["generated_at_ms"]),
+        "entry_bar_open_time_ms": entry_open,
+        "entry_bar_close_time_ms": entry_close,
+        "entry_bar_observation_identity": _entry_candle_identity(prediction, entry_candle),
+        "next_candle_open_time_ms": entry_open,
+        "expires_at_ms": entry_open + PAPER_HORIZON_BARS * CANDLE_INTERVAL_MS,
+        # Keep the legacy observation fields as signal-prediction provenance;
+        # entry_bar_* separately records the simulated fill candle.
+        "signal_observation_identity": list(prediction["observation_identity"]),
+        "last_processed_candle_close_time": int(
+            prediction["observation_contract"]["close_time"]
+        ),
+        "bars_processed": 0,
+    })
+    return position
+
+
+def _open_eligible_predictions(
+    state: dict,
+    predictions: list[dict],
+    report: dict | None = None,
+) -> tuple[bool, list[dict]]:
+    dirty = False
+    actions = []
+    report = report if report is not None else _new_decision_report()
+    report["records_loaded"] = len(predictions)
+    report.setdefault("pre_baseline_predictions", 0)
+
+    prospective_start_ms = state.get("prospective_start_time_ms")
+    if (
+        isinstance(prospective_start_ms, bool)
+        or not isinstance(prospective_start_ms, int)
+        or prospective_start_ms <= 0
+    ):
+        raise RuntimeError(
+            "Stage 2E v2 has no valid prospective baseline; "
+            "refusing historical prediction admission"
+        )
+
+    normalized = []
+
+    for raw in predictions:
+        try:
+            pred = _normalize_prediction(raw)
+        except (TypeError, ValueError, KeyError, OverflowError):
+            report["rejected_predictions"] += 1
+            key = "MALFORMED_OR_INVALID"
+            report["rejection_reasons"][key] = report["rejection_reasons"].get(key, 0) + 1
+            continue
+
+        if pred is not None:
+            report["valid_predictions"] += 1
+            if int(pred["generated_at_ms"]) < prospective_start_ms:
+                report["pre_baseline_predictions"] += 1
+                continue
+            normalized.append(pred)
+        else:
+            report["rejected_predictions"] += 1
+            key = (
+                "EXPLICIT_REJECT"
+                if isinstance(raw, dict) and raw.get("reject_reason") not in (None, "")
+                else "INVALID_PREDICTION"
+            )
+            report["rejection_reasons"][key] = report["rejection_reasons"].get(key, 0) + 1
+
+    normalized.sort(key=lambda item: (item["open_time"], item["pred_id"]))
+    if normalized:
+        latest = normalized[-1]
+        report["latest_prediction"] = {
+            "pred_id": latest["pred_id"],
+            "symbol": latest["symbol"],
+            "side": latest["side"],
+            "open_time": latest["open_time"],
+            "generated_at": latest.get("generated_at"),
+        }
+    else:
+        report["latest_prediction"] = None
+
+    for pred in normalized:
+        pred_id = pred["pred_id"]
+        if pred_id in state["positions"] or pred_id in state["decisions"]:
+            report["already_processed"] += 1
+            continue
+
+        # Defer portfolio admission decisions until the intended entry candle
+        # is confirmed closed. Otherwise an unclosed future entry can be
+        # permanently rejected merely because today's portfolio is full.
+        entry_open = int(pred["entry_bar_open_time_ms"])
+        try:
+            candles = fetch_closed_candles(pred["symbol"], entry_open)
+        except Exception as exc:
+            report["history_fetch_failed"] += 1
+            log.warning(
+                "Stage2E v2 entry history unavailable for %s (%s); decision deferred",
+                pred["symbol"],
+                type(exc).__name__,
+            )
+            continue
+
+        entry_candle = next(
+            (item for item in candles if int(item["open_time"]) == entry_open),
+            None,
+        )
+        if entry_candle is None:
+            later = [
+                item for item in candles
+                if int(item["open_time"]) > entry_open
+            ]
+            if later:
+                report["entry_gap_invalidated"] += 1
+                _record_decision(
+                    state,
+                    pred,
+                    "ENTRY_CANDLE_GAP_INVALIDATED",
+                    expected_entry_bar_open_time_ms=entry_open,
+                    first_observed_bar_open_time_ms=int(later[0]["open_time"]),
+                )
+                dirty = True
+            else:
+                report["waiting_for_signal_candle"] += 1
+            continue
+
+        active = _active_positions(state)
+        if len(active) >= PAPER_MAX_OPEN_POSITIONS:
+            report["capacity_full"] += 1
+            _record_decision(
+                state,
+                pred,
+                "CAPACITY_FULL",
+                entry_bar_open_time_ms=entry_open,
+            )
+            dirty = True
+            continue
+
+        if _symbol_is_active(state, pred["symbol"]):
+            report["duplicate_symbol_active"] += 1
+            _record_decision(
+                state,
+                pred,
+                "DUPLICATE_SYMBOL_ACTIVE",
+                entry_bar_open_time_ms=entry_open,
+            )
+            dirty = True
+            continue
+
+        if _direction_count(state, pred["side"]) >= PAPER_MAX_SAME_DIRECTION:
+            report["direction_limit"] += 1
+            _record_decision(
+                state,
+                pred,
+                "DIRECTION_LIMIT",
+                entry_bar_open_time_ms=entry_open,
+            )
+            dirty = True
+            continue
+
+        position = _build_position(pred, entry_candle)
+        validate_observation_contract(position["observation_contract"])
+        if tuple(position["observation_identity"]) != tuple(
+            observation_identity(position["observation_contract"])
+        ):
+            raise ValueError(f"Paper signal observation identity mismatch: {pred_id}")
+
+        state["positions"][pred_id] = position
+        state["decisions"][pred_id] = {
+            "status": "OPENED",
+            "timestamp_ms": int(time.time() * 1000),
+        }
+
+        _append_event({
+            "event": "PAPER_POSITION_OPENED",
+            "event_id": f"OPEN:{pred_id}",
+            "pred_id": pred_id,
+            "symbol": pred["symbol"],
+            "side": pred["side"],
+            "open_time": pred["open_time"],
+            "generated_at": pred["generated_at"],
+            "generated_at_ms": pred["generated_at_ms"],
+            "entry_price": position["entry_price"],
+            "entry_price_source": "NEXT_BAR_OPEN",
+            "entry_bar_open_time_ms": entry_open,
+            "entry_bar_close_time_ms": int(entry_candle["close_time"]),
+            "entry_bar_observation_identity": position["entry_bar_observation_identity"],
+            "signal_observation_identity": pred["observation_identity"],
+            "atr_ref": position["atr_ref"],
+            "stop": position["stop"],
+            "tp1": position["tp1"],
+            "tp2": position["tp2"],
+            "qty": position["qty"],
+            "initial_risk_usd": position["initial_risk_usd"],
+            "entry_fee_usd": position["entry_fee_usd"],
+            "expires_at_ms": position["expires_at_ms"],
+            "observation_identity": pred["observation_identity"],
+            "execution_mode": PAPER_EXECUTION_MODE,
+            "paper_policy_version": PAPER_POLICY_VERSION,
+            "live_was_executed_at_signal": pred["was_executed_live"],
+        })
+
+        actions.append({
+            "action": "OPENED",
+            "pred_id": pred_id,
+            "symbol": pred["symbol"],
+            "entry_price": position["entry_price"],
+            "entry_bar_open_time_ms": entry_open,
+        })
+        report["opened"] += 1
+        dirty = True
+
+    return dirty, actions
+
+
+def _invalidate_data_gap(
+    trade: dict,
+    expected_open_time: int,
+    observed_open_time: int,
+) -> dict:
+    pred_id = str(trade["pred_id"])
+    event = {
+        "event": "PAPER_DATA_GAP_INVALIDATED",
+        "event_id": f"DATA_GAP:{pred_id}:{int(expected_open_time)}",
+        "pred_id": pred_id,
+        "symbol": trade["symbol"],
+        "side": trade["side"],
+        "expected_candle_open_time_ms": int(expected_open_time),
+        "observed_candle_open_time_ms": int(observed_open_time),
+        "invalidated_at_ms": int(time.time() * 1000),
+        "exit_reason": "DATA_GAP_INVALIDATED",
+        "execution_mode": PAPER_EXECUTION_MODE,
+        "paper_policy_version": PAPER_POLICY_VERSION,
+        "observation_identity": trade["observation_identity"],
+    }
+    trade.update({
+        "status": "INVALIDATED",
+        "state": "INVALIDATED",
+        "exit_reason": "DATA_GAP_INVALIDATED",
+        "invalidated_at_ms": event["invalidated_at_ms"],
+        "gap_expected_open_time_ms": int(expected_open_time),
+        "gap_observed_open_time_ms": int(observed_open_time),
+    })
+    return event
+
+
+def _monitor_open_positions(
+    state: dict,
+    report: dict | None = None,
+) -> tuple[bool, list[dict]]:
+    dirty = False
+    actions = []
+    report = report if report is not None else _new_lifecycle_report()
+    now_ms = int(time.time() * 1000)
+
+    for pred_id, trade in list(state["positions"].items()):
+        if trade.get("status") != "ACTIVE":
+            continue
+        report["active_positions_seen"] += 1
+
+        try:
+            cursor = int(trade["next_candle_open_time_ms"])
+            if cursor <= 0 or cursor % CANDLE_INTERVAL_MS != 0:
+                raise ValueError("Invalid persisted candle cursor")
+            candles = fetch_closed_candles(
+                str(trade["symbol"]),
+                cursor,
+                now_ms,
+            )
+        except Exception as exc:
+            report["history_fetch_failed"] += 1
+            log.error(
+                "Stage2E v2 history unavailable for %s (%s); cursor retained",
+                trade.get("symbol", pred_id),
+                type(exc).__name__,
+            )
+            continue
+
+        if not candles:
+            report["no_candle_available"] += 1
+            continue
+
+        expected_open = cursor
+        for candle in candles:
+            candle_open = int(candle["open_time"])
+            candle_close = int(candle["close_time"])
+
+            if candle_open < expected_open:
+                report["history_fetch_failed"] += 1
+                log.error(
+                    "Stage2E v2 returned a stale/out-of-order candle for %s; cursor retained",
+                    trade["symbol"],
+                )
+                break
+
+            if candle_open > expected_open:
+                event = _invalidate_data_gap(trade, expected_open, candle_open)
+                _append_event(event)
+                report["gap_invalidated"] += 1
+                actions.append({
+                    "action": "INVALIDATED",
+                    "pred_id": pred_id,
+                    "symbol": trade["symbol"],
+                    "reason": "DATA_GAP_INVALIDATED",
+                    "expected_candle_open_time_ms": expected_open,
+                    "observed_candle_open_time_ms": candle_open,
+                })
+                dirty = True
+                break
+
+            if (
+                candle_open % CANDLE_INTERVAL_MS != 0
+                or candle_close != candle_open + CANDLE_INTERVAL_MS - 1
+            ):
+                report["history_fetch_failed"] += 1
+                log.error(
+                    "Stage2E v2 candle timestamps invalid for %s; cursor retained",
+                    trade["symbol"],
+                )
+                break
+
+            # Only commit this candle's state transition after its lifecycle
+            # handler returns. Repeated runs use the persisted next-open cursor.
+            working = dict(trade)
+            outcome = monitor.process_trade_candle(working, candle)
+
+            candle_identity = _candle_observation_identity(working, candle)
+            working["last_observation_open_time"] = candle_open
+            working["last_observation_close_time"] = candle_close
+            working["last_observation_identity"] = candle_identity
+            working["last_processed_candle_close_time"] = candle_close
+            working["next_candle_open_time_ms"] = candle_open + CANDLE_INTERVAL_MS
+            working["bars_processed"] = int(working.get("bars_processed", 0)) + 1
+
+            lifecycle_events = outcome.get("events", [])
+            report["events_emitted"] += len(lifecycle_events)
+            for lifecycle_event in lifecycle_events:
+                event = dict(lifecycle_event)
+                name = str(event.get("event", "LIFECYCLE"))
+                if name == "PARTIAL_TP1_FILLED":
+                    report["tp1_partial"] += 1
+                event.update({
+                    "event_id": _lifecycle_event_id(pred_id, name, candle_close),
+                    "pred_id": pred_id,
+                    "symbol": trade["symbol"],
+                    "side": trade["side"],
+                    "open_time": trade["open_time"],
+                    "candle_open_time": candle_open,
+                    "candle_close_time": candle_close,
+                    "candle_observation_identity": candle_identity,
+                    "signal_observation_identity": trade["observation_identity"],
+                    "entry_bar_open_time_ms": trade["entry_bar_open_time_ms"],
+                    "expires_at_ms": trade["expires_at_ms"],
+                    "observation_identity": trade["observation_identity"],
+                    "execution_mode": PAPER_EXECUTION_MODE,
+                    "paper_policy_version": PAPER_POLICY_VERSION,
+                })
+                _append_event(event)
+
+            trade.clear()
+            trade.update(working)
+            report["candles_processed"] += 1
+            report["bars_caught_up"] += 1
+            dirty = True
+            expected_open = candle_open + CANDLE_INTERVAL_MS
+
+            if outcome.get("closed"):
+                trade["resolved_at_ms"] = int(time.time() * 1000)
+                trade["resolved_candle_close_time"] = candle_close
+                reason = str(trade.get("exit_reason") or "UNKNOWN")
+                report["closed"] += 1
+                report["closed_by_reason"][reason] = (
+                    report["closed_by_reason"].get(reason, 0) + 1
+                )
+                actions.append({
+                    "action": "CLOSED",
+                    "pred_id": pred_id,
+                    "symbol": trade["symbol"],
+                    "reason": reason,
+                    "net_r": trade.get("net_r"),
+                })
+                break
+
+            # The expiry boundary is based on entry-bar open plus 24 intervals,
+            # not the number of times the workflow happened to run.
+            if (
+                trade.get("status") == "ACTIVE"
+                and candle_open + CANDLE_INTERVAL_MS >= int(trade["expires_at_ms"])
+            ):
+                expiry_event = _expire_position(trade, candle)
+                expiry_event.update({
+                    "entry_bar_open_time_ms": trade["entry_bar_open_time_ms"],
+                    "expires_at_ms": trade["expires_at_ms"],
+                })
+                _append_event(expiry_event)
+                report["closed"] += 1
+                report["expired"] += 1
+                report["closed_by_reason"]["EXPIRED"] = (
+                    report["closed_by_reason"].get("EXPIRED", 0) + 1
+                )
+                actions.append({
+                    "action": "CLOSED",
+                    "pred_id": pred_id,
+                    "symbol": trade["symbol"],
+                    "reason": "EXPIRED",
+                    "net_r": trade.get("net_r"),
+                })
+                break
+
+            if outcome.get("modified"):
+                report["updated"] += 1
+                actions.append({
+                    "action": "UPDATED",
+                    "pred_id": pred_id,
+                    "symbol": trade["symbol"],
+                    "state": trade.get("state"),
+                })
+
+            if trade.get("status") != "ACTIVE":
+                break
+
+    return dirty, actions
+
+
+def reconcile_state(state: dict) -> dict:
+    """Apply original structural checks plus v2 cursor/horizon invariants."""
+    result = _reconcile_state_v1(state)
+    failures = list(result["failures"])
+
+    for pred_id, trade in state.get("positions", {}).items():
+        if trade.get("status") != "ACTIVE":
+            continue
+        try:
+            entry_open = int(trade["entry_bar_open_time_ms"])
+            entry_close = int(trade["entry_bar_close_time_ms"])
+            generated_at = int(trade["generated_at_ms"])
+            expiry = int(trade["expires_at_ms"])
+            cursor = int(trade["next_candle_open_time_ms"])
+            last_close = int(trade["last_processed_candle_close_time"])
+            bars = int(trade["bars_processed"])
+            expected_identity = [
+                str(trade["symbol"]).upper(),
+                entry_open,
+                str(trade["interval"]),
+                "binance",
+                "spot",
+            ]
+
+            if trade.get("entry_price_source") != "NEXT_BAR_OPEN":
+                failures.append(f"{pred_id}:INVALID_ENTRY_PRICE_SOURCE")
+            if entry_open % CANDLE_INTERVAL_MS != 0 or entry_open <= generated_at:
+                failures.append(f"{pred_id}:INVALID_ENTRY_BAR_TIME")
+            if entry_close != entry_open + CANDLE_INTERVAL_MS - 1:
+                failures.append(f"{pred_id}:INVALID_ENTRY_BAR_CLOSE_TIME")
+            if list(trade.get("entry_bar_observation_identity", [])) != expected_identity:
+                failures.append(f"{pred_id}:ENTRY_BAR_IDENTITY_MISMATCH")
+            if expiry != entry_open + PAPER_HORIZON_BARS * CANDLE_INTERVAL_MS:
+                failures.append(f"{pred_id}:EXPIRY_HORIZON_MISMATCH")
+            if bars < 0 or cursor % CANDLE_INTERVAL_MS != 0:
+                failures.append(f"{pred_id}:INVALID_CANDLE_CURSOR")
+            elif bars == 0:
+                if cursor != entry_open:
+                    failures.append(f"{pred_id}:INITIAL_CURSOR_MISMATCH")
+            elif cursor != last_close + 1:
+                failures.append(f"{pred_id}:CURSOR_LAST_CLOSE_MISMATCH")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            failures.append(f"{pred_id}:INVALID_V2_CURSOR_OR_ENTRY_FIELDS")
+
+    result["failures"] = failures
+    result["ok"] = not failures
+    result["execution_mode"] = PAPER_EXECUTION_MODE
+    result["paper_policy_version"] = PAPER_POLICY_VERSION
+    return result
+
+
+def run_once() -> dict:
+    # Serialize read/modify/write for the full run, not just the final save.
+    lock = FileLock(str(PAPER_STATE_FILE) + ".run.lock")
+    with lock:
+        return _run_once_v2_impl()
+# ---- End Stage 2E v2 chronological catch-up layer -------------------------
+
+if __name__ == "__main__":
+    result = run_once()
+    print("=" * 72)
+    print("Stage 2E PAPER EXECUTION | PAPER_ONLY")
+    print(f"Run UTC      : {result['run']['timestamp_utc']}")
+    print(
+        "Input        : "
+        f"{result['input']['source_status']} | "
+        f"loaded={result['input']['records_loaded']} | "
+        f"valid={result['input']['valid_predictions']} | "
+        f"rejected={result['input']['rejected_predictions']}"
+    )
+    print(
+        "Decisions    : "
+        f"opened={result['decisions']['opened']} | "
+        f"missed={result['decisions']['missed_entry_window']} | "
+        f"processed={result['decisions']['already_processed']} | "
+        f"dup_symbol={result['decisions']['duplicate_symbol_active']} | "
+        f"dir_limit={result['decisions']['direction_limit']}"
+    )
+    print(
+        "Lifecycle    : "
+        f"candles={result['lifecycle']['candles_processed']} | "
+        f"TP1={result['lifecycle']['tp1_partial']} | "
+        f"updated={result['lifecycle']['updated']} | "
+        f"closed={result['lifecycle']['closed']} | "
+        f"expired={result['lifecycle']['expired']}"
+    )
+    print(
+        "Portfolio    : "
+        f"active={result['portfolio']['active_positions']} | "
+        f"closed={result['portfolio']['closed_positions']} | "
+        f"state_changed={result['state_changed']}"
+    )
+    print(
+        "Reconcile    : "
+        f"ok={result['reconciliation']['ok']} | "
+        f"events={result['reconciliation']['event_count']} | "
+        f"checked={result['reconciliation']['checked_positions']}"
+    )
+    print("-" * 72)
+    print(json.dumps(result, indent=2, sort_keys=True))
