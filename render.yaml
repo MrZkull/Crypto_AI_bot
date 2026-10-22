@@ -7,7 +7,15 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn dashboard:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    healthCheckPath: /health
     envVars:
+      # Set these manually in Render before deploying this security change.
+      - key: DASHBOARD_AUTH_USERNAME
+        sync: false
+      - key: DASHBOARD_AUTH_PASSWORD
+        sync: false
+      - key: DASHBOARD_PUBLIC_ORIGIN
+        sync: false
       - key: TELEGRAM_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
