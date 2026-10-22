@@ -48,6 +48,9 @@ jobs:
       - name: Compile core modules
         run: |
           python -m py_compile dashboard.py deribit_client.py trade_executor.py paper_execution.py
+          if [ -f paper_execution_v2.py ]; then
+            python -m py_compile paper_execution_v2.py
+          fi
 
       - name: Run full regression suite
         run: python -m pytest -q
