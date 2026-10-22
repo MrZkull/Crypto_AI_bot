@@ -6,6 +6,7 @@ import base64
 import time
 import math
 import logging
+import hmac
 import requests
 import re
 import socket
@@ -15,8 +16,8 @@ import threading
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
-from flask import Flask, jsonify, request, send_from_directory, send_file
-from flask_cors import CORS
+from urllib.parse import urlsplit
+from flask import Flask, Response, jsonify, request, send_from_directory, send_file
 from dotenv import load_dotenv
 
 orig_getaddrinfo = socket.getaddrinfo
@@ -40,9 +41,137 @@ except ImportError:
 
 load_dotenv()
 app = Flask(__name__, static_folder="dashboard_static")
-CORS(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
+
+# All dashboard routes are private except the minimal health endpoint used by
+# the hosting platform. Configure these values in the Render service settings.
+# The browser uses HTTP Basic Auth; credentials are never shipped to JavaScript.
+_AUTH_REALM = "CryptoBot AI Dashboard"
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _canonical_origin(value: str, *, allow_path: bool = False):
+    """Return a canonical HTTPS origin (or loopback HTTP origin), else None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = urlsplit(value.strip())
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        if parsed.username is not None or parsed.password is not None:
+            return None
+        if not allow_path and (
+            parsed.path not in ("", "/") or parsed.query or parsed.fragment
+        ):
+            return None
+        scheme = parsed.scheme.lower()
+        host = (parsed.hostname or "").rstrip(".").lower()
+        if not host or scheme not in {"https", "http"}:
+            return None
+        if scheme != "https" and not (
+            scheme == "http" and host in {"localhost", "127.0.0.1", "::1"}
+        ):
+            return None
+        port = parsed.port
+        if port is not None and not (1 <= port <= 65535):
+            return None
+    except ValueError:
+        return None
+
+    if port is None or (scheme == "https" and port == 443) or (
+        scheme == "http" and port == 80
+    ):
+        authority = f"[{host}]" if ":" in host else host
+    else:
+        authority_host = f"[{host}]" if ":" in host else host
+        authority = f"{authority_host}:{port}"
+    return f"{scheme}://{authority}"
+
+
+def _dashboard_auth_settings():
+    """Load and validate auth configuration on each request (fail closed)."""
+    username = os.getenv("DASHBOARD_AUTH_USERNAME", "").strip()
+    password = os.getenv("DASHBOARD_AUTH_PASSWORD", "")
+    raw_origin = os.getenv("DASHBOARD_PUBLIC_ORIGIN", "").strip()
+    origin = _canonical_origin(raw_origin, allow_path=False)
+    if not username or len(username) > 128:
+        return None
+    if len(password) < 20 or len(password) > 1024:
+        return None
+    if origin is None:
+        return None
+    return username, password, origin
+
+
+def _unauthorized_response():
+    response = Response("Authentication required.", status=401, mimetype="text/plain")
+    response.headers["WWW-Authenticate"] = (
+        f'Basic realm="{_AUTH_REALM}", charset="UTF-8"'
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Vary"] = "Authorization"
+    return response
+
+
+@app.before_request
+def enforce_dashboard_auth():
+    # The public health route reports readiness but never returns private state.
+    if request.endpoint == "health":
+        return None
+
+    settings = _dashboard_auth_settings()
+    if settings is None:
+        # Missing or weak credentials/origin must never result in an open dashboard.
+        return jsonify({
+            "ok": False,
+            "error": "dashboard_auth_not_configured",
+            "message": "Dashboard authentication is not configured securely.",
+        }), 503
+
+    expected_user, expected_password, expected_origin = settings
+    auth = request.authorization
+    supplied_user = getattr(auth, "username", "") or ""
+    supplied_password = getattr(auth, "password", "") or ""
+    user_ok = hmac.compare_digest(
+        supplied_user.encode("utf-8"), expected_user.encode("utf-8")
+    )
+    password_ok = hmac.compare_digest(
+        supplied_password.encode("utf-8"), expected_password.encode("utf-8")
+    )
+    if not (user_ok and password_ok):
+        return _unauthorized_response()
+
+    # Basic Auth alone can be vulnerable to browser-driven cross-site actions.
+    # Validate every unsafe method before any route handler can run.
+    if request.method in _UNSAFE_METHODS:
+        origin_header = request.headers.get("Origin", "")
+        if origin_header:
+            supplied_origin = _canonical_origin(origin_header, allow_path=False)
+        else:
+            # Some clients omit Origin on same-origin requests; permit a same-origin
+            # Referer only. Requests with neither header fail closed.
+            supplied_origin = _canonical_origin(
+                request.headers.get("Referer", ""), allow_path=True
+            )
+        if supplied_origin != expected_origin:
+            return jsonify({
+                "ok": False,
+                "error": "cross_origin_request_rejected",
+            }), 403
+
+    return None
+
+
+@app.after_request
+def add_dashboard_security_headers(response):
+    if request.endpoint != "health":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Vary"] = "Authorization"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "same-origin"
+    return response
 
 GH_TOKEN           = os.getenv("GH_PAT_TOKEN", "")
 GH_REPO            = os.getenv("GITHUB_REPO",   "MrZkull/Crypto_AI_bot")
@@ -1252,7 +1381,12 @@ def api_close_trade():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/health")
-def health(): return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
+def health():
+    ready = _dashboard_auth_settings() is not None
+    return jsonify({
+        "status": "ok" if ready else "not_ready",
+        "time": datetime.now(timezone.utc).isoformat(),
+    }), (200 if ready else 503)
 
 @app.route("/")
 def index(): return send_from_directory("dashboard_static", "index.html")
