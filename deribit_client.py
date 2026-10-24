@@ -54,6 +54,10 @@ class PositionQueryError(RuntimeError):
         super().__init__(message)
 
 
+class OpenOrdersQueryError(RuntimeError):
+    """Open orders could not be verified as a complete exchange snapshot."""
+
+
 def _calc_decimals(val: float) -> int:
     if val <= 0:
         return 4
@@ -871,10 +875,32 @@ class DeribitClient:
 
     def get_open_orders(self, symbol: str) -> list:
         try:
-            return self._get("/private/get_open_orders_by_instrument", {"instrument_name": self.get_instrument_name(symbol)}) or []
-        except Exception as e:
-            log.warning(f"  open_orders {symbol}: {e}")
-            return []
+            instrument = self.get_instrument_name(symbol)
+            if not isinstance(instrument, str) or not instrument.strip():
+                raise OpenOrdersQueryError(
+                    f"Cannot resolve an exchange instrument for {symbol!r}"
+                )
+            result = self._get(
+                "/private/get_open_orders_by_instrument",
+                {"instrument_name": instrument},
+            )
+        except OpenOrdersQueryError:
+            raise
+        except Exception as exc:
+            log.warning(
+                "  open_orders %s unavailable (%s)",
+                symbol,
+                type(exc).__name__,
+            )
+            raise OpenOrdersQueryError(
+                f"Open-order snapshot unavailable for {symbol}"
+            ) from None
+
+        if not isinstance(result, list):
+            raise OpenOrdersQueryError(
+                f"Open-order snapshot malformed for {symbol}"
+            )
+        return result
 
     def get_trade_history_for_instrument(self, symbol: str, count: int = 10) -> list:
         try:

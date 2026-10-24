@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from deribit_client import DeribitClient, PositionQueryError
+from deribit_client import DeribitClient, PositionQueryError, OpenOrdersQueryError
 
 
 CURRENCIES = ("USDC", "BTC", "ETH")
@@ -205,11 +205,10 @@ def test_broken_ghost_record_is_retained_when_position_query_fails():
     assert "except Exception: actual = 0" not in source
 
 
-def test_sub_lot_post_fill_position_has_reduce_only_recovery_path():
+def test_sub_lot_post_fill_position_uses_verified_recovery_path():
     source = _function_source("trade_executor.py", "execute_trade")
-    assert "sub-lot reduce-only recovery" in source
-    assert "deribit.place_market_order(" in source
-    assert "symbol, sl_side, actual_pos_size, reduce_only=True" in source
+    assert "post-fill position below minimum lot" in source
+    assert "_emergency_close_and_verify(" in source
 
 
 def test_position_size_from_verified_record_normalizes_currency_units():
@@ -371,3 +370,112 @@ def test_orphan_reconciler_uses_the_verified_snapshot_row_without_requery():
     assert "get_position_size(sym)" not in orphan_block
     assert "normalized_positions = []" in orphan_block
     assert "preserving orphan tracker and taking no flatten action" in orphan_block
+
+
+
+def test_open_orders_query_failure_is_not_misreported_as_empty():
+    client = DeribitClient.__new__(DeribitClient)
+    client.get_instrument_name = Mock(return_value=INSTRUMENT)
+    client._get = Mock(side_effect=RuntimeError("private endpoint unavailable"))
+
+    with pytest.raises(OpenOrdersQueryError) as exc:
+        client.get_open_orders("DOGEUSDT")
+
+    assert "private endpoint unavailable" not in str(exc.value)
+
+
+def _load_cancel_open_orders_helper():
+    source = _function_source("trade_executor.py", "_cancel_all_open_orders_for_symbol")
+    namespace = {"log": Mock()}
+    exec(compile("from __future__ import annotations\n" + source, "<cancel-helper>", "exec"), namespace)
+    return namespace["_cancel_all_open_orders_for_symbol"]
+
+
+def test_cancel_open_orders_helper_requires_verified_empty_book():
+    cancel_helper = _load_cancel_open_orders_helper()
+
+    class FakeExchange:
+        def __init__(self):
+            self.orders = [{"order_id": "order-1"}]
+
+        def get_open_orders(self, symbol):
+            return list(self.orders)
+
+        def cancel_order(self, order_id):
+            self.orders = [row for row in self.orders if row["order_id"] != order_id]
+
+    exchange = FakeExchange()
+    assert cancel_helper(exchange, "DOGEUSDT") is True
+    assert exchange.orders == []
+
+
+def test_cancel_open_orders_helper_fails_when_order_remains():
+    cancel_helper = _load_cancel_open_orders_helper()
+
+    class FakeExchange:
+        def __init__(self):
+            self.orders = [{"order_id": "order-1"}]
+
+        def get_open_orders(self, symbol):
+            return list(self.orders)
+
+        def cancel_order(self, order_id):
+            raise RuntimeError("cancel rejected")
+
+    exchange = FakeExchange()
+    assert cancel_helper(exchange, "DOGEUSDT") is False
+    assert len(exchange.orders) == 1
+
+
+def test_cancel_open_orders_helper_fails_when_final_read_is_unavailable():
+    cancel_helper = _load_cancel_open_orders_helper()
+
+    class FakeExchange:
+        def __init__(self):
+            self.calls = 0
+
+        def get_open_orders(self, symbol):
+            self.calls += 1
+            if self.calls == 1:
+                return []
+            raise RuntimeError("final order read failed")
+
+        def cancel_order(self, order_id):
+            raise AssertionError("there are no orders to cancel")
+
+    exchange = FakeExchange()
+    assert cancel_helper(exchange, "DOGEUSDT") is False
+
+
+def test_emergency_close_helper_retains_tracking_unless_flat_and_orders_are_verified():
+    source = _function_source("trade_executor.py", "_emergency_close_and_verify")
+    assert "flat_verified and orders_cleared" in source
+    assert "_verify_actually_closed(deribit, symbol)" in source
+    assert "_cancel_all_open_orders_for_symbol(deribit, symbol)" in source
+    assert "_retain_emergency_recovery_record(" in source
+
+
+def test_emergency_execution_failures_use_common_verified_recovery_helper():
+    source = _function_source("trade_executor.py", "execute_trade")
+    assert source.count("_emergency_close_and_verify(") >= 6
+    assert "Post-fill bracket invalid. Flattened." not in source
+    assert "SL rejected. Position flattened." not in source
+
+
+def test_corrupted_state_close_requires_flatness_and_order_cleanup_before_recording_closed():
+    source = _function_source("trade_executor.py", "clean_ghost_trades")
+    start = source.find('if float(trade.get("stop", 0)) == 0 or float(trade.get("tp1", 0)) == 0:')
+    end = source.find('if float(trade.get("score", 1)) == 0 and float(trade.get("confidence", 1)) == 0:', start)
+    assert start >= 0 and end > start
+    block = source[start:end]
+    assert "flat_verified = _verify_actually_closed(deribit, symbol)" in block
+    assert "orders_cleared = _cancel_all_open_orders_for_symbol(deribit, symbol)" in block
+    assert block.find("if flat_verified and orders_cleared:") < block.find('_close_record(')
+    assert "corrupted-state close unverified; retaining trade tracking" in block
+
+
+def test_time_and_stop_exit_keep_tracking_when_open_order_cleanup_fails():
+    open_source = _function_source("trade_executor.py", "check_open_trades")
+    stale_source = _function_source("trade_executor.py", "check_stale_trades")
+    assert "stop-exit flatness or open-order cleanup unverified; retaining trade tracking" in open_source
+    assert "stale-time exit flatness or order cleanup unverified; retaining trade tracking" in stale_source

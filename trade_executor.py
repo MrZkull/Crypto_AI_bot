@@ -736,21 +736,68 @@ def _place_tp_with_fallback(deribit, symbol: str, side: str, qty, price: float, 
             log.warning(f"  {label} re-place {symbol}: {e}")
     return ""
     
-def _cancel_all_open_orders_for_symbol(deribit: DeribitClient, symbol: str):
+def _cancel_all_open_orders_for_symbol(deribit: DeribitClient, symbol: str) -> bool:
+    """Cancel and then independently verify that no open orders remain.
+
+    A read/cancellation error is not equivalent to an empty order book.
+    """
     try:
         orders = deribit.get_open_orders(symbol)
-        if orders:
-            log.info(f"  🧹 Found {len(orders)} active open order(s) on Deribit for {symbol} — cancelling all...")
-            for o in orders:
-                oid = str(o.get("order_id", ""))
-                if oid:
-                    try:
-                        deribit.cancel_order(oid)
-                        log.info(f"    ✓ Cancelled exchange order {oid}")
-                    except Exception as ce:
-                        log.debug(f"    Failed to cancel {oid}: {ce}")
-    except Exception as e:
-        log.warning(f"  _cancel_all_open_orders_for_symbol {symbol}: {e}")
+        if not isinstance(orders, list):
+            log.error("  Open-order snapshot for %s is malformed; cleanup unverified", symbol)
+            return False
+    except Exception as exc:
+        log.error(
+            "  Open-order snapshot for %s unavailable (%s); cleanup unverified",
+            symbol,
+            type(exc).__name__,
+        )
+        return False
+
+    if orders:
+        log.info(
+            "  🧹 Found %s active open order(s) on Deribit for %s — cancelling all...",
+            len(orders), symbol,
+        )
+    for order in orders:
+        if not isinstance(order, dict):
+            log.error("  Malformed open-order row for %s; cleanup unverified", symbol)
+            continue
+        order_id = str(order.get("order_id", "")).strip()
+        if not order_id:
+            log.error("  Open order without an ID for %s; cleanup unverified", symbol)
+            continue
+        try:
+            deribit.cancel_order(order_id)
+            log.info("    ✓ Cancellation requested for exchange order %s", order_id)
+        except Exception as exc:
+            log.warning(
+                "    Cancellation for %s failed (%s); checking remaining orders",
+                order_id,
+                type(exc).__name__,
+            )
+
+    try:
+        remaining = deribit.get_open_orders(symbol)
+    except Exception as exc:
+        log.error(
+            "  Cannot verify remaining open orders for %s (%s)",
+            symbol,
+            type(exc).__name__,
+        )
+        return False
+
+    if not isinstance(remaining, list):
+        log.error("  Remaining open-order snapshot for %s is malformed", symbol)
+        return False
+    if remaining:
+        log.critical(
+            "  %s: %s open order(s) remain after cleanup; retaining trade tracking",
+            symbol,
+            len(remaining),
+        )
+        return False
+    return True
 
 def _get_safe_close_info(deribit: DeribitClient, symbol: str, trade: dict) -> tuple:
     for attempt in range(2):
@@ -1856,29 +1903,11 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 log.warning(f"  ⚠️ {symbol}: authoritative fill refresh failed: {fill_e}")
         if actual_entry <= 0:
             log.critical(f"  🚨 {symbol}: NO AUTHORITATIVE ENTRY FILL — refusing fabricated P&L/risk state")
-            try:
-                emergency_pos = abs(deribit.get_position_size(symbol))
-            except Exception as read_error:
-                log.critical(
-                    "  %s: position read failed after unreconciled entry fill (%s); "
-                    "using reduce-only order quantity as recovery attempt",
-                    symbol,
-                    type(read_error).__name__,
-                )
-                emergency_pos = abs(float(eo.get("filled_amount", 0) or total_q))
-            if emergency_pos > 0:
-                try:
-                    deribit.place_market_order(symbol, sl_side, emergency_pos, reduce_only=True)
-                    if _verify_actually_closed(deribit, symbol):
-                        log.critical("  %s: emergency reduce-only recovery verified flat", symbol)
-                    else:
-                        log.critical("  %s: emergency reduce-only recovery unverified; manual inspection required", symbol)
-                except Exception as flatten_e:
-                    log.critical(
-                        "  %s: emergency reduce-only recovery failed (%s); manual inspection required",
-                        symbol,
-                        type(flatten_e).__name__,
-                    )
+            _emergency_close_and_verify(
+                deribit, trades, sig, symbol, signal, entry,
+                abs(float(eo.get("filled_amount", 0) or total_q)), order_ids,
+                "authoritative entry fill unavailable",
+            )
             return False
         
         o_state = eo.get("order_state", "").lower()
@@ -1901,20 +1930,11 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 "refusing bracket deployment and attempting reduce-only recovery",
                 symbol,
             )
-            try:
-                recovery_qty = abs(float(eo.get("filled_amount", 0) or total_q))
-                if recovery_qty > 0:
-                    deribit.place_market_order(symbol, sl_side, recovery_qty, reduce_only=True)
-                    if _verify_actually_closed(deribit, symbol):
-                        log.critical("  %s: reduce-only recovery verified flat", symbol)
-                    else:
-                        log.critical("  %s: reduce-only recovery was not verified; manual review required", symbol)
-            except Exception as recovery_error:
-                log.critical(
-                    "  %s: reduce-only recovery failed (%s); manual exchange inspection required",
-                    symbol,
-                    type(recovery_error).__name__,
-                )
+            _emergency_close_and_verify(
+                deribit, trades, sig, symbol, signal, actual_entry,
+                abs(float(eo.get("filled_amount", 0) or total_q)), order_ids,
+                "post-entry position could not be verified",
+            )
             return False
 
         if signal == "BUY":
@@ -1934,11 +1954,10 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 break
 
         if not post_fill_valid:
-            try:
-                deribit.place_market_order(symbol, sl_side, total_q, reduce_only=True)
-                _send(f"🚨 *EMERGENCY CLOSE — {symbol}*\nPost-fill bracket invalid. Flattened.")
-            except Exception as ce:
-                log.critical(f"  🚨🚨 {symbol}: Emergency close failed: {ce}")
+            _emergency_close_and_verify(
+                deribit, trades, sig, symbol, signal, actual_entry,
+                total_q, order_ids, "post-fill bracket invalid",
+            )
             return False
 
         stop = recomputed_stop
@@ -1950,26 +1969,10 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 f"  🚨 {symbol}: POST-FILL RISK INVARIANT FAILED | "
                 f"actual=${actual_risk_usd:.4f} budget=${budget_risk_usd:.4f} — refusing bracket deployment"
             )
-            try:
-                emergency_pos = abs(deribit.get_position_size(symbol))
-                if emergency_pos > 0:
-                    deribit.place_market_order(symbol, sl_side, emergency_pos, reduce_only=True)
-            except Exception as flatten_e:
-                log.critical(
-                    "  %s: risk-invariant position read failed (%s); attempting reduce-only fallback quantity",
-                    symbol,
-                    type(flatten_e).__name__,
-                )
-                try:
-                    deribit.place_market_order(symbol, sl_side, total_q, reduce_only=True)
-                    if not _verify_actually_closed(deribit, symbol):
-                        log.critical("  %s: risk-invariant fallback closure is unverified; manual inspection required", symbol)
-                except Exception as fallback_e:
-                    log.critical(
-                        "  %s: risk-invariant reduce-only fallback failed (%s); manual inspection required",
-                        symbol,
-                        type(fallback_e).__name__,
-                    )
+            _emergency_close_and_verify(
+                deribit, trades, sig, symbol, signal, actual_entry,
+                total_q, order_ids, "post-fill risk invariant failed",
+            )
             return False
 
         tick = deribit.get_tick_size(symbol)
@@ -1986,34 +1989,10 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                     actual_pos_size,
                     min_lot,
                 )
-                if actual_pos_size > 0:
-                    try:
-                        deribit.place_market_order(
-                            symbol, sl_side, actual_pos_size, reduce_only=True
-                        )
-                        if _verify_actually_closed(deribit, symbol):
-                            log.critical(
-                                "  %s: sub-lot reduce-only recovery verified flat",
-                                symbol,
-                            )
-                        else:
-                            log.critical(
-                                "  %s: sub-lot reduce-only recovery unverified; "
-                                "manual exchange inspection required",
-                                symbol,
-                            )
-                    except Exception as recovery_error:
-                        log.critical(
-                            "  %s: sub-lot reduce-only recovery failed (%s); "
-                            "manual exchange inspection required",
-                            symbol,
-                            type(recovery_error).__name__,
-                        )
-                else:
-                    log.critical(
-                        "  %s: verified flat after fill; no brackets deployed",
-                        symbol,
-                    )
+                _emergency_close_and_verify(
+                    deribit, trades, sig, symbol, signal, actual_entry,
+                    total_q, order_ids, "post-fill position below minimum lot",
+                )
                 return False
             sl_qty = actual_pos_size
             if actual_pos_size < total_q:
@@ -2027,18 +2006,10 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 symbol,
                 type(pos_e).__name__,
             )
-            try:
-                deribit.place_market_order(symbol, sl_side, total_q, reduce_only=True)
-                if _verify_actually_closed(deribit, symbol):
-                    log.critical("  %s: reduce-only recovery verified flat", symbol)
-                else:
-                    log.critical("  %s: reduce-only recovery not verified; manual exchange inspection required", symbol)
-            except Exception as recovery_error:
-                log.critical(
-                    "  %s: reduce-only recovery failed (%s); manual exchange inspection required",
-                    symbol,
-                    type(recovery_error).__name__,
-                )
+            _emergency_close_and_verify(
+                deribit, trades, sig, symbol, signal, actual_entry,
+                total_q, order_ids, "post-fill position read failed",
+            )
             return False
 
         order_plan = [("SL", sl_qty, sl_limit, stop, "stop_loss"), ("TP1", qty_tp1, tp1, None, "tp1")]
@@ -2072,11 +2043,10 @@ def execute_trade(deribit: DeribitClient, sig: dict, risk_mult: float, balance: 
                 log.critical(f"  🚨 {symbol}: Emergency SL retry failed: {fe}")
 
         if not order_ids.get("stop_loss"):
-            try:
-                deribit.place_market_order(symbol, sl_side, sl_qty, reduce_only=True)
-                _send(f"🚨 *EMERGENCY CLOSE — {symbol}*\nSL rejected. Position flattened.")
-            except Exception as ce:
-                log.critical(f"  🚨🚨 {symbol}: Emergency flatten failed: {ce}")
+            _emergency_close_and_verify(
+                deribit, trades, sig, symbol, signal, actual_entry,
+                sl_qty, order_ids, "stop-loss order placement failed",
+            )
             return False
 
     except Exception as e:
@@ -2133,6 +2103,163 @@ def _pnl(t, cp, ct):
 def _close_record(t, cp, pnl, reason):
     append_history({**t, "close_price": cp, "pnl": pnl,
         "closed_at": datetime.now(timezone.utc).isoformat(), "close_reason": reason})
+
+
+def _retain_emergency_recovery_record(
+    trades: dict,
+    sig: dict,
+    symbol: str,
+    signal: str,
+    entry_price: float,
+    fallback_qty: float,
+    order_ids: dict,
+    reason: str,
+) -> None:
+    """Persist an explicitly unresolved position instead of losing trade tracking."""
+    try:
+        tracked_entry = float(entry_price)
+    except (TypeError, ValueError, OverflowError):
+        tracked_entry = 0.0
+    if not math.isfinite(tracked_entry) or tracked_entry <= 0:
+        try:
+            tracked_entry = float(sig.get("entry", 0) or 0)
+        except (TypeError, ValueError, OverflowError):
+            tracked_entry = 0.0
+    try:
+        tracked_qty = abs(float(fallback_qty or 0))
+    except (TypeError, ValueError, OverflowError):
+        tracked_qty = 0.0
+    if not math.isfinite(tracked_qty):
+        tracked_qty = 0.0
+
+    existing = trades.get(symbol)
+    if isinstance(existing, dict) and not existing.get("closed", False):
+        record = existing
+    else:
+        record = {}
+
+    record.update({
+        "symbol": symbol,
+        "signal": signal,
+        "entry": tracked_entry,
+        "model_entry": float(sig.get("entry", tracked_entry) or tracked_entry),
+        "execution_entry_ref": tracked_entry,
+        "actual_entry": tracked_entry,
+        "stop": 0.0,
+        "tp1": 0.0,
+        "tp2": 0.0,
+        "qty": tracked_qty,
+        "qty_tp1": tracked_qty,
+        "qty_tp2": 0.0,
+        "risk_usd": 0.0,
+        "initial_risk_usd": 0.0,
+        "budget_risk_usd": 0.0,
+        "balance_at_open": 0.0,
+        "risk_mult": 0.0,
+        "exit_mode": "EMERGENCY_RECOVERY",
+        "order_ids": dict(order_ids or {}),
+        "opened_at": record.get("opened_at") or datetime.now(timezone.utc).isoformat(),
+        "tp1_hit": False,
+        "tp2_hit": False,
+        "closed": False,
+        "confidence": sig.get("confidence", 0),
+        "score": sig.get("score", 0),
+        "reasons": sig.get("reasons", []) if isinstance(sig.get("reasons", []), list) else [],
+        "tier": sig.get("conf_tier", "emergency-recovery"),
+        "fg_override": sig.get("fg_override", False),
+        "pred_id": sig.get("pred_id"),
+        "snapshot": sig.get("snapshot", {}) if isinstance(sig.get("snapshot", {}), dict) else {},
+        "stop_mult_used": ATR_STOP_MULT,
+        "emergency_recovery_required": True,
+        "emergency_recovery_reason": reason,
+    })
+    trades[symbol] = record
+    save_trades(trades)
+    try:
+        persisted = load_trades().get(symbol)
+    except Exception:
+        persisted = None
+    if not isinstance(persisted, dict) or not persisted.get("emergency_recovery_required"):
+        log.critical(
+            "  %s: emergency recovery tracking persistence could not be verified",
+            symbol,
+        )
+    log.critical(
+        "  %s: emergency recovery is unresolved (%s); tracking retained and manual exchange inspection required",
+        symbol,
+        reason,
+    )
+    _send(
+        f"🚨 *MANUAL EXCHANGE INSPECTION REQUIRED — {symbol}*\n"
+        f"Emergency recovery not verified: {reason}. Tracking record retained."
+    )
+
+
+def _emergency_close_and_verify(
+    deribit: DeribitClient,
+    trades: dict,
+    sig: dict,
+    symbol: str,
+    signal: str,
+    entry_price: float,
+    fallback_qty: float,
+    order_ids: dict,
+    reason: str,
+) -> bool:
+    """Attempt reduce-only recovery, verify flatness and order cleanup, retain state on uncertainty."""
+    _cancel_all_open_orders_for_symbol(deribit, symbol)
+
+    close_side = "SELL" if signal == "BUY" else "BUY"
+    close_qty = 0.0
+    try:
+        signed_position = float(deribit.get_position_size(symbol))
+        if not math.isfinite(signed_position):
+            raise ValueError("position quantity is non-finite")
+        if abs(signed_position) > 1e-8:
+            close_side = "SELL" if signed_position > 0 else "BUY"
+            close_qty = float(deribit.round_amount(symbol, abs(signed_position)))
+    except Exception as exc:
+        log.critical(
+            "  %s: emergency position read unavailable (%s); using the entry quantity as a reduce-only recovery attempt",
+            symbol,
+            type(exc).__name__,
+        )
+        try:
+            close_qty = float(deribit.round_amount(symbol, abs(float(fallback_qty or 0))))
+        except Exception:
+            try:
+                close_qty = abs(float(fallback_qty or 0))
+            except (TypeError, ValueError, OverflowError):
+                close_qty = 0.0
+
+    if math.isfinite(close_qty) and close_qty > 0:
+        try:
+            deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
+        except Exception as exc:
+            log.critical(
+                "  %s: emergency reduce-only order failed (%s); verifying exchange state anyway",
+                symbol,
+                type(exc).__name__,
+            )
+
+    flat_verified = _verify_actually_closed(deribit, symbol)
+    orders_cleared = _cancel_all_open_orders_for_symbol(deribit, symbol)
+    if flat_verified and orders_cleared:
+        log.critical(
+            "  %s: emergency recovery verified flat with no open orders (%s)",
+            symbol,
+            reason,
+        )
+        _send(
+            f"✅ *Emergency recovery verified — {symbol}*\n"
+            f"Exchange reports flat and no open orders: {reason}."
+        )
+        return True
+
+    _retain_emergency_recovery_record(
+        trades, sig, symbol, signal, entry_price, fallback_qty, order_ids, reason
+    )
+    return False
 
 def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) -> bool:
     # ── GUARD: Do not attempt to replace brackets if exchange position is flat ──
@@ -2199,14 +2326,21 @@ def _replace_missing_orders(deribit: DeribitClient, symbol: str, trade: dict) ->
                         if close_qty > 0:
                             deribit.place_market_order(symbol, close_side, close_qty, reduce_only=True)
                         live = deribit.get_live_price(symbol)
-                        pnl  = _pnl(trade, live if live > 0 else stop, "sl")
-                        if _verify_actually_closed(deribit, symbol):
+                        pnl = _pnl(trade, live if live > 0 else stop, "sl")
+                        flat_verified = _verify_actually_closed(deribit, symbol)
+                        orders_cleared = _cancel_all_open_orders_for_symbol(deribit, symbol)
+                        if flat_verified and orders_cleared:
                             _close_record(trade, live if live > 0 else stop, pnl, "SL missed — market close")
                             if pnl < 0:
                                 _add_cooldown(symbol, f"SL missed close pnl={pnl:+.4f}")
                                 _record_outcome(symbol, won=False)
                             trade["closed"] = True
                             changed = True
+                        else:
+                            log.critical(
+                                "  %s: missed-SL recovery is not fully verified; retaining trade tracking",
+                                symbol,
+                            )
                     except Exception as me:
                         log.error(f"  Emergency SL close {symbol}: {me}")
 
@@ -2343,17 +2477,26 @@ def check_open_trades(deribit: DeribitClient):
                 try:
                     if mae_qty > 0:
                         deribit.place_market_order(symbol, close_side, mae_qty, reduce_only=True)
-                    if _verify_actually_closed(deribit, symbol):
-                        _close_record(trade, live, mae_pnl, "Max adverse excursion ❌")
-                        _send(f"🚨 *FORCE CLOSE — {symbol}*\nLoss `{mae_pnl:+.4f}` exceeded 3× risk")
-                        if mae_pnl < 0:
-                            _add_cooldown(symbol, f"MAE close pnl={mae_pnl:+.4f}")
-                            _record_outcome(symbol, won=False)
-                        trade["closed"] = True
-                        to_remove.append(symbol)
-                        continue
                 except Exception as e:
-                    log.error(f"  MAE force-close {symbol}: {e}")
+                    log.error("  MAE force-close %s order failed (%s)", symbol, type(e).__name__)
+                    continue
+
+                flat_verified = _verify_actually_closed(deribit, symbol)
+                orders_cleared = _cancel_all_open_orders_for_symbol(deribit, symbol)
+                if flat_verified and orders_cleared:
+                    _close_record(trade, live, mae_pnl, "Max adverse excursion ❌")
+                    _send(f"🚨 *FORCE CLOSE — {symbol}*\nLoss `{mae_pnl:+.4f}` exceeded 3× risk")
+                    if mae_pnl < 0:
+                        _add_cooldown(symbol, f"MAE close pnl={mae_pnl:+.4f}")
+                        _record_outcome(symbol, won=False)
+                    trade["closed"] = True
+                    to_remove.append(symbol)
+                    continue
+                log.critical(
+                    "  %s: MAE close or order cleanup unverified; retaining trade tracking",
+                    symbol,
+                )
+                continue
 
         # TP1 Monitoring
         try:
@@ -2516,6 +2659,13 @@ def check_open_trades(deribit: DeribitClient):
                             )
                             continue
 
+                    if not _cancel_all_open_orders_for_symbol(deribit, symbol):
+                        log.critical(
+                            "  %s: TP2 flatness seen but open-order cleanup unverified; retaining trade tracking",
+                            symbol,
+                        )
+                        continue
+
                     pnl2 = round(pnl2 + tp1_leftover_pnl, 4)
                     trade["tp2_hit"] = True
                     trade["closed"]  = True
@@ -2569,7 +2719,7 @@ def check_open_trades(deribit: DeribitClient):
                     except Exception as e: log.error(f"  Scenario-B close {symbol}: {e}")
 
                 if sl_hit:
-                    if _verify_actually_closed(deribit, symbol):
+                    if _verify_actually_closed(deribit, symbol) and _cancel_all_open_orders_for_symbol(deribit, symbol):
                         trade["closed"] = True
                         fill = fp(sl_o, stop)
                         if fill == 0 or fill == stop:
@@ -2592,6 +2742,11 @@ def check_open_trades(deribit: DeribitClient):
                                 try: deribit.cancel_order(oids[k])
                                 except Exception: pass
                         to_remove.append(symbol)
+                    else:
+                        log.critical(
+                            "  %s: stop-exit flatness or open-order cleanup unverified; retaining trade tracking",
+                            symbol,
+                        )
 
         except Exception as e:
             log.error(f"  Monitor {symbol}: {e}")
@@ -2650,13 +2805,20 @@ def check_stale_trades(deribit: DeribitClient):
                 except Exception as me:
                     log.warning(f"  Time-exit market order {symbol}: {me}")
 
-            if _verify_actually_closed(deribit, symbol):
+            flat_verified = _verify_actually_closed(deribit, symbol)
+            orders_cleared = _cancel_all_open_orders_for_symbol(deribit, symbol)
+            if flat_verified and orders_cleared:
                 close_price = live if live > 0 else float(trade["entry"])
-                pnl         = _pnl(trade, close_price, "sl")
-                reason      = f"Time exit ({age_h:.0f}h [{tier_label}])"
+                pnl = _pnl(trade, close_price, "sl")
+                reason = f"Time exit ({age_h:.0f}h [{tier_label}])"
                 _close_record(trade, close_price, pnl, reason)
                 _send(f"⏰ *TIME EXIT ({tier_label}) — {symbol}*\n{age_h:.1f}h | PnL≈`{pnl:+.4f}`")
                 to_remove.append(symbol)
+            else:
+                log.critical(
+                    "  %s: stale-time exit flatness or order cleanup unverified; retaining trade tracking",
+                    symbol,
+                )
         except Exception as e:
             log.error(f"  Time exit {symbol}: {e}")
 
@@ -2705,12 +2867,38 @@ def clean_ghost_trades(deribit: DeribitClient):
                         _cancel_all_open_orders_for_symbol(deribit, symbol)
                         close_side = "SELL" if trade.get("signal") == "BUY" else "BUY"
                         deribit.place_market_order(symbol, close_side, actual, reduce_only=True)
-                        _close_record(trade, float(trade.get("entry", 0)), 0.0, "Corrupted state auto-flattened")
-                        to_remove.append(symbol)
+                        flat_verified = _verify_actually_closed(deribit, symbol)
+                        orders_cleared = _cancel_all_open_orders_for_symbol(deribit, symbol)
+                        if flat_verified and orders_cleared:
+                            _close_record(
+                                trade,
+                                float(trade.get("entry", 0)),
+                                0.0,
+                                "Corrupted state auto-flattened",
+                            )
+                            to_remove.append(symbol)
+                        else:
+                            log.critical(
+                                "  %s: corrupted-state close unverified; retaining trade tracking",
+                                symbol,
+                            )
+                    else:
+                        log.warning(
+                            "  %s: corrupted-state healing incomplete; tracking retained",
+                            symbol,
+                        )
                 else:
-                    to_remove.append(symbol)
+                    flat_verified = _verify_actually_closed(deribit, symbol)
+                    orders_cleared = _cancel_all_open_orders_for_symbol(deribit, symbol)
+                    if flat_verified and orders_cleared:
+                        to_remove.append(symbol)
+                    else:
+                        log.critical(
+                            "  %s: no position observed but order cleanup/flatness unverified; retaining tracking",
+                            symbol,
+                        )
             except Exception as ge:
-                log.error(f"  Ghost healing failed for {symbol}: {ge}")
+                log.error(f"  Ghost healing failed for {symbol} (%s); tracking retained", type(ge).__name__)
             continue
             
         if float(trade.get("score", 1)) == 0 and float(trade.get("confidence", 1)) == 0:
@@ -2728,9 +2916,6 @@ def clean_ghost_trades(deribit: DeribitClient):
                     _cancel_all_open_orders_for_symbol(deribit, symbol)
                     close_side = "SELL" if actual > 0 else "BUY"
                     deribit.place_market_order(symbol, close_side, abs(actual), reduce_only=True)
-                    if not _verify_actually_closed(deribit, symbol):
-                        log.error("  Broken ghost record %s retained: closure not verified", symbol)
-                        continue
                 except Exception as close_error:
                     log.error(
                         "  Broken ghost record %s retained: reduce-only close failed (%s)",
@@ -2738,6 +2923,15 @@ def clean_ghost_trades(deribit: DeribitClient):
                         type(close_error).__name__,
                     )
                     continue
+
+            flat_verified = _verify_actually_closed(deribit, symbol)
+            orders_cleared = _cancel_all_open_orders_for_symbol(deribit, symbol)
+            if not flat_verified or not orders_cleared:
+                log.critical(
+                    "  Broken ghost record %s retained: flatness or open-order cleanup unverified",
+                    symbol,
+                )
+                continue
             _close_record(trade, float(trade.get("entry", 0)), 0.0, "Ghost — broken record")
             to_remove.append(symbol)
             continue
@@ -3131,20 +3325,27 @@ def _run_execution_scan_locked():
 
                 log.warning(f"  🚨 [RECONCILER] Confirmed orphan: {sym} — Flattening...")
                 _cancel_all_open_orders_for_symbol(deribit, sym)
-            
+
                 flatten_side = "SELL" if size > 0 else "BUY"
-                flatten_qty  = deribit.round_amount(sym, abs(size))
-            
+                flatten_qty = deribit.round_amount(sym, abs(size))
+
                 try:
                     if flatten_qty > 0:
                         deribit.place_market_order(symbol=sym, side=flatten_side, amount=flatten_qty, reduce_only=True)
-                
-                    if _verify_actually_closed(deribit, sym):
+
+                    flat_verified = _verify_actually_closed(deribit, sym)
+                    orders_cleared = _cancel_all_open_orders_for_symbol(deribit, sym)
+                    if flat_verified and orders_cleared:
                         orphan_tracker.pop(sym, None)
-                        log.info(f"  ✓ [RECONCILER] Flattened orphan {sym}")
+                        log.info(f"  ✓ [RECONCILER] Flattened orphan {sym}; flatness and order cleanup verified")
                         _send(f"🛡️ *[RECONCILER] Orphan Flattened — {sym}*")
+                    else:
+                        log.critical(
+                            "  [RECONCILER] %s close/cleanup unverified; orphan tracker retained",
+                            sym,
+                        )
                 except Exception as re_err:
-                    log.error(f"  [RECONCILER] Flatten failed: {re_err}")
+                    log.error("  [RECONCILER] Flatten failed for %s (%s)", sym, type(re_err).__name__)
 
         if fetch_succeeded:
             for tracked_cand in list(orphan_tracker.keys()):
