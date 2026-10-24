@@ -35,7 +35,7 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run Stage 2E paper execution
-        run: python paper_execution.py
+        run: python paper_execution_v2.py
 
       - name: Commit paper state and ledger
         run: |
@@ -43,7 +43,7 @@ jobs:
           git config user.name "CryptoBot AI Paper"
           git config user.email "paper@cryptobot.ai"
 
-          git add paper_state.json paper_events.jsonl 2>/dev/null || true
+          git add paper_state_v2.json paper_events_v2.jsonl 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No Stage 2E paper state changes."
