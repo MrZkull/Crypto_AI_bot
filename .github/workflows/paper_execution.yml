@@ -43,10 +43,46 @@ jobs:
           git config user.name "CryptoBot AI Paper"
           git config user.email "paper@cryptobot.ai"
 
-          git add paper_state_v2.json paper_events_v2.jsonl 2>/dev/null || true
+          # Fail closed if the prospective baseline cannot be persisted.
+          if [[ ! -s paper_state_v2.json ]]; then
+            echo "::error::Stage 2E v2 did not write paper_state_v2.json"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          state = json.loads(
+              Path("paper_state_v2.json").read_text(encoding="utf-8")
+          )
+          if not isinstance(state, dict):
+              raise SystemExit("Stage 2E state is not a JSON object")
+          if state.get("schema_version") != 2:
+              raise SystemExit("Stage 2E state schema mismatch")
+          if state.get("policy_version") != "stage2e-v2":
+              raise SystemExit("Stage 2E state policy mismatch")
+          if state.get("execution_mode") != "PAPER_ONLY":
+              raise SystemExit("Stage 2E state execution mode mismatch")
+
+          initialized = state.get("prospective_initialized_at_ms")
+          baseline = state.get("prospective_start_time_ms")
+          for name, value in (("initialized", initialized), ("baseline", baseline)):
+              if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                  raise SystemExit(f"Invalid {name} timestamp in Stage 2E state")
+          if baseline <= initialized:
+              raise SystemExit("Stage 2E prospective baseline is not after initialization")
+          PY
+
+          if [[ ! -f paper_events_v2.jsonl ]]; then
+            : > paper_events_v2.jsonl
+          fi
+
+          # Force-add runtime state even if an ignore rule matches.
+          git add -f paper_state_v2.json paper_events_v2.jsonl
 
           if git diff --cached --quiet; then
-            echo "No Stage 2E paper state changes."
+            echo "Stage 2E state/ledger are persisted and unchanged."
             exit 0
           fi
 
