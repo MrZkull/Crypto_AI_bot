@@ -37,6 +37,11 @@
       "status": "OPENED",
       "timestamp_ms": 1793267299085
     },
+    "HBARUSDT_1793288316999": {
+      "entry_bar_open_time_ms": 1793288700000,
+      "status": "DUPLICATE_SYMBOL_ACTIVE",
+      "timestamp_ms": 1793292718062
+    },
     "SOLUSDT_1793263665814": {
       "status": "OPENED",
       "timestamp_ms": 1793267299696
@@ -446,7 +451,7 @@
     },
     "ETHUSDT_1793263660131": {
       "atr_ref": 7.147489648353549,
-      "bars_processed": 3,
+      "bars_processed": 23,
       "entry_bar_close_time_ms": 1793265299999,
       "entry_bar_observation_identity": [
         "ETHUSDT",
@@ -470,25 +475,29 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 2319.39,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 2337.258724120884,
+      "exit_reason": "STOP_LOSS",
       "expires_at_ms": 1793286000000,
+      "final_exit_fee_usd": 23.54429826638034,
       "generated_at": "2026-10-29T08:47:40.131894+00:00",
       "generated_at_ms": 1793263660131,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1793267099999,
+      "last_observation_close_time": 1793285099999,
       "last_observation_identity": [
         "ETHUSDT",
-        1793266200000,
+        1793284200000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1793266200000,
-      "last_processed_candle_close_time": 1793267099999,
+      "last_observation_open_time": 1793284200000,
+      "last_processed_candle_close_time": 1793285099999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "ETHUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1793267100000,
+      "net_r": -1.1563619884425356,
+      "next_candle_open_time_ms": 1793285100000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1793263499999,
@@ -550,7 +559,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "ETHUSDT_1793263660131",
       "qty": 16.789111408876433,
-      "remaining_qty": 16.789111408876433,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793292718769,
+      "resolved_candle_close_time": 1793285099999,
       "side": "SELL",
       "signal_observation_identity": [
         "ETHUSDT",
@@ -560,8 +572,8 @@
         "spot"
       ],
       "simulated_entry": 2319.39,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 2337.258724120884,
       "symbol": "ETHUSDT",
       "tp1": 2294.3737862307626,
@@ -959,7 +971,7 @@
     },
     "HBARUSDT_1793263721658": {
       "atr_ref": 0.00028279016057313627,
-      "bars_processed": 3,
+      "bars_processed": 18,
       "entry_bar_close_time_ms": 1793265299999,
       "entry_bar_observation_identity": [
         "HBARUSDT",
@@ -983,25 +995,29 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 0.07373,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.07443697540143285,
+      "exit_reason": "STOP_LOSS",
       "expires_at_ms": 1793286000000,
+      "final_exit_fee_usd": 18.952081706241174,
       "generated_at": "2026-10-29T08:48:41.658313+00:00",
       "generated_at_ms": 1793263721658,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1793267099999,
+      "last_observation_close_time": 1793280599999,
       "last_observation_identity": [
         "HBARUSDT",
-        1793266200000,
+        1793279700000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1793266200000,
-      "last_processed_candle_close_time": 1793267099999,
+      "last_observation_open_time": 1793279700000,
+      "last_processed_candle_close_time": 1793280599999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "HBARUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1793267100000,
+      "net_r": -1.1257472113749412,
+      "next_candle_open_time_ms": 1793280600000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1793263499999,
@@ -1063,7 +1079,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "HBARUSDT_1793263721658",
       "qty": 424342.9112130109,
-      "remaining_qty": 424342.9112130109,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793292719699,
+      "resolved_candle_close_time": 1793280599999,
       "side": "SELL",
       "signal_observation_identity": [
         "HBARUSDT",
@@ -1073,8 +1092,8 @@
         "spot"
       ],
       "simulated_entry": 0.07373,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 0.07443697540143285,
       "symbol": "HBARUSDT",
       "tp1": 0.07274023443799403,
@@ -1082,7 +1101,7 @@
     },
     "SOLUSDT_1793263665814": {
       "atr_ref": 0.2819766047234506,
-      "bars_processed": 3,
+      "bars_processed": 18,
       "entry_bar_close_time_ms": 1793265299999,
       "entry_bar_observation_identity": [
         "SOLUSDT",
@@ -1106,25 +1125,29 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 100.24,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 100.94494151180862,
+      "exit_reason": "STOP_LOSS",
       "expires_at_ms": 1793286000000,
+      "final_exit_fee_usd": 25.775314927202416,
       "generated_at": "2026-10-29T08:47:45.814636+00:00",
       "generated_at_ms": 1793263665814,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1793267099999,
+      "last_observation_close_time": 1793280599999,
       "last_observation_identity": [
         "SOLUSDT",
-        1793266200000,
+        1793279700000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1793266200000,
-      "last_processed_candle_close_time": 1793267099999,
+      "last_observation_open_time": 1793279700000,
+      "last_processed_candle_close_time": 1793280599999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "SOLUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1793267100000,
+      "net_r": -1.1712354328480161,
+      "next_candle_open_time_ms": 1793280600000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1793263499999,
@@ -1186,7 +1209,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "SOLUSDT_1793263665814",
       "qty": 425.567220790144,
-      "remaining_qty": 425.567220790144,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793292720347,
+      "resolved_candle_close_time": 1793280599999,
       "side": "SELL",
       "signal_observation_identity": [
         "SOLUSDT",
@@ -1196,8 +1222,8 @@
         "spot"
       ],
       "simulated_entry": 100.24,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 100.94494151180862,
       "symbol": "SOLUSDT",
       "tp1": 99.25308188346791,
