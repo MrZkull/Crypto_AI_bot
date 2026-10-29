@@ -1,12 +1,33 @@
+import base64
 import json
+import os
 import unittest
 from unittest.mock import patch
 
 import dashboard
 
 
+PAPER_STATE_TEST_AUTH = {
+    "DASHBOARD_AUTH_USERNAME": "cryptobot-admin",
+    "DASHBOARD_AUTH_PASSWORD": "test-only-dashboard-passphrase-long-enough",
+    "DASHBOARD_PUBLIC_ORIGIN": "https://cryptobot-test.example",
+}
+
+
+def paper_state_auth_header():
+    username = PAPER_STATE_TEST_AUTH["DASHBOARD_AUTH_USERNAME"]
+    password = PAPER_STATE_TEST_AUTH["DASHBOARD_AUTH_PASSWORD"]
+    token = base64.b64encode(
+        f"{username}:{password}".encode("utf-8")
+    ).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
+
+
 class TestPaperStateEndpoint(unittest.TestCase):
     def setUp(self):
+        self.env_patch = patch.dict(os.environ, PAPER_STATE_TEST_AUTH)
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
         self.client = dashboard.app.test_client()
 
     def test_returns_isolated_paper_state_with_prediction_metadata(self):
@@ -48,7 +69,7 @@ class TestPaperStateEndpoint(unittest.TestCase):
                     "paper_events.jsonl": events}.get(name, default)
 
         with patch.object(dashboard, "get", side_effect=fake_get):
-            response = self.client.get("/api/paper/state")
+            response = self.client.get("/api/paper/state", headers=paper_state_auth_header())
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
@@ -71,7 +92,7 @@ class TestPaperStateEndpoint(unittest.TestCase):
             return default
 
         with patch.object(dashboard, "get", side_effect=fake_get):
-            response = self.client.get("/api/paper/state")
+            response = self.client.get("/api/paper/state", headers=paper_state_auth_header())
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
