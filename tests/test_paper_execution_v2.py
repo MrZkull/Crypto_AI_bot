@@ -545,3 +545,242 @@ def test_v2_excludes_pre_baseline_predictions_and_attempts_new_ones(monkeypatch)
     assert actions == []
     assert state["positions"] == {}
     assert state["decisions"] == {}
+
+
+def test_run_once_is_idempotent_across_persisted_restarts(
+    monkeypatch, tmp_path
+):
+    prediction = make_prediction()
+    normalized = paper._normalize_prediction(prediction)
+    pred_id = normalized["pred_id"]
+    entry_open = normalized["entry_bar_open_time_ms"]
+
+    candles = [
+        make_candle(
+            entry_open,
+            opn=123.0,
+            high=124.0,
+            low=122.0,
+            close=123.5,
+        ),
+        make_candle(
+            entry_open + INTERVAL,
+            opn=123.5,
+            high=124.0,
+            low=123.0,
+            close=123.4,
+        ),
+        make_candle(
+            entry_open + 2 * INTERVAL,
+            opn=123.4,
+            high=124.0,
+            low=123.0,
+            close=123.6,
+        ),
+    ]
+
+    state_path = tmp_path / "paper_state_v2.json"
+    events_path = tmp_path / "paper_events_v2.jsonl"
+    predictions_path = tmp_path / "predictions.json"
+
+    # Create a valid persisted prospective state that admits this fixture.
+    state = paper._new_state()
+    generated_ms = normalized["generated_at_ms"]
+    initialized_ms = generated_ms - 2
+    baseline_ms = generated_ms - 1
+
+    state["prospective_initialized_at_ms"] = initialized_ms
+    state["prospective_initialized_at_utc"] = datetime.fromtimestamp(
+        initialized_ms / 1000, timezone.utc
+    ).isoformat()
+    state["prospective_start_time_ms"] = baseline_ms
+    state["prospective_start_at_utc"] = datetime.fromtimestamp(
+        baseline_ms / 1000, timezone.utc
+    ).isoformat()
+
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    predictions_path.write_text(
+        json.dumps([prediction]), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(paper, "PAPER_STATE_FILE", state_path)
+    monkeypatch.setattr(paper, "PAPER_EVENTS_FILE", events_path)
+    monkeypatch.setattr(paper, "PREDICTIONS_FILE", predictions_path)
+
+    def fake_fetch_closed_candles(
+        symbol, start_open_time_ms, end_time_ms=None
+    ):
+        start_ms = int(start_open_time_ms)
+        return [
+            candle
+            for candle in candles
+            if int(candle["open_time"]) >= start_ms
+        ]
+
+    monkeypatch.setattr(
+        paper, "fetch_closed_candles", fake_fetch_closed_candles
+    )
+
+    # First run opens the paper position and consumes the supplied candles.
+    first_result = paper.run_once()
+    first_state = json.loads(state_path.read_text(encoding="utf-8"))
+    first_events = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert first_result["reconciliation"]["ok"] is True
+    assert first_result["decisions"]["opened"] == 1
+    assert first_result["lifecycle"]["candles_processed"] == 3
+    assert first_result["state_changed"] is True
+    assert first_state["positions"][pred_id]["bars_processed"] == 3
+    assert first_state["positions"][pred_id]["next_candle_open_time_ms"] == (
+        candles[-1]["open_time"] + INTERVAL
+    )
+
+    first_event_ids = [event["event_id"] for event in first_events]
+    assert len(first_event_ids) == len(set(first_event_ids))
+
+    # A second run reloads persisted state and must not repeat completed work.
+    second_result = paper.run_once()
+    second_state = json.loads(state_path.read_text(encoding="utf-8"))
+    second_events = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert second_result["reconciliation"]["ok"] is True
+    assert second_result["decisions"]["opened"] == 0
+    assert second_result["decisions"]["already_processed"] == 1
+    assert second_result["lifecycle"]["candles_processed"] == 0
+    assert second_result["state_changed"] is False
+    assert second_state == first_state
+    assert second_events == first_events
+
+
+def test_run_once_recovers_after_event_append_before_state_save(
+    monkeypatch, tmp_path
+):
+    prediction = make_prediction()
+    normalized = paper._normalize_prediction(prediction)
+    pred_id = normalized["pred_id"]
+    entry_open = normalized["entry_bar_open_time_ms"]
+
+    candles = [
+        make_candle(
+            entry_open, opn=123.0, high=124.0, low=122.0, close=123.5
+        ),
+        make_candle(
+            entry_open + INTERVAL,
+            opn=123.5, high=127.0, low=123.0, close=126.0,
+        ),
+        make_candle(
+            entry_open + 2 * INTERVAL,
+            opn=126.0, high=126.2, low=123.0, close=125.5,
+        ),
+    ]
+
+    state_path = tmp_path / "paper_state_v2.json"
+    events_path = tmp_path / "paper_events_v2.jsonl"
+    predictions_path = tmp_path / "predictions.json"
+
+    # An existing valid baseline prevents first-run initialization from
+    # calling _save_state before the simulated failure point.
+    state = paper._new_state()
+    generated_ms = normalized["generated_at_ms"]
+    initialized_ms = generated_ms - 2
+    baseline_ms = generated_ms - 1
+
+    state["prospective_initialized_at_ms"] = initialized_ms
+    state["prospective_initialized_at_utc"] = datetime.fromtimestamp(
+        initialized_ms / 1000, timezone.utc
+    ).isoformat()
+    state["prospective_start_time_ms"] = baseline_ms
+    state["prospective_start_at_utc"] = datetime.fromtimestamp(
+        baseline_ms / 1000, timezone.utc
+    ).isoformat()
+
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    predictions_path.write_text(
+        json.dumps([prediction]), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(paper, "PAPER_STATE_FILE", state_path)
+    monkeypatch.setattr(paper, "PAPER_EVENTS_FILE", events_path)
+    monkeypatch.setattr(paper, "PREDICTIONS_FILE", predictions_path)
+
+    def fake_fetch_closed_candles(
+        symbol, start_open_time_ms, end_time_ms=None
+    ):
+        start_ms = int(start_open_time_ms)
+        return [
+            candle for candle in candles
+            if int(candle["open_time"]) >= start_ms
+        ]
+
+    monkeypatch.setattr(
+        paper, "fetch_closed_candles", fake_fetch_closed_candles
+    )
+
+    original_save_state = paper._save_state
+
+    def simulated_save_failure(_state):
+        raise OSError("simulated failure before state persistence")
+
+    # The run should write its events, then fail at the final state save.
+    monkeypatch.setattr(paper, "_save_state", simulated_save_failure)
+    with pytest.raises(OSError, match="simulated failure"):
+        paper.run_once()
+
+    disk_state_after_failure = json.loads(
+        state_path.read_text(encoding="utf-8")
+    )
+    events_after_failure = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    # The original state remains on disk, but the OPEN and TP1 events exist.
+    assert disk_state_after_failure["positions"] == {}
+    assert sum(
+        event["event_id"] == f"OPEN:{pred_id}"
+        for event in events_after_failure
+    ) == 1
+    assert sum(
+        event.get("event") == "PARTIAL_TP1_FILLED"
+        for event in events_after_failure
+    ) == 1
+
+    # Restore persistence and replay the same deterministic candle history.
+    monkeypatch.setattr(paper, "_save_state", original_save_state)
+    retry_result = paper.run_once()
+
+    persisted_state = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted_events = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert retry_result["reconciliation"]["ok"] is True
+    position = persisted_state["positions"][pred_id]
+    assert position["status"] == "ACTIVE"
+    assert position["state"] == "PARTIAL_TP1"
+    assert position["bars_processed"] == 3
+    assert position["remaining_qty"] == pytest.approx(position["qty"] * 0.5)
+
+    event_ids = [event["event_id"] for event in persisted_events]
+    assert len(event_ids) == len(set(event_ids))
+    assert sum(event_id == f"OPEN:{pred_id}" for event_id in event_ids) == 1
+
+    tp1_events = [
+        event for event in persisted_events
+        if event.get("event") == "PARTIAL_TP1_FILLED"
+    ]
+    assert len(tp1_events) == 1
+    assert position["tp1_realized_gross_pnl"] == pytest.approx(
+        tp1_events[0]["tp1_realized_gross_pnl"]
+    )
