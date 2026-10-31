@@ -16,6 +16,10 @@
       "status": "OPENED",
       "timestamp_ms": 1793191246532
     },
+    "CRVUSDT_1793434194259": {
+      "status": "OPENED",
+      "timestamp_ms": 1793453664860
+    },
     "DOTUSDT_1793138253647": {
       "status": "OPENED",
       "timestamp_ms": 1793144600492
@@ -604,6 +608,129 @@
       "tp1_fee_usd": 8.310014005614606,
       "tp1_realized_gross_pnl": 210.00000000000077,
       "tp2": 0.10009061715859893
+    },
+    "CRVUSDT_1793434194259": {
+      "atr_ref": 0.00159461556409876,
+      "bars_processed": 21,
+      "entry_bar_close_time_ms": 1793435399999,
+      "entry_bar_observation_identity": [
+        "CRVUSDT",
+        1793434500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793434500000,
+      "entry_fee_usd": 12.96312444541001,
+      "entry_observation_close_time": 1793433599999,
+      "entry_observation_identity": [
+        "CRVUSDT",
+        1793432700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793432700000,
+      "entry_price": 0.2871,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.2871,
+      "execution_mode": "PAPER_ONLY",
+      "expires_at_ms": 1793456100000,
+      "generated_at": "2026-10-31T08:09:54.259303+00:00",
+      "generated_at_ms": 1793434194259,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793453399999,
+      "last_observation_identity": [
+        "CRVUSDT",
+        1793452500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793452500000,
+      "last_processed_candle_close_time": 1793453399999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "CRVUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "next_candle_open_time_ms": 1793453400000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793433599999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793432700000
+        },
+        "close_time": 1793433599999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793433599999,
+            "interval": "1h",
+            "logical_symbol": "CRVUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793430000000
+          },
+          "4h": {
+            "close_time": 1793433599999,
+            "interval": "4h",
+            "logical_symbol": "CRVUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793419200000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "CRVUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793432700000,
+        "retrieved_at_ms": 1793434193401
+      },
+      "observation_identity": [
+        "CRVUSDT",
+        1793432700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793432700000,
+      "opened_at_ms": 1793434500000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "CRVUSDT_1793434194259",
+      "qty": 75253.2476803089,
+      "remaining_qty": 75253.2476803089,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "CRVUSDT",
+        1793432700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.2871,
+      "state": "OPEN",
+      "status": "ACTIVE",
+      "stop": 0.29108653891024694,
+      "symbol": "CRVUSDT",
+      "tp1": 0.28151884552565437,
+      "tp2": 0.2751403832692593
     },
     "DOTUSDT_1793138253647": {
       "atr_ref": 0.005775275054027196,
