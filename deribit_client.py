@@ -922,7 +922,6 @@ class DeribitClient:
 
     def set_leverage(self, symbol: str, leverage: int = DEFAULT_LEVERAGE) -> bool:
         try:
-            self._ensure_auth()
             instrument = self.get_instrument_name(symbol)
             result = self._get("/private/set_leverage", {"instrument_name": instrument, "leverage": leverage})
             actual = result.get("leverage", leverage) if isinstance(result, dict) else leverage

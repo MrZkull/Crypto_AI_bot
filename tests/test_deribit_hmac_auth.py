@@ -90,3 +90,18 @@ def test_non_json_error_is_sanitized():
         assert "private URL" not in str(exc)
     else:
         raise AssertionError("Expected sanitized error")
+
+def test_set_leverage_uses_hmac_request_without_legacy_auth_refresh():
+    c = make_client()
+    c.get_instrument_name = MagicMock(return_value="ETH_USDC-PERPETUAL")
+    c._get = MagicMock(return_value={"leverage": 2})
+
+    assert c.set_leverage("ETHUSDT", 2) is True
+
+    c._get.assert_called_once_with(
+        "/private/set_leverage",
+        {
+            "instrument_name": "ETH_USDC-PERPETUAL",
+            "leverage": 2,
+        },
+    )
