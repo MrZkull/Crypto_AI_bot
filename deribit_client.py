@@ -1,9 +1,12 @@
 # deribit_client.py — V13.3: Unified Linear USDC Execution Engine & Authoritative Safeguards
 
-import math
-import time
+import hashlib
+import hmac
 import logging
+import math
 import requests
+import secrets
+import time
 
 log = logging.getLogger(__name__)
 
@@ -71,74 +74,80 @@ def _calc_decimals(val: float) -> int:
 class DeribitClient:
 
     def __init__(self, client_id: str, client_secret: str, testnet: bool = True):
-        self.client_id          = client_id
-        self.client_secret      = client_secret
-        self.base               = TESTNET_BASE if testnet else PROD_BASE
-        self.session            = requests.Session()
+        self.client_id = str(client_id or "").strip()
+        self.client_secret = str(client_secret or "")
+        if not self.client_id or not self.client_secret:
+            raise ValueError("Deribit credentials are required.")
+
+        self.base = TESTNET_BASE if testnet else PROD_BASE
+        self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
-        self._token_expiry      = 0
-        self._instrument_cache  = {}
+        self._instrument_cache = {}
         self._supported_symbols = set()
-        self._authenticate()
         self._verify_instruments()
 
-    def _authenticate(self):
-        for attempt in range(3):
-            try:
-                r = self.session.get(
-                    f"{self.base}/public/auth",
-                    params={
-                        "grant_type": "client_credentials",
-                        "client_id": self.client_id,
-                        "client_secret": self.client_secret
-                    },
-                    timeout=15
-                )
-                r.raise_for_status()
-                res = r.json().get("result", {})
-                if not res or "access_token" not in res:
-                    raise Exception(f"Auth failed: {r.text[:200]}")
-                self.session.headers["Authorization"] = f"Bearer {res['access_token']}"
-                self._token_expiry = time.time() + int(res.get("expires_in", 900)) - 60
-                log.info("✓ Deribit authenticated successfully")
-                return
-            except Exception as e:
-                if attempt < 2:
-                    log.warning(f"Auth attempt {attempt+1} failed: {e} — retrying in 15s")
-                    time.sleep(15)
-                else:
-                    log.error(f"Auth failed after 3 attempts: {e}")
-                    raise
+    def _build_hmac_authorization(self, method: str, uri: str, body: str = "") -> str:
+        """Build Deribit HTTP REST HMAC authorization."""
+        timestamp = str(int(time.time() * 1000))
+        nonce = secrets.token_hex(16)
+        request_data = f"{method.upper()}\n{uri}\n{body}\n"
+        string_to_sign = f"{timestamp}\n{nonce}\n{request_data}"
 
-    def _ensure_auth(self):
-        if time.time() >= self._token_expiry:
-            self._authenticate()
+        signature = hmac.new(
+            self.client_secret.encode("utf-8"),
+            string_to_sign.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        return (
+            f"deri-hmac-sha256 id={self.client_id},ts={timestamp},"
+            f"nonce={nonce},sig={signature}"
+        )
+
+    def _request(self, path: str, params: dict = None) -> dict:
+        """Send a prepared GET request; sign private requests."""
+        if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
+            raise ValueError("Invalid Deribit API endpoint path.")
+
+        prepared = self.session.prepare_request(
+            requests.Request("GET", f"{self.base}{path}", params=params or {})
+        )
+
+        endpoint = path.split("?", 1)[0]
+        if endpoint.startswith("/private/"):
+            prepared.headers["Authorization"] = self._build_hmac_authorization(
+                prepared.method,
+                prepared.path_url,
+                "",
+            )
+
+        response = self.session.send(prepared, timeout=15)
+        status = int(getattr(response, "status_code", 0) or 0)
+
+        try:
+            data = response.json()
+        except ValueError:
+            raise RuntimeError(
+                f"Deribit returned a non-JSON response (HTTP {status or 'unknown'})."
+            ) from None
+
+        if isinstance(data, dict) and "error" in data:
+            err = data["error"]
+            message = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            code = err.get("code", "") if isinstance(err, dict) else ""
+            raise RuntimeError(f"{message} (Code:{code})" if code else message)
+
+        if status >= 400:
+            raise RuntimeError(f"Deribit HTTP request failed (status={status}).")
+
+        return data.get("result", data) if isinstance(data, dict) else data
 
     def _get(self, path: str, params: dict = None) -> dict:
-        self._ensure_auth()
-        r = self.session.get(f"{self.base}{path}", params=params or {}, timeout=15)
-        data = r.json()
-        if "error" in data:
-            err  = data["error"]
-            msg  = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            code = err.get("code", "")          if isinstance(err, dict) else ""
-            raise Exception(f"{msg} (Code:{code})" if code else msg)
-        r.raise_for_status()
-        return data.get("result", data)
+        return self._request(path, params=params)
 
     def _post(self, path: str, body: dict) -> dict:
-        self._ensure_auth()
-        r = self.session.get(f"{self.base}{path}", params=body, timeout=15)
-        data = r.json()
-        if "error" in data:
-            err   = data["error"]
-            msg   = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            code  = err.get("code", "")          if isinstance(err, dict) else ""
-            extra = err.get("data", "")          if isinstance(err, dict) else ""
-            log.error(f"  Deribit error: {msg} | Code:{code} | Data:{extra}")
-            raise Exception(f"{msg} (Code:{code})" if code else msg)
-        r.raise_for_status()
-        return data.get("result", data)
+        # Retain existing caller interface and current GET/query transport.
+        return self._request(path, params=body)
 
     def verify_instrument_contract(self, symbol: str) -> dict:
         """
