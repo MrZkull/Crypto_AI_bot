@@ -14,18 +14,41 @@ def send_message(text, parse_mode="Markdown", silent=False):
     if not BOT_TOKEN or not CHAT_ID:
         print("Telegram not configured - check your .env file")
         return False
-    url     = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    # Telegram requires the token in the URL path.
+    # Never print the URL or raw request exception.
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
-        "chat_id": CHAT_ID, 
-        "text": text, 
+        "chat_id": CHAT_ID,
+        "text": text,
         "parse_mode": parse_mode,
-        "disable_notification": silent
+        "disable_notification": silent,
     }
+
     try:
-        requests.post(url, data=payload, timeout=10)
+        response = requests.post(url, data=payload, timeout=10)
+        if response.status_code >= 400:
+            print(f"Telegram API request failed (HTTP {response.status_code})")
+            return False
+
+        try:
+            result = response.json()
+        except ValueError:
+            print("Telegram API returned a non-JSON response")
+            return False
+
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            code = result.get("error_code") if isinstance(result, dict) else None
+            suffix = f" (error_code={code})" if code is not None else ""
+            print(f"Telegram API rejected the message{suffix}")
+            return False
         return True
-    except Exception as e:
-        print(f"Telegram error: {e}")
+
+    except requests.RequestException as exc:
+        print(f"Telegram request failed ({type(exc).__name__})")
+        return False
+    except Exception as exc:
+        print(f"Telegram send failed ({type(exc).__name__})")
         return False
 
 def send_signal(symbol, signal, confidence, entry, stop, t1, t2, reasons, score):
@@ -57,11 +80,11 @@ def send_signal(symbol, signal, confidence, entry, stop, t1, t2, reasons, score)
 def send_open_trade(sym, sig, conf, score, entry, stop, tp1, tp2, qty, q1, q2, risk, bal, is_probation=False, tier=""):
     emoji = "🟢" if sig == "BUY" else "🔴"
     d = 4 if entry < 10 else 2
-    
+
     sl_pct  = abs((stop - entry) / entry * 100)
     tp1_pct = abs((tp1 - entry) / entry * 100)
     tp2_pct = abs((tp2 - entry) / entry * 100)
-    
+
     rr_tp1 = (tp1_pct / sl_pct) if sl_pct > 0 else 3.5
     rr_tp2 = (tp2_pct / sl_pct) if sl_pct > 0 else 7.5
 
@@ -99,7 +122,7 @@ def send_startup():
 
     coins  = "  ".join([s.replace("USDT","") for s in SYMBOLS])
     emoji  = "😱" if fg < 25 else "😨" if fg < 45 else "😐" if fg < 55 else "😊" if fg < 75 else "🤑"
-    
+
     send_message(
         f"🚀 *CryptoBot AI Started*\n"
         f"Monitoring: `{coins}`\n\n"
