@@ -188,6 +188,10 @@
       "entry_bar_open_time_ms": 1793610900000,
       "status": "DIRECTION_LIMIT",
       "timestamp_ms": 1793643126425
+    },
+    "XRPUSDT_1793647559146": {
+      "status": "OPENED",
+      "timestamp_ms": 1793669515915
     }
   },
   "execution_mode": "PAPER_ONLY",
@@ -3617,6 +3621,139 @@
       "symbol": "XLMUSDT",
       "tp1": 0.1633552731063133,
       "tp2": 0.1596470137992428
+    },
+    "XRPUSDT_1793647559146": {
+      "atr_ref": 0.00536950246840005,
+      "bars_processed": 24,
+      "entry_bar_close_time_ms": 1793648699999,
+      "entry_bar_observation_identity": [
+        "XRPUSDT",
+        1793647800000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793647800000,
+      "entry_fee_usd": 16.71305684802849,
+      "entry_observation_close_time": 1793646899999,
+      "entry_observation_identity": [
+        "XRPUSDT",
+        1793646000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793646000000,
+      "entry_price": 1.2464,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 1.2464,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 1.2517,
+      "exit_reason": "EXPIRED",
+      "expires_at_ms": 1793669400000,
+      "final_exit_fee_usd": 16.78412488501064,
+      "final_exit_qty": 22348.439302562703,
+      "generated_at": "2026-11-02T19:25:59.146999+00:00",
+      "generated_at_ms": 1793647559146,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793669399999,
+      "last_observation_identity": [
+        "XRPUSDT",
+        1793668500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793668500000,
+      "last_processed_candle_close_time": 1793669399999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "XRPUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_pnl_usd": -151.9439100366233,
+      "net_r": -0.5064797001220777,
+      "next_candle_open_time_ms": 1793669400000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793646899999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793646000000
+        },
+        "close_time": 1793646899999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793645999999,
+            "interval": "1h",
+            "logical_symbol": "XRPUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793642400000
+          },
+          "4h": {
+            "close_time": 1793635199999,
+            "interval": "4h",
+            "logical_symbol": "XRPUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793620800000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "XRPUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793646000000,
+        "retrieved_at_ms": 1793647557896
+      },
+      "observation_identity": [
+        "XRPUSDT",
+        1793646000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793646000000,
+      "opened_at_ms": 1793647800000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "XRPUSDT_1793647559146",
+      "qty": 22348.439302562703,
+      "realized_gross_pnl": -118.44672830358417,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793669516767,
+      "resolved_candle_close_time": 1793669399999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "XRPUSDT",
+        1793646000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 1.2464,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 1.2598237561710002,
+      "symbol": "XRPUSDT",
+      "total_fees_usd": 33.49718173303913,
+      "tp1": 1.2276067413605998,
+      "tp2": 1.2061287314869995
     }
   },
   "prospective_baseline_max_prediction_generated_at_ms": 1793102556606,
