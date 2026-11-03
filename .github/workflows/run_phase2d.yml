@@ -39,6 +39,12 @@ on:
         default: false
         type: boolean
 
+      restore_f08_authoritative_archive:
+        description: "Use the pinned, encrypted 16,208-observation F08 archive for the amendment-only recovery dispatch"
+        required: false
+        default: false
+        type: boolean
+
   # External scheduler contract:
   # cron-job.org is the 2-hour scheduler for this workflow.
   #
@@ -224,6 +230,11 @@ jobs:
             exit 2
           fi
 
+          if [[ "${{ inputs.restore_f08_authoritative_archive || false }}" != "true" ]]; then
+            echo "FATAL: This controlled F08 recovery dispatch requires restore_f08_authoritative_archive=true." >&2
+            exit 2
+          fi
+
           if [[ -z "${PHASE2D_F08_APPROVER:-}" ]]; then
             echo "FATAL: Repository variable PHASE2D_F08_APPROVER is not configured." >&2
             exit 2
@@ -238,6 +249,7 @@ jobs:
           echo "The existing state will be restored; no fresh start is allowed."
 
       - name: Restore previous Phase 2D state
+        if: ${{ inputs.restore_f08_authoritative_archive != true }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -850,6 +862,78 @@ jobs:
             fi
           fi
       # ============================================================
+      # PINNED F08 AUTHORITATIVE ARCHIVE RESTORE
+      # ============================================================
+      - name: Restore verified encrypted F08 authoritative archive
+        if: ${{ inputs.restore_f08_authoritative_archive == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          F08_SNAPSHOT_PASSPHRASE: ${{ secrets.F08_SNAPSHOT_PASSPHRASE }}
+          F08_AUTHORITATIVE_ARCHIVE_PASSPHRASE: ${{ secrets.F08_AUTHORITATIVE_ARCHIVE_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ inputs.approve_f08_gate_amendment || false }}" != "true" ]]; then
+            echo "FATAL: Authoritative F08 archive restore requires the amendment-only approval flag." >&2
+            exit 2
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" || "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+            echo "FATAL: Authoritative F08 archive restore requires manual workflow_dispatch on main." >&2
+            exit 2
+          fi
+
+          if [[ -z "${F08_AUTHORITATIVE_ARCHIVE_PASSPHRASE:-}" || -z "${F08_SNAPSHOT_PASSPHRASE:-}" ]]; then
+            echo "FATAL: Required F08 archive/snapshot secrets are missing." >&2
+            exit 2
+          fi
+
+          echo "Restoring canonical 9,750-observation baseline for append-only verification."
+          rm -rf canonical_f08_baseline
+          mkdir -p canonical_f08_baseline
+
+          python phase2d_f08_snapshot_restore.py \
+            --snapshot "${STATE_DIR}/phase2d_f08_canonical_snapshot.enc" \
+            --output canonical_f08_baseline \
+            --passphrase-env F08_SNAPSHOT_PASSPHRASE
+
+          test -s canonical_f08_baseline/phase2d_observations.jsonl
+
+          rm -rf f08_authoritative_asset
+          mkdir -p f08_authoritative_asset
+
+          gh release download "phase2d-f08-authoritative-archive-20261104" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "F08_authoritative_artifact_12051242003.enc" \
+            --dir f08_authoritative_asset \
+            --clobber
+
+          test -s f08_authoritative_asset/F08_authoritative_artifact_12051242003.enc
+
+          EXPECTED_ENCRYPTED_SHA256="6d0cb9b8fa54601cb9ab4dfd8baadd72ac3fc8a0462d5ba72a6b92a39be839d5"
+          ACTUAL_ENCRYPTED_SHA256="$(sha256sum f08_authoritative_asset/F08_authoritative_artifact_12051242003.enc | awk '{print $1}')"
+
+          if [[ "${ACTUAL_ENCRYPTED_SHA256}" != "${EXPECTED_ENCRYPTED_SHA256}" ]]; then
+            echo "FATAL: Encrypted F08 release asset SHA256 mismatch." >&2
+            echo "Expected: ${EXPECTED_ENCRYPTED_SHA256}" >&2
+            echo "Actual:   ${ACTUAL_ENCRYPTED_SHA256}" >&2
+            exit 2
+          fi
+
+          echo "Encrypted F08 release asset SHA256: PASS"
+
+          python phase2d_f08_archive_restore.py restore \
+            --encrypted-archive f08_authoritative_asset/F08_authoritative_artifact_12051242003.enc \
+            --output-dir "${STATE_DIR}" \
+            --validator-log-path phase2d_validator.log \
+            --baseline-manifest "${STATE_DIR}/phase2d_f08_baseline_manifest.json" \
+            --baseline-ledger canonical_f08_baseline/phase2d_observations.jsonl \
+            --passphrase-env F08_AUTHORITATIVE_ARCHIVE_PASSPHRASE
+
+          echo "F08 AUTHORITATIVE ARCHIVE RESTORE: PASS"
+          echo "The amendment-only step will preserve C15/C20 and skip C25."
+      # ============================================================
       # DOWNLOAD LOCKED CANDIDATE RELEASE
       # ============================================================
       - name: Download candidate Release
@@ -1141,6 +1225,7 @@ jobs:
             "feature_engineering.py"
             "market_data_integrity.py"
             "phase2d_observation_ledger.py"
+            "phase2d_f08_archive_restore.py"
           )
 
           echo "============================================================"
@@ -1162,7 +1247,8 @@ jobs:
             phase2d_gate_amendment.py \
             feature_engineering.py \
             market_data_integrity.py \
-            phase2d_observation_ledger.py
+            phase2d_observation_ledger.py \
+            phase2d_f08_archive_restore.py
 
           echo "============================================================"
           echo " PYCOMPILE STATUS: PASS"
