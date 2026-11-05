@@ -76,6 +76,10 @@
       "status": "DUPLICATE_SYMBOL_ACTIVE",
       "timestamp_ms": 1793643125289
     },
+    "DOGEUSDT_1793874662728": {
+      "status": "OPENED",
+      "timestamp_ms": 1793904020625
+    },
     "DOTUSDT_1793138253647": {
       "status": "OPENED",
       "timestamp_ms": 1793144600492
@@ -84,6 +88,14 @@
       "entry_bar_open_time_ms": 1793150100000,
       "status": "DUPLICATE_SYMBOL_ACTIVE",
       "timestamp_ms": 1793165153305
+    },
+    "DOTUSDT_1793874655586": {
+      "status": "OPENED",
+      "timestamp_ms": 1793904021449
+    },
+    "ENAUSDT_1793874660264": {
+      "status": "OPENED",
+      "timestamp_ms": 1793904022100
     },
     "ETHUSDT_1793263660131": {
       "status": "OPENED",
@@ -2108,6 +2120,139 @@
       "tp1": 0.07464839766554587,
       "tp2": 0.07341228071188402
     },
+    "DOGEUSDT_1793874662728": {
+      "atr_ref": 0.00020941233829668444,
+      "bars_processed": 16,
+      "entry_bar_close_time_ms": 1793876399999,
+      "entry_bar_observation_identity": [
+        "DOGEUSDT",
+        1793875500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793875500000,
+      "entry_fee_usd": 26.450017439529915,
+      "entry_observation_close_time": 1793874599999,
+      "entry_observation_identity": [
+        "DOGEUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793873700000,
+      "entry_price": 0.07693,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.07693,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.07535940746277486,
+      "exit_reason": "TAKE_PROFIT",
+      "expires_at_ms": 1793897100000,
+      "final_exit_fee_usd": 12.955008719764956,
+      "final_exit_qty": 286516.0691486841,
+      "generated_at": "2026-11-05T10:31:02.728484+00:00",
+      "generated_at_ms": 1793874662728,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793889899999,
+      "last_observation_identity": [
+        "DOGEUSDT",
+        1793889000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793889000000,
+      "last_processed_candle_close_time": 1793889899999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "DOGEUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": 2.0249865504031526,
+      "next_candle_open_time_ms": 1793889900000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793874599999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793873700000
+        },
+        "close_time": 1793874599999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793872799999,
+            "interval": "1h",
+            "logical_symbol": "DOGEUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793869200000
+          },
+          "4h": {
+            "close_time": 1793865599999,
+            "interval": "4h",
+            "logical_symbol": "DOGEUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793851200000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "DOGEUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793873700000,
+        "retrieved_at_ms": 1793874661751
+      },
+      "observation_identity": [
+        "DOGEUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793873700000,
+      "opened_at_ms": 1793875500000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "DOGEUSDT_1793874662728",
+      "qty": 573032.1382973682,
+      "realized_gross_pnl": 660.0000000000056,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793904022733,
+      "resolved_candle_close_time": 1793889899999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "DOGEUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.07693,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 0.0774535308457417,
+      "symbol": "DOGEUSDT",
+      "tp1": 0.0761970568159616,
+      "tp1_fee_usd": 13.099008719764958,
+      "tp1_realized_gross_pnl": 210.0000000000016,
+      "tp2": 0.07535940746277486
+    },
     "DOTUSDT_1793138253647": {
       "atr_ref": 0.005775275054027196,
       "bars_processed": 24,
@@ -2240,6 +2385,272 @@
       "total_fees_usd": 25.008679006428274,
       "tp1": 0.9807865373109047,
       "tp2": 0.9576854370947959
+    },
+    "DOTUSDT_1793874655586": {
+      "atr_ref": 0.003960957317277744,
+      "bars_processed": 16,
+      "entry_bar_close_time_ms": 1793876399999,
+      "entry_bar_observation_identity": [
+        "DOTUSDT",
+        1793875500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793875500000,
+      "entry_fee_usd": 17.35943977484139,
+      "entry_observation_close_time": 1793874599999,
+      "entry_observation_identity": [
+        "DOTUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793873700000,
+      "entry_price": 0.955,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.955,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.9252928201204169,
+      "exit_reason": "TAKE_PROFIT",
+      "expires_at_ms": 1793897100000,
+      "final_exit_fee_usd": 8.409719887420694,
+      "final_exit_qty": 15147.853206667884,
+      "generated_at": "2026-11-05T10:30:55.586460+00:00",
+      "generated_at_ms": 1793874655586,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793889899999,
+      "last_observation_identity": [
+        "DOTUSDT",
+        1793889000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793889000000,
+      "last_processed_candle_close_time": 1793889899999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "DOTUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": 2.0855904015010642,
+      "next_candle_open_time_ms": 1793889900000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793874599999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793873700000
+        },
+        "close_time": 1793874599999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793872799999,
+            "interval": "1h",
+            "logical_symbol": "DOTUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793869200000
+          },
+          "4h": {
+            "close_time": 1793865599999,
+            "interval": "4h",
+            "logical_symbol": "DOTUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793851200000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "DOTUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793873700000,
+        "retrieved_at_ms": 1793874654748
+      },
+      "observation_identity": [
+        "DOTUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793873700000,
+      "opened_at_ms": 1793875500000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "DOTUSDT_1793874655586",
+      "qty": 30295.706413335767,
+      "realized_gross_pnl": 660.000000000002,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793904023373,
+      "resolved_candle_close_time": 1793889899999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "DOTUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.955,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 0.9649023932931943,
+      "symbol": "DOTUSDT",
+      "tp1": 0.9411366493895279,
+      "tp1_fee_usd": 8.553719887420696,
+      "tp1_realized_gross_pnl": 210.00000000000034,
+      "tp2": 0.9252928201204169
+    },
+    "ENAUSDT_1793874660264": {
+      "atr_ref": 0.0010182949454455737,
+      "bars_processed": 18,
+      "entry_bar_close_time_ms": 1793876399999,
+      "entry_bar_observation_identity": [
+        "ENAUSDT",
+        1793875500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793875500000,
+      "entry_fee_usd": 12.741298636538748,
+      "entry_observation_close_time": 1793874599999,
+      "entry_observation_identity": [
+        "ENAUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793873700000,
+      "entry_price": 0.1802,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.1802,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.1725627879091582,
+      "exit_reason": "TAKE_PROFIT",
+      "expires_at_ms": 1793897100000,
+      "final_exit_fee_usd": 6.100649318269373,
+      "final_exit_qty": 58922.02477126687,
+      "generated_at": "2026-11-05T10:31:00.264450+00:00",
+      "generated_at_ms": 1793874660264,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793891699999,
+      "last_observation_identity": [
+        "ENAUSDT",
+        1793890800000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793890800000,
+      "last_processed_candle_close_time": 1793891699999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "ENAUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": 2.116378009089739,
+      "next_candle_open_time_ms": 1793891700000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793874599999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793873700000
+        },
+        "close_time": 1793874599999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793872799999,
+            "interval": "1h",
+            "logical_symbol": "ENAUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793869200000
+          },
+          "4h": {
+            "close_time": 1793865599999,
+            "interval": "4h",
+            "logical_symbol": "ENAUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793851200000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "ENAUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793873700000,
+        "retrieved_at_ms": 1793874659339
+      },
+      "observation_identity": [
+        "ENAUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793873700000,
+      "opened_at_ms": 1793875500000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "ENAUSDT_1793874660264",
+      "qty": 117844.04954253374,
+      "realized_gross_pnl": 659.9999999999991,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793904023979,
+      "resolved_candle_close_time": 1793891699999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "ENAUSDT",
+        1793873700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.1802,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 0.18274573736361394,
+      "symbol": "ENAUSDT",
+      "tp1": 0.1766359676909405,
+      "tp1_fee_usd": 6.244649318269374,
+      "tp1_realized_gross_pnl": 209.99999999999903,
+      "tp2": 0.1725627879091582
     },
     "ETHUSDT_1793263660131": {
       "atr_ref": 7.147489648353549,
