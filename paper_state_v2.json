@@ -171,6 +171,10 @@
       "status": "OPENED",
       "timestamp_ms": 1793772113370
     },
+    "NEARUSDT_1793847052664": {
+      "status": "OPENED",
+      "timestamp_ms": 1793875425469
+    },
     "SOLUSDT_1793263665814": {
       "status": "OPENED",
       "timestamp_ms": 1793267299696
@@ -4071,6 +4075,139 @@
       "symbol": "NEARUSDT",
       "tp1": 3.648197891216913,
       "tp2": 3.4987097668933846
+    },
+    "NEARUSDT_1793847052664": {
+      "atr_ref": 0.03204620907753667,
+      "bars_processed": 24,
+      "entry_bar_close_time_ms": 1793848499999,
+      "entry_bar_observation_identity": [
+        "NEARUSDT",
+        1793847600000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793847600000,
+      "entry_fee_usd": 9.094866706224622,
+      "entry_observation_close_time": 1793846699999,
+      "entry_observation_identity": [
+        "NEARUSDT",
+        1793845800000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793845800000,
+      "entry_price": 4.048,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 4.048,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 4.042,
+      "exit_reason": "EXPIRED",
+      "expires_at_ms": 1793869200000,
+      "final_exit_fee_usd": 9.08138617256915,
+      "final_exit_qty": 3744.592682075355,
+      "generated_at": "2026-11-05T02:50:52.665044+00:00",
+      "generated_at_ms": 1793847052665,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793869199999,
+      "last_observation_identity": [
+        "NEARUSDT",
+        1793868300000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793868300000,
+      "last_processed_candle_close_time": 1793869199999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "NEARUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_pnl_usd": 4.291303213659209,
+      "net_r": 0.014304344045530696,
+      "next_candle_open_time_ms": 1793869200000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793846699999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793845800000
+        },
+        "close_time": 1793846699999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793843999999,
+            "interval": "1h",
+            "logical_symbol": "NEARUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793840400000
+          },
+          "4h": {
+            "close_time": 1793836799999,
+            "interval": "4h",
+            "logical_symbol": "NEARUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793822400000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "NEARUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793845800000,
+        "retrieved_at_ms": 1793847051376
+      },
+      "observation_identity": [
+        "NEARUSDT",
+        1793845800000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793845800000,
+      "opened_at_ms": 1793847600000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "NEARUSDT_1793847052664",
+      "qty": 3744.592682075355,
+      "realized_gross_pnl": 22.46755609245298,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793875425921,
+      "resolved_candle_close_time": 1793869199999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "NEARUSDT",
+        1793845800000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 4.048,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 4.128115522693841,
+      "symbol": "NEARUSDT",
+      "total_fees_usd": 18.176252878793772,
+      "tp1": 3.9358382682286215,
+      "tp2": 3.807653431918475
     },
     "SOLUSDT_1793263665814": {
       "atr_ref": 0.2819766047234506,
