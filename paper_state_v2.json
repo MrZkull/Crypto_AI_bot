@@ -67,6 +67,10 @@
       "status": "OPENED",
       "timestamp_ms": 1793747565863
     },
+    "CRVUSDT_1793964856009": {
+      "status": "OPENED",
+      "timestamp_ms": 1793977009252
+    },
     "DOGEUSDT_1793584295936": {
       "status": "OPENED",
       "timestamp_ms": 1793604941972
@@ -80,6 +84,10 @@
       "status": "OPENED",
       "timestamp_ms": 1793904020625
     },
+    "DOGEUSDT_1793964827139": {
+      "status": "OPENED",
+      "timestamp_ms": 1793977009694
+    },
     "DOTUSDT_1793138253647": {
       "status": "OPENED",
       "timestamp_ms": 1793144600492
@@ -92,6 +100,10 @@
     "DOTUSDT_1793874655586": {
       "status": "OPENED",
       "timestamp_ms": 1793904021449
+    },
+    "DOTUSDT_1793964820135": {
+      "status": "OPENED",
+      "timestamp_ms": 1793977010123
     },
     "ENAUSDT_1793874660264": {
       "status": "OPENED",
@@ -212,6 +224,10 @@
     "SOLUSDT_1793670291089": {
       "status": "OPENED",
       "timestamp_ms": 1793697964428
+    },
+    "SOLUSDT_1793964805433": {
+      "status": "OPENED",
+      "timestamp_ms": 1793977010528
     },
     "SUIUSDT_1793584310771": {
       "entry_bar_open_time_ms": 1793584800000,
@@ -1987,6 +2003,136 @@
       "tp1_realized_gross_pnl": 209.99999999999892,
       "tp2": 0.24928269921779483
     },
+    "CRVUSDT_1793964856009": {
+      "atr_ref": 0.0011955731707442442,
+      "bars_processed": 12,
+      "entry_bar_close_time_ms": 1793966399999,
+      "entry_bar_observation_identity": [
+        "CRVUSDT",
+        1793965500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793965500000,
+      "entry_fee_usd": 15.76013953898844,
+      "entry_observation_close_time": 1793964599999,
+      "entry_observation_identity": [
+        "CRVUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793963700000,
+      "entry_price": 0.2617,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.2617,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.2646889329268606,
+      "exit_reason": "STOP_LOSS",
+      "expires_at_ms": 1793987100000,
+      "final_exit_fee_usd": 15.94013953898844,
+      "generated_at": "2026-11-06T11:34:16.009883+00:00",
+      "generated_at_ms": 1793964856009,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793976299999,
+      "last_observation_identity": [
+        "CRVUSDT",
+        1793975400000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793975400000,
+      "last_processed_candle_close_time": 1793976299999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "CRVUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": -1.1056675969265894,
+      "next_candle_open_time_ms": 1793976300000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793964599999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793963700000
+        },
+        "close_time": 1793964599999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793962799999,
+            "interval": "1h",
+            "logical_symbol": "CRVUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793959200000
+          },
+          "4h": {
+            "close_time": 1793951999999,
+            "interval": "4h",
+            "logical_symbol": "CRVUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793937600000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "CRVUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793963700000,
+        "retrieved_at_ms": 1793964855280
+      },
+      "observation_identity": [
+        "CRVUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793963700000,
+      "opened_at_ms": 1793965500000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "CRVUSDT_1793964856009",
+      "qty": 100370.26836701338,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793977011318,
+      "resolved_candle_close_time": 1793976299999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "CRVUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.2617,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 0.2646889329268606,
+      "symbol": "CRVUSDT",
+      "tp1": 0.25751549390239514,
+      "tp2": 0.25273320121941817
+    },
     "DOGEUSDT_1793584295936": {
       "atr_ref": 0.0003090292384154644,
       "bars_processed": 24,
@@ -2253,6 +2399,136 @@
       "tp1_realized_gross_pnl": 210.0000000000016,
       "tp2": 0.07535940746277486
     },
+    "DOGEUSDT_1793964827139": {
+      "atr_ref": 0.0002103567938119837,
+      "bars_processed": 12,
+      "entry_bar_close_time_ms": 1793966399999,
+      "entry_bar_observation_identity": [
+        "DOGEUSDT",
+        1793965500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793965500000,
+      "entry_fee_usd": 24.862900338149483,
+      "entry_observation_close_time": 1793964599999,
+      "entry_observation_identity": [
+        "DOGEUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793963700000,
+      "entry_price": 0.07264,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.07264,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.07316589198452995,
+      "exit_reason": "STOP_LOSS",
+      "expires_at_ms": 1793987100000,
+      "final_exit_fee_usd": 25.042900338149483,
+      "generated_at": "2026-11-06T11:33:47.139865+00:00",
+      "generated_at_ms": 1793964827139,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793976299999,
+      "last_observation_identity": [
+        "DOGEUSDT",
+        1793975400000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793975400000,
+      "last_processed_candle_close_time": 1793976299999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "DOGEUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": -1.1663526689209964,
+      "next_candle_open_time_ms": 1793976300000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793964599999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793963700000
+        },
+        "close_time": 1793964599999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793962799999,
+            "interval": "1h",
+            "logical_symbol": "DOGEUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793959200000
+          },
+          "4h": {
+            "close_time": 1793951999999,
+            "interval": "4h",
+            "logical_symbol": "DOGEUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793937600000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "DOGEUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793963700000,
+        "retrieved_at_ms": 1793964826265
+      },
+      "observation_identity": [
+        "DOGEUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793963700000,
+      "opened_at_ms": 1793965500000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "DOGEUSDT_1793964827139",
+      "qty": 570459.3506366898,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793977011725,
+      "resolved_candle_close_time": 1793976299999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "DOGEUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.07264,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 0.07316589198452995,
+      "symbol": "DOGEUSDT",
+      "tp1": 0.07190375122165805,
+      "tp2": 0.07106232404641012
+    },
     "DOTUSDT_1793138253647": {
       "atr_ref": 0.005775275054027196,
       "bars_processed": 24,
@@ -2518,6 +2794,136 @@
       "tp1_fee_usd": 8.553719887420696,
       "tp1_realized_gross_pnl": 210.00000000000034,
       "tp2": 0.9252928201204169
+    },
+    "DOTUSDT_1793964820135": {
+      "atr_ref": 0.0038110356707383507,
+      "bars_processed": 12,
+      "entry_bar_close_time_ms": 1793966399999,
+      "entry_bar_observation_identity": [
+        "DOTUSDT",
+        1793965500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793965500000,
+      "entry_fee_usd": 17.626704603104628,
+      "entry_observation_close_time": 1793964599999,
+      "entry_observation_identity": [
+        "DOTUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793963700000,
+      "entry_price": 0.933,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.933,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.942527589176846,
+      "exit_reason": "STOP_LOSS",
+      "expires_at_ms": 1793987100000,
+      "final_exit_fee_usd": 17.80670460310463,
+      "generated_at": "2026-11-06T11:33:40.135136+00:00",
+      "generated_at_ms": 1793964820135,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793976299999,
+      "last_observation_identity": [
+        "DOTUSDT",
+        1793975400000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793975400000,
+      "last_processed_candle_close_time": 1793976299999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "DOTUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": -1.1181113640206974,
+      "next_candle_open_time_ms": 1793976300000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793964599999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793963700000
+        },
+        "close_time": 1793964599999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793962799999,
+            "interval": "1h",
+            "logical_symbol": "DOTUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793959200000
+          },
+          "4h": {
+            "close_time": 1793951999999,
+            "interval": "4h",
+            "logical_symbol": "DOTUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793937600000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "DOTUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793963700000,
+        "retrieved_at_ms": 1793964819195
+      },
+      "observation_identity": [
+        "DOTUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793963700000,
+      "opened_at_ms": 1793965500000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "DOTUSDT_1793964820135",
+      "qty": 31487.503756885726,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793977012183,
+      "resolved_candle_close_time": 1793976299999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "DOTUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.933,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 0.942527589176846,
+      "symbol": "DOTUSDT",
+      "tp1": 0.9196613751524159,
+      "tp2": 0.9044172324694624
     },
     "ENAUSDT_1793874660264": {
       "atr_ref": 0.0010182949454455737,
@@ -5147,6 +5553,136 @@
       "total_fees_usd": 40.09982558953149,
       "tp1": 91.13117201716382,
       "tp2": 89.80679717963675
+    },
+    "SOLUSDT_1793964805433": {
+      "atr_ref": 0.28468445974406853,
+      "bars_processed": 12,
+      "entry_bar_close_time_ms": 1793966399999,
+      "entry_bar_observation_identity": [
+        "SOLUSDT",
+        1793965500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1793965500000,
+      "entry_fee_usd": 22.888499097765646,
+      "entry_observation_close_time": 1793964599999,
+      "entry_observation_identity": [
+        "SOLUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1793963700000,
+      "entry_price": 90.5,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 90.5,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 91.21171114936017,
+      "exit_reason": "STOP_LOSS",
+      "expires_at_ms": 1793987100000,
+      "final_exit_fee_usd": 23.068499097765645,
+      "generated_at": "2026-11-06T11:33:25.433259+00:00",
+      "generated_at_ms": 1793964805433,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1793976299999,
+      "last_observation_identity": [
+        "SOLUSDT",
+        1793975400000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1793975400000,
+      "last_processed_candle_close_time": 1793976299999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "SOLUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": -1.1531899939851042,
+      "next_candle_open_time_ms": 1793976300000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1793964599999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1793963700000
+        },
+        "close_time": 1793964599999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1793962799999,
+            "interval": "1h",
+            "logical_symbol": "SOLUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793959200000
+          },
+          "4h": {
+            "close_time": 1793951999999,
+            "interval": "4h",
+            "logical_symbol": "SOLUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1793937600000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "SOLUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1793963700000,
+        "retrieved_at_ms": 1793964804530
+      },
+      "observation_identity": [
+        "SOLUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1793963700000,
+      "opened_at_ms": 1793965500000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "SOLUSDT_1793964805433",
+      "qty": 421.5193204008407,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1793977012614,
+      "resolved_candle_close_time": 1793976299999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "SOLUSDT",
+        1793963700000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 90.5,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 91.21171114936017,
+      "symbol": "SOLUSDT",
+      "tp1": 89.50360439089576,
+      "tp2": 88.36486655191949
     },
     "XLMUSDT_1793365591599": {
       "atr_ref": 0.0009270648267676293,
