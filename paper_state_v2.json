@@ -211,6 +211,11 @@
       "status": "OPENED",
       "timestamp_ms": 1794091169196
     },
+    "NEARUSDT_1794094780778": {
+      "entry_bar_open_time_ms": 1794095100000,
+      "status": "DUPLICATE_SYMBOL_ACTIVE",
+      "timestamp_ms": 1794104346046
+    },
     "SOLUSDT_1793263665814": {
       "status": "OPENED",
       "timestamp_ms": 1793267299696
@@ -3203,7 +3208,7 @@
     },
     "ENAUSDT_1794082550364": {
       "atr_ref": 0.0007163048009574946,
-      "bars_processed": 8,
+      "bars_processed": 14,
       "entry_bar_close_time_ms": 1794084299999,
       "entry_bar_observation_identity": [
         "ENAUSDT",
@@ -3227,25 +3232,29 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 0.1574,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.15919076200239374,
+      "exit_reason": "STOP_LOSS",
       "expires_at_ms": 1794105000000,
+      "final_exit_fee_usd": 16.001197882314006,
       "generated_at": "2026-11-07T20:15:50.364541+00:00",
       "generated_at_ms": 1794082550364,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794090599999,
+      "last_observation_close_time": 1794095999999,
       "last_observation_identity": [
         "ENAUSDT",
-        1794089700000,
+        1794095100000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794089700000,
-      "last_processed_candle_close_time": 1794090599999,
+      "last_observation_open_time": 1794095100000,
+      "last_processed_candle_close_time": 1794095999999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "ENAUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794090600000,
+      "net_r": -1.10607465254876,
+      "next_candle_open_time_ms": 1794096000000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794082499999,
@@ -3307,7 +3316,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "ENAUSDT_1794082550364",
       "qty": 167526.44941035585,
-      "remaining_qty": 167526.44941035585,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794104346679,
+      "resolved_candle_close_time": 1794095999999,
       "side": "SELL",
       "signal_observation_identity": [
         "ENAUSDT",
@@ -3317,8 +3329,8 @@
         "spot"
       ],
       "simulated_entry": 0.1574,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 0.15919076200239374,
       "symbol": "ENAUSDT",
       "tp1": 0.1548929331966488,
@@ -5294,7 +5306,7 @@
     },
     "NEARUSDT_1794082531907": {
       "atr_ref": 0.01720080502607794,
-      "bars_processed": 8,
+      "bars_processed": 12,
       "entry_bar_close_time_ms": 1794084299999,
       "entry_bar_observation_identity": [
         "NEARUSDT",
@@ -5318,25 +5330,29 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 3.654,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 3.6970020125651946,
+      "exit_reason": "STOP_LOSS",
       "expires_at_ms": 1794105000000,
+      "final_exit_fee_usd": 15.475098084138303,
       "generated_at": "2026-11-07T20:15:31.907476+00:00",
       "generated_at_ms": 1794082531907,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794090599999,
+      "last_observation_close_time": 1794094199999,
       "last_observation_identity": [
         "NEARUSDT",
-        1794089700000,
+        1794093300000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794089700000,
-      "last_processed_candle_close_time": 1794090599999,
+      "last_observation_open_time": 1794093300000,
+      "last_processed_candle_close_time": 1794094199999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "NEARUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794090600000,
+      "net_r": -1.102567320560922,
+      "next_candle_open_time_ms": 1794094200000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794082499999,
@@ -5398,7 +5414,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "NEARUSDT_1794082531907",
       "qty": 6976.417662898333,
-      "remaining_qty": 6976.417662898333,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794104347282,
+      "resolved_candle_close_time": 1794094199999,
       "side": "SELL",
       "signal_observation_identity": [
         "NEARUSDT",
@@ -5408,8 +5427,8 @@
         "spot"
       ],
       "simulated_entry": 3.654,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 3.6970020125651946,
       "symbol": "NEARUSDT",
       "tp1": 3.593797182408727,
