@@ -266,6 +266,10 @@
       "status": "DIRECTION_LIMIT",
       "timestamp_ms": 1793407302521
     },
+    "TRUMPUSDT_1794105931378": {
+      "status": "OPENED",
+      "timestamp_ms": 1794132569130
+    },
     "XLMUSDT_1793365591599": {
       "status": "OPENED",
       "timestamp_ms": 1793375407137
@@ -6091,6 +6095,136 @@
       "symbol": "SOLUSDT",
       "tp1": 89.50360439089576,
       "tp2": 88.36486655191949
+    },
+    "TRUMPUSDT_1794105931378": {
+      "atr_ref": 0.0050745794675532115,
+      "bars_processed": 14,
+      "entry_bar_close_time_ms": 1794107699999,
+      "entry_bar_observation_identity": [
+        "TRUMPUSDT",
+        1794106800000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1794106800000,
+      "entry_fee_usd": 16.68552055227253,
+      "entry_observation_close_time": 1794105899999,
+      "entry_observation_identity": [
+        "TRUMPUSDT",
+        1794105000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1794105000000,
+      "entry_price": 1.176,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 1.176,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 1.188686448668883,
+      "exit_reason": "STOP_LOSS",
+      "expires_at_ms": 1794128400000,
+      "final_exit_fee_usd": 16.865520552272528,
+      "generated_at": "2026-11-08T02:45:31.379040+00:00",
+      "generated_at_ms": 1794105931379,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1794119399999,
+      "last_observation_identity": [
+        "TRUMPUSDT",
+        1794118500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1794118500000,
+      "last_processed_candle_close_time": 1794119399999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "TRUMPUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": -1.111836803681817,
+      "next_candle_open_time_ms": 1794119400000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1794105899999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1794105000000
+        },
+        "close_time": 1794105899999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1794103199999,
+            "interval": "1h",
+            "logical_symbol": "TRUMPUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794099600000
+          },
+          "4h": {
+            "close_time": 1794095999999,
+            "interval": "4h",
+            "logical_symbol": "TRUMPUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794081600000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "TRUMPUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1794105000000,
+        "retrieved_at_ms": 1794105930312
+      },
+      "observation_identity": [
+        "TRUMPUSDT",
+        1794105000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1794105000000,
+      "opened_at_ms": 1794106800000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "TRUMPUSDT_1794105931378",
+      "qty": 23647.27969426379,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794132569722,
+      "resolved_candle_close_time": 1794119399999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "TRUMPUSDT",
+        1794105000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 1.176,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 1.188686448668883,
+      "symbol": "TRUMPUSDT",
+      "tp1": 1.1582389718635637,
+      "tp2": 1.1379406539933508
     },
     "XLMUSDT_1793365591599": {
       "atr_ref": 0.0009270648267676293,
