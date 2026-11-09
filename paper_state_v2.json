@@ -32,6 +32,11 @@
       "status": "OPENED",
       "timestamp_ms": 1794210723886
     },
+    "ADAUSDT_1794233675901": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DUPLICATE_SYMBOL_ACTIVE",
+      "timestamp_ms": 1794249673471
+    },
     "ALGOUSDT_1793170086338": {
       "status": "OPENED",
       "timestamp_ms": 1793191246532
@@ -39,6 +44,11 @@
     "ALGOUSDT_1793610170488": {
       "status": "OPENED",
       "timestamp_ms": 1793643123542
+    },
+    "ALGOUSDT_1794233653116": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249674122
     },
     "AVAXUSDT_1794201665131": {
       "status": "OPENED",
@@ -51,6 +61,11 @@
     "BCHUSDT_1794201639863": {
       "status": "OPENED",
       "timestamp_ms": 1794210724814
+    },
+    "BCHUSDT_1794233647444": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DUPLICATE_SYMBOL_ACTIVE",
+      "timestamp_ms": 1794249674790
     },
     "BNBUSDT_1793610151025": {
       "entry_bar_open_time_ms": 1793610900000,
@@ -108,6 +123,11 @@
       "status": "OPENED",
       "timestamp_ms": 1793977009694
     },
+    "DOGEUSDT_1794233658082": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249675448
+    },
     "DOTUSDT_1793138253647": {
       "status": "OPENED",
       "timestamp_ms": 1793144600492
@@ -137,6 +157,11 @@
     "ENAUSDT_1794082550364": {
       "status": "OPENED",
       "timestamp_ms": 1794091168644
+    },
+    "ENAUSDT_1794233655705": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249676491
     },
     "ETHUSDT_1793263660131": {
       "status": "OPENED",
@@ -206,6 +231,11 @@
       "status": "OPENED",
       "timestamp_ms": 1793407301883
     },
+    "LTCUSDT_1794233642057": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249677238
+    },
     "NEARUSDT_1793584275498": {
       "entry_bar_open_time_ms": 1793584800000,
       "status": "DIRECTION_LIMIT",
@@ -272,6 +302,11 @@
       "status": "OPENED",
       "timestamp_ms": 1793977010528
     },
+    "SOLUSDT_1794233634379": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249677915
+    },
     "SUIUSDT_1793584310771": {
       "entry_bar_open_time_ms": 1793584800000,
       "status": "DIRECTION_LIMIT",
@@ -287,6 +322,11 @@
       "status": "DIRECTION_LIMIT",
       "timestamp_ms": 1793697966732
     },
+    "SUIUSDT_1794233670900": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249678598
+    },
     "TRUMPUSDT_1793400031937": {
       "entry_bar_open_time_ms": 1793400300000,
       "status": "DIRECTION_LIMIT",
@@ -296,6 +336,11 @@
       "status": "OPENED",
       "timestamp_ms": 1794132569130
     },
+    "TRUMPUSDT_1794233660478": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249679446
+    },
     "XLMUSDT_1793365591599": {
       "status": "OPENED",
       "timestamp_ms": 1793375407137
@@ -304,6 +349,11 @@
       "entry_bar_open_time_ms": 1793584800000,
       "status": "DIRECTION_LIMIT",
       "timestamp_ms": 1793604945848
+    },
+    "XLMUSDT_1794233680748": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249680111
     },
     "XRPUSDT_1793584273020": {
       "entry_bar_open_time_ms": 1793584800000,
@@ -331,6 +381,11 @@
       "entry_bar_open_time_ms": 1794202200000,
       "status": "DIRECTION_LIMIT",
       "timestamp_ms": 1794210726648
+    },
+    "XRPUSDT_1794233636943": {
+      "entry_bar_open_time_ms": 1794233700000,
+      "status": "DIRECTION_LIMIT",
+      "timestamp_ms": 1794249680761
     }
   },
   "execution_mode": "PAPER_ONLY",
@@ -1265,7 +1320,7 @@
     },
     "ADAUSDT_1794201667403": {
       "atr_ref": 0.0011182264615541401,
-      "bars_processed": 9,
+      "bars_processed": 24,
       "entry_bar_close_time_ms": 1794203099999,
       "entry_bar_observation_identity": [
         "ADAUSDT",
@@ -1289,25 +1344,31 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 0.1751,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.1763,
+      "exit_reason": "EXPIRED",
       "expires_at_ms": 1794223800000,
+      "final_exit_fee_usd": 11.351546789867692,
+      "final_exit_qty": 107312.78871117123,
       "generated_at": "2026-11-09T05:21:07.403937+00:00",
       "generated_at_ms": 1794201667403,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794210299999,
+      "last_observation_close_time": 1794223799999,
       "last_observation_identity": [
         "ADAUSDT",
-        1794209400000,
+        1794222900000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794209400000,
-      "last_processed_candle_close_time": 1794210299999,
+      "last_observation_open_time": 1794222900000,
+      "last_processed_candle_close_time": 1794223799999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "ADAUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794210300000,
+      "net_pnl_usd": -151.40117482526955,
+      "net_r": -0.5046705827508985,
+      "next_candle_open_time_ms": 1794223800000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794201299999,
@@ -1369,7 +1430,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "ADAUSDT_1794201667403",
       "qty": 107312.78871117123,
-      "remaining_qty": 107312.78871117123,
+      "realized_gross_pnl": -128.7753464534062,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794249681383,
+      "resolved_candle_close_time": 1794223799999,
       "side": "SELL",
       "signal_observation_identity": [
         "ADAUSDT",
@@ -1379,10 +1443,11 @@
         "spot"
       ],
       "simulated_entry": 0.1751,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 0.17789556615388535,
       "symbol": "ADAUSDT",
+      "total_fees_usd": 22.625828371863342,
       "tp1": 0.17118620738456053,
       "tp2": 0.16671330153834396
     },
@@ -1656,7 +1721,7 @@
     },
     "AVAXUSDT_1794201665131": {
       "atr_ref": 0.046577775079699464,
-      "bars_processed": 9,
+      "bars_processed": 24,
       "entry_bar_close_time_ms": 1794203099999,
       "entry_bar_observation_identity": [
         "AVAXUSDT",
@@ -1680,25 +1745,29 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 7.963,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 8.079444437699248,
+      "exit_reason": "STOP_LOSS",
       "expires_at_ms": 1794223800000,
+      "final_exit_fee_usd": 12.489218270279448,
       "generated_at": "2026-11-09T05:21:05.131334+00:00",
       "generated_at_ms": 1794201665131,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794210299999,
+      "last_observation_close_time": 1794223799999,
       "last_observation_identity": [
         "AVAXUSDT",
-        1794209400000,
+        1794222900000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794209400000,
-      "last_processed_candle_close_time": 1794210299999,
+      "last_observation_open_time": 1794222900000,
+      "last_processed_candle_close_time": 1794223799999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "AVAXUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794210300000,
+      "net_r": -1.0826614551351963,
+      "next_candle_open_time_ms": 1794223800000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794201299999,
@@ -1760,7 +1829,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "AVAXUSDT_1794201665131",
       "qty": 2576.336027100224,
-      "remaining_qty": 2576.336027100224,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794249682299,
+      "resolved_candle_close_time": 1794223799999,
       "side": "SELL",
       "signal_observation_identity": [
         "AVAXUSDT",
@@ -1770,8 +1842,8 @@
         "spot"
       ],
       "simulated_entry": 7.963,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 8.079444437699248,
       "symbol": "AVAXUSDT",
       "tp1": 7.799977787221052,
@@ -1910,7 +1982,7 @@
     },
     "BCHUSDT_1794201639863": {
       "atr_ref": 1.2183336665814049,
-      "bars_processed": 9,
+      "bars_processed": 24,
       "entry_bar_close_time_ms": 1794203099999,
       "entry_bar_observation_identity": [
         "BCHUSDT",
@@ -1934,25 +2006,29 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 239.7,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 242.7458341664535,
+      "exit_reason": "STOP_LOSS",
       "expires_at_ms": 1794223800000,
+      "final_exit_fee_usd": 14.34557752066915,
       "generated_at": "2026-11-09T05:20:39.863684+00:00",
       "generated_at_ms": 1794201639863,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794210299999,
+      "last_observation_close_time": 1794223799999,
       "last_observation_identity": [
         "BCHUSDT",
-        1794209400000,
+        1794222900000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794209400000,
-      "last_processed_candle_close_time": 1794210299999,
+      "last_observation_open_time": 1794222900000,
+      "last_processed_candle_close_time": 1794223799999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "BCHUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794210300000,
+      "net_r": -1.0950371834711277,
+      "next_candle_open_time_ms": 1794223800000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794201299999,
@@ -2014,7 +2090,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "BCHUSDT_1794201639863",
       "qty": 98.49518509712941,
-      "remaining_qty": 98.49518509712941,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794249683106,
+      "resolved_candle_close_time": 1794223799999,
       "side": "SELL",
       "signal_observation_identity": [
         "BCHUSDT",
@@ -2024,8 +2103,8 @@
         "spot"
       ],
       "simulated_entry": 239.7,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 242.7458341664535,
       "symbol": "BCHUSDT",
       "tp1": 235.43583216696507,
@@ -2033,7 +2112,7 @@
     },
     "BNBUSDT_1794201624174": {
       "atr_ref": 1.931723283022606,
-      "bars_processed": 9,
+      "bars_processed": 24,
       "entry_bar_close_time_ms": 1794203099999,
       "entry_bar_observation_identity": [
         "BNBUSDT",
@@ -2057,25 +2136,31 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 686.2,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 685.05,
+      "exit_reason": "EXPIRED",
       "expires_at_ms": 1794223800000,
+      "final_exit_fee_usd": 12.766735389455473,
+      "final_exit_qty": 31.0603493405724,
       "generated_at": "2026-11-09T05:20:24.174602+00:00",
       "generated_at_ms": 1794201624174,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794210299999,
+      "last_observation_close_time": 1794223799999,
       "last_observation_identity": [
         "BNBUSDT",
-        1794209400000,
+        1794222900000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794209400000,
-      "last_processed_candle_close_time": 1794210299999,
+      "last_observation_open_time": 1794222900000,
+      "last_processed_candle_close_time": 1794223799999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "BNBUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794210300000,
+      "net_pnl_usd": 194.71416526070422,
+      "net_r": 0.6490472175356807,
+      "next_candle_open_time_ms": 1794223800000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794201299999,
@@ -2137,7 +2222,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "BNBUSDT_1794201624174",
       "qty": 62.1206986811448,
-      "remaining_qty": 31.0603493405724,
+      "realized_gross_pnl": 245.7194017416611,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794249683843,
+      "resolved_candle_close_time": 1794223799999,
       "side": "SELL",
       "signal_observation_identity": [
         "BNBUSDT",
@@ -2147,10 +2235,11 @@
         "spot"
       ],
       "simulated_entry": 686.2,
-      "state": "PARTIAL_TP1",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 691.0293082075566,
       "symbol": "BNBUSDT",
+      "total_fees_usd": 51.00523648095688,
       "tp1": 679.4389685094209,
       "tp1_fee_usd": 12.662167030500468,
       "tp1_realized_gross_pnl": 210.0,
