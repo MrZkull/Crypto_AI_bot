@@ -6625,7 +6625,7 @@
     },
     "XRPUSDT_1794154465533": {
       "atr_ref": 0.0034771043905071452,
-      "bars_processed": 19,
+      "bars_processed": 23,
       "entry_bar_close_time_ms": 1794155399999,
       "entry_bar_observation_identity": [
         "XRPUSDT",
@@ -6649,25 +6649,30 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 1.1544,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 1.1283217170711966,
+      "exit_reason": "TAKE_PROFIT",
       "expires_at_ms": 1794176100000,
+      "final_exit_fee_usd": 11.682013897960172,
+      "final_exit_qty": 17255.737320917313,
       "generated_at": "2026-11-08T16:14:25.534152+00:00",
       "generated_at_ms": 1794154465534,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794171599999,
+      "last_observation_close_time": 1794175199999,
       "last_observation_identity": [
         "XRPUSDT",
-        1794170700000,
+        1794174300000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794170700000,
-      "last_processed_candle_close_time": 1794171599999,
+      "last_observation_open_time": 1794174300000,
+      "last_processed_candle_close_time": 1794175199999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "XRPUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794171600000,
+      "net_r": 2.0419598146938465,
+      "next_candle_open_time_ms": 1794175200000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794153599999,
@@ -6729,7 +6734,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "XRPUSDT_1794154465533",
       "qty": 34511.474641834626,
-      "remaining_qty": 34511.474641834626,
+      "realized_gross_pnl": 659.9999999999945,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794185058719,
+      "resolved_candle_close_time": 1794175199999,
       "side": "SELL",
       "signal_observation_identity": [
         "XRPUSDT",
@@ -6739,11 +6747,13 @@
         "spot"
       ],
       "simulated_entry": 1.1544,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 1.163092760976268,
       "symbol": "XRPUSDT",
       "tp1": 1.142230134633225,
+      "tp1_fee_usd": 11.826013897960168,
+      "tp1_realized_gross_pnl": 209.99999999999844,
       "tp2": 1.1283217170711966
     }
   },
