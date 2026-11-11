@@ -1,0 +1,244 @@
+name: Phase2D F08 Validator Amendment
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_run_id:
+        description: "Pinned authoritative F08 source run (must be 41720710702)"
+        required: true
+        default: "41720710702"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: phase2d-f08-validator-amendment
+  cancel-in-progress: false
+
+jobs:
+  validator-amendment:
+    if: ${{ github.ref == 'refs/heads/main' && github.actor_id != '166250462' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: f08-validator-amendment
+
+    steps:
+      - name: Enforce pinned dispatch context
+        env:
+          BASELINE_RUN_ID: ${{ inputs.baseline_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "MrZkull/Crypto_AI_bot"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR_ID" != "166250462"
+          test "$BASELINE_RUN_ID" = "41720710702"
+
+      - name: Checkout approved main source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify checkout matches dispatch commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Verify pinned authoritative source run identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41720710702" > authoritative_source_run.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          run = json.loads(Path("authoritative_source_run.json").read_text())
+          expected = {
+              "id": 41720710702,
+              "name": "CryptoBot AI — Phase 2D Prospective Validation",
+              "event": "workflow_dispatch",
+              "head_branch": "main",
+              "head_sha": "58a64fbdeeee2a3a2851b2ef23824240eeca24e2",
+              "path": ".github/workflows/run_phase2d.yml",
+              "status": "completed",
+              "conclusion": "success",
+              "run_attempt": 1,
+          }
+          for key, value in expected.items():
+              if run.get(key) != value:
+                  raise SystemExit(f"Pinned authoritative source run {key} mismatch: {run.get(key)!r}")
+          if run.get("repository", {}).get("full_name") != "MrZkull/Crypto_AI_bot":
+              raise SystemExit("Pinned authoritative source repository mismatch")
+          if str(run.get("actor", {}).get("id", "")) != "166250462":
+              raise SystemExit("Pinned authoritative source run actor mismatch")
+          print("Pinned authoritative source run identity: PASS")
+          PY
+
+      - name: Verify exact authoritative artifact identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41720710702/artifacts" \
+            --jq '.artifacts[] | select(.id == 13272461237) | [.id, .name, .expired] | @tsv' \
+            > artifact_identity.txt
+          test "$(cat artifact_identity.txt)" = $'13272461237\tphase2d-state\tfalse'
+          cat artifact_identity.txt
+
+      - name: Download pinned authoritative state artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: phase2d-state
+          run-id: 41720710702
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: baseline_artifact
+
+      - name: Prepare isolated baseline and working copies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in \
+            research_outputs/phase2d_state.json \
+            research_outputs/phase2d_observations.jsonl \
+            research_outputs/experiment_ledger.jsonl \
+            research_outputs/phase2d_results.json \
+            research_outputs/phase2d_latest_snapshot.json; do
+            test -s "baseline_artifact/${f}"
+          done
+          test -s research_outputs/f08_historical_backfill/manifest.json
+          test -s research_outputs/f08_historical_backfill/observations.jsonl
+          test -d research_outputs/f08_historical_backfill/evidence
+
+          mkdir -p baseline working
+          cp baseline_artifact/research_outputs/phase2d_state.json baseline/phase2d_state.json
+          cp baseline_artifact/research_outputs/phase2d_observations.jsonl baseline/phase2d_observations.jsonl
+          cp baseline_artifact/research_outputs/experiment_ledger.jsonl baseline/experiment_ledger.jsonl
+          cp baseline_artifact/research_outputs/phase2d_results.json baseline/phase2d_results.json
+          cp baseline_artifact/research_outputs/phase2d_latest_snapshot.json baseline/phase2d_latest_snapshot.json
+          cp baseline/phase2d_state.json working/phase2d_state.json
+          cp baseline/phase2d_observations.jsonl working/phase2d_observations.jsonl
+          cp baseline/experiment_ledger.jsonl working/experiment_ledger.jsonl
+          mkdir -p working/f08_historical_backfill
+          cp -a research_outputs/f08_historical_backfill/. working/f08_historical_backfill/
+
+      - name: Collect actual protected-environment approval evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/collect_f08_approval_evidence.py \
+            --environment f08-validator-amendment \
+            --workflow "Phase2D F08 Validator Amendment" \
+            --workflow-file .github/workflows/phase2d_f08_validator_amendment.yml \
+            --output working/validator_amendment_approval_evidence.json
+
+      - name: Run immutable F08 preflight
+        run: |
+          set -euo pipefail
+          python phase2d_f08_disposition.py preflight \
+            --state baseline/phase2d_state.json \
+            --observation-ledger baseline/phase2d_observations.jsonl \
+            --baseline-journal baseline/experiment_ledger.jsonl \
+            --manifest working/f08_historical_backfill/manifest.json \
+            --bundle working/f08_historical_backfill/observations.jsonl
+
+      - name: Verify complete immutable historical-backfill evidence package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from phase2d_f08_disposition import DispositionSpec, pending_population
+          from phase2d_evidence_policy import _verify_manifest_artifacts
+
+          spec = DispositionSpec()
+          state = json.loads(Path("baseline/phase2d_state.json").read_text())
+          population = pending_population(state, spec)
+          manifest_path = Path("working/f08_historical_backfill/manifest.json")
+          manifest = json.loads(manifest_path.read_text())
+          _verify_manifest_artifacts(
+              manifest,
+              manifest_path.parent,
+              population["ids_by_model"],
+              spec.reconciliation_id,
+              state,
+          )
+          print("Full source artifact, raw OHLC, actual resolver, and deterministic bundle verification: PASS")
+          print("Pending population:", population["counts"], population["total"])
+          print("Pending ID SHA256:", population["pending_ids_sha256"])
+          PY
+
+      - name: Append separately approved validator amendment to working journal
+        run: |
+          set -euo pipefail
+          python phase2d_f08_disposition.py amend-validator \
+            --state working/phase2d_state.json \
+            --observation-ledger working/phase2d_observations.jsonl \
+            --experiment-journal working/experiment_ledger.jsonl \
+            --baseline-journal baseline/experiment_ledger.jsonl \
+            --validator phase2d_prospective_validator.py \
+            --promotion-gate phase2d_promotion_gate.py \
+            --approval-evidence working/validator_amendment_approval_evidence.json \
+            --owner-id 166250462
+
+      - name: Record immutable source metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          printf '%s\n' "$GITHUB_SHA" > output/approved_source_commit.txt
+          printf '%s\n' "$GITHUB_RUN_ID" > output/validator_amendment_run_id.txt
+          sha256sum \
+            phase2d_f08_disposition.py \
+            phase2d_f08_v2_restore.py \
+            phase2d_f08_historical_backfill.py \
+            phase2d_observation_ledger.py \
+            feature_engineering.py \
+            requirements.txt \
+            .gitattributes \
+            phase2d_prospective_validator.py \
+            phase2d_promotion_gate.py \
+            phase2d_evidence_policy.py \
+            phase2d_restore_guard.py \
+            phase2d_f08_snapshot_restore.py \
+            phase2d_f08_archive_restore.py \
+            tools/collect_f08_approval_evidence.py \
+            .github/workflows/run_phase2d.yml \
+            .github/workflows/phase2d_f08_validator_amendment.yml \
+            .github/workflows/phase2d_f08_controlled_disposition.yml \
+            > output/source_code_sha256.txt
+          cp working/experiment_ledger.jsonl output/experiment_ledger_after_amendment.jsonl
+          cp working/validator_amendment_approval_evidence.json output/validator_amendment_approval_evidence.json
+          cp baseline/phase2d_state.json output/phase2d_state.schema6.json
+          cp baseline/phase2d_observations.jsonl output/phase2d_observations.baseline.jsonl
+          cp baseline/experiment_ledger.jsonl output/experiment_ledger.baseline.jsonl
+          cp baseline/phase2d_results.json output/phase2d_results.baseline.json
+          cp baseline/phase2d_latest_snapshot.json output/phase2d_latest_snapshot.baseline.json
+          cp -a working/f08_historical_backfill output/f08_historical_backfill
+
+      - name: Upload validator-amendment source handoff
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: f08-validator-amendment-source
+          path: output/
+          if-no-files-found: error
+          retention-days: 30

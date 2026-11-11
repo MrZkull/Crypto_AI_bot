@@ -1,0 +1,312 @@
+name: Phase2D F08 Controlled Disposition
+
+on:
+  workflow_dispatch:
+    inputs:
+      validator_amendment_run_id:
+        description: "Successful run ID of Phase2D F08 Validator Amendment"
+        required: true
+        type: string
+      resume_attempt_run_id:
+        description: "Optional run ID of a previous disposition attempt artifact to resume after an interrupted state save"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: cryptobot-phase2d
+  cancel-in-progress: false
+
+jobs:
+  controlled-disposition:
+    if: ${{ github.ref == 'refs/heads/main' && github.actor_id != '166250462' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: f08-disposition
+
+    steps:
+      - name: Enforce pinned dispatch context
+        env:
+          VALIDATOR_AMENDMENT_RUN_ID: ${{ inputs.validator_amendment_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "MrZkull/Crypto_AI_bot"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR_ID" != "166250462"
+          [[ "$VALIDATOR_AMENDMENT_RUN_ID" =~ ^[0-9]+$ ]]
+
+      - name: Checkout main source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify checkout matches dispatch commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Install project dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Verify validator-amendment workflow run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATOR_AMENDMENT_RUN_ID: ${{ inputs.validator_amendment_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id="$VALIDATOR_AMENDMENT_RUN_ID"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" > prior_run.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          run = json.loads(Path("prior_run.json").read_text())
+          expected = {
+              "name": "Phase2D F08 Validator Amendment",
+              "event": "workflow_dispatch",
+              "head_branch": "main",
+              "conclusion": "success",
+              "path": ".github/workflows/phase2d_f08_validator_amendment.yml",
+          }
+          for key, value in expected.items():
+              if run.get(key) != value:
+                  raise SystemExit(f"Prior validator-amendment run {key} mismatch: {run.get(key)!r}")
+          if run.get("head_sha") != "${{ github.sha }}":
+              raise SystemExit("main source changed since validator-amendment approval; restart the two-stage process")
+          if run.get("run_attempt") != 1:
+              raise SystemExit("Validator-amendment run was rerun; dispatch a new run and obtain a fresh owner approval")
+          if str(run.get("actor", {}).get("id", "")) == "166250462":
+              raise SystemExit("Validator-amendment workflow initiator cannot be the designated owner")
+          if run.get("repository", {}).get("full_name") != "MrZkull/Crypto_AI_bot":
+              raise SystemExit("Validator-amendment workflow repository mismatch")
+          PY
+
+      - name: Download approved validator-amendment handoff
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: f08-validator-amendment-source
+          run-id: ${{ inputs.validator_amendment_run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: approval_handoff
+
+      - name: Verify the approved source handoff
+        env:
+          VALIDATOR_AMENDMENT_RUN_ID: ${{ inputs.validator_amendment_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat approval_handoff/approved_source_commit.txt)" = "$GITHUB_SHA"
+          test "$(cat approval_handoff/validator_amendment_run_id.txt)" = "$VALIDATOR_AMENDMENT_RUN_ID"
+          sha256sum -c approval_handoff/source_code_sha256.txt
+          test -s approval_handoff/phase2d_state.schema6.json
+          test -s approval_handoff/phase2d_observations.baseline.jsonl
+          test -s approval_handoff/experiment_ledger.baseline.jsonl
+          test -s approval_handoff/experiment_ledger_after_amendment.jsonl
+          test -s approval_handoff/f08_historical_backfill/manifest.json
+          test -s approval_handoff/f08_historical_backfill/observations.jsonl
+          test -d approval_handoff/f08_historical_backfill/evidence
+          test -s approval_handoff/validator_amendment_approval_evidence.json
+
+          mkdir -p baseline working
+          cp approval_handoff/phase2d_state.schema6.json baseline/phase2d_state.json
+          cp approval_handoff/phase2d_observations.baseline.jsonl baseline/phase2d_observations.jsonl
+          cp approval_handoff/experiment_ledger.baseline.jsonl baseline/experiment_ledger.jsonl
+          cp baseline/phase2d_state.json working/phase2d_state.json
+          cp baseline/phase2d_observations.jsonl working/phase2d_observations.jsonl
+          cp approval_handoff/experiment_ledger_after_amendment.jsonl working/experiment_ledger.jsonl
+          cp approval_handoff/phase2d_results.baseline.json working/phase2d_results.json
+          cp approval_handoff/phase2d_latest_snapshot.baseline.json working/phase2d_latest_snapshot.json
+          cp approval_handoff/validator_amendment_approval_evidence.json working/validator_amendment_approval_evidence.json
+          cp -a approval_handoff/f08_historical_backfill working/f08_historical_backfill
+
+      - name: Verify the prior disposition-attempt workflow run
+        if: ${{ inputs.resume_attempt_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_ATTEMPT_RUN_ID: ${{ inputs.resume_attempt_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id="$RESUME_ATTEMPT_RUN_ID"
+          [[ "$run_id" =~ ^[0-9]+$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" > prior_attempt_run.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          run = json.loads(Path("prior_attempt_run.json").read_text())
+          expected = {
+              "name": "Phase2D F08 Controlled Disposition",
+              "event": "workflow_dispatch",
+              "head_branch": "main",
+              "path": ".github/workflows/phase2d_f08_controlled_disposition.yml",
+              "status": "completed",
+          }
+          for key, value in expected.items():
+              if run.get(key) != value:
+                  raise SystemExit(f"Prior disposition-attempt run {key} mismatch: {run.get(key)!r}")
+          if run.get("head_sha") != "${{ github.sha }}":
+              raise SystemExit("Prior disposition attempt used a different main source commit")
+          if run.get("run_attempt") != 1:
+              raise SystemExit("Prior disposition attempt was a rerun; use a new first-attempt workflow dispatch")
+          if str(run.get("actor", {}).get("id", "")) == "166250462":
+              raise SystemExit("Prior disposition workflow initiator cannot be the designated owner")
+          if run.get("repository", {}).get("full_name") != "MrZkull/Crypto_AI_bot":
+              raise SystemExit("Prior disposition-attempt repository mismatch")
+          PY
+
+      - name: Resume a prior interrupted disposition attempt
+        if: ${{ inputs.resume_attempt_run_id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: f08-disposition-attempt
+          run-id: ${{ inputs.resume_attempt_run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: prior_disposition_attempt
+
+      - name: Verify and use prior event-appended attempt when supplied
+        if: ${{ inputs.resume_attempt_run_id != '' }}
+        env:
+          VALIDATOR_AMENDMENT_RUN_ID: ${{ inputs.validator_amendment_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat prior_disposition_attempt/approved_source_commit.txt)" = "$GITHUB_SHA"
+          test "$(cat prior_disposition_attempt/validator_amendment_run_id.txt)" = "$VALIDATOR_AMENDMENT_RUN_ID"
+          test -s prior_disposition_attempt/working/phase2d_observations.jsonl
+          test -s prior_disposition_attempt/working/phase2d_state.json
+          test -s prior_disposition_attempt/working/experiment_ledger.jsonl
+          test -s prior_disposition_attempt/working/disposition_approval_evidence.json
+          cp prior_disposition_attempt/working/disposition_approval_evidence.json working/disposition_approval_evidence.json
+          cp prior_disposition_attempt/working/phase2d_state.json working/phase2d_state.json
+          cp prior_disposition_attempt/working/phase2d_observations.jsonl working/phase2d_observations.jsonl
+          cp prior_disposition_attempt/working/experiment_ledger.jsonl working/experiment_ledger.jsonl
+
+      - name: Record attempt recovery metadata
+        env:
+          VALIDATOR_AMENDMENT_RUN_ID: ${{ inputs.validator_amendment_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GITHUB_SHA" > approved_source_commit.txt
+          printf '%s\n' "$VALIDATOR_AMENDMENT_RUN_ID" > validator_amendment_run_id.txt
+
+      - name: Collect actual protected-environment disposition approval evidence
+        if: ${{ inputs.resume_attempt_run_id == '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/collect_f08_approval_evidence.py \
+            --environment f08-disposition \
+            --workflow "Phase2D F08 Controlled Disposition" \
+            --workflow-file .github/workflows/phase2d_f08_controlled_disposition.yml \
+            --output working/disposition_approval_evidence.json
+
+      - name: Apply exact not-scored schema-7 disposition
+        run: |
+          set -euo pipefail
+          python phase2d_f08_disposition.py apply-disposition \
+            --state working/phase2d_state.json \
+            --observation-ledger working/phase2d_observations.jsonl \
+            --experiment-journal working/experiment_ledger.jsonl \
+            --baseline-state baseline/phase2d_state.json \
+            --baseline-ledger baseline/phase2d_observations.jsonl \
+            --baseline-journal baseline/experiment_ledger.jsonl \
+            --validator phase2d_prospective_validator.py \
+            --promotion-gate phase2d_promotion_gate.py \
+            --manifest working/f08_historical_backfill/manifest.json \
+            --bundle working/f08_historical_backfill/observations.jsonl \
+            --approval-evidence working/disposition_approval_evidence.json \
+            --owner-id 166250462
+
+      - name: Preserve disposition attempt checkpoint for crash recovery
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: f08-disposition-attempt
+          path: |
+            baseline/
+            working/phase2d_state.json
+            working/phase2d_observations.jsonl
+            working/experiment_ledger.jsonl
+            working/disposition_approval_evidence.json
+            approved_source_commit.txt
+            validator_amendment_run_id.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Verify the resulting state and event counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          state = json.loads(Path("working/phase2d_state.json").read_text())
+          if state.get("schema_version") != 7:
+              raise SystemExit("Expected schema 7")
+          dispositioned = state.get("dispositioned", {})
+          counts = {key: len(dispositioned.get(key, [])) for key in ("candidate", "production")}
+          if counts != {"candidate": 74, "production": 544}:
+              raise SystemExit(f"Unexpected disposition counts: {counts}")
+          if state.get("pending", {}).get("candidate") and any(
+              row.get("created_at", "") <= "2026-10-16T14:08:36.946361+00:00"
+              for row in state["pending"]["candidate"]
+          ):
+              raise SystemExit("Stale candidate prediction remains pending")
+          if state.get("pending", {}).get("production") and any(
+              row.get("created_at", "") <= "2026-10-16T14:08:36.946361+00:00"
+              for row in state["pending"]["production"]
+          ):
+              raise SystemExit("Stale production prediction remains pending")
+          rows = [json.loads(line) for line in Path("working/phase2d_observations.jsonl").read_text().splitlines()]
+          before = [json.loads(line) for line in Path("baseline/phase2d_observations.jsonl").read_text().splitlines()]
+          if len(rows) != len(before) + 1 or rows[-1].get("event") != "STALE_PENDING_NOT_SCORED":
+              raise SystemExit("Official observation ledger must have exactly one disposition event extension")
+          if rows[-1].get("outcome_rows_appended") != 0:
+              raise SystemExit("Disposition event must append zero outcomes")
+          print("Schema-7 state verification: PASS")
+          print("Disposition counts:", counts)
+          print("Official observation rows appended: 0")
+          print("Official events appended: 1")
+          print("C15/C20 preserved; C25 not evaluated; promotion not authorized")
+          PY
+
+      - name: Seal and independently verify the quarantined V2 schema-7 artifact
+        env:
+          VALIDATOR_AMENDMENT_RUN_ID: ${{ inputs.validator_amendment_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python phase2d_f08_v2_restore.py seal \
+            --baseline-dir baseline \
+            --working-dir working \
+            --source-root . \
+            --output-dir output \
+            --source-commit "$GITHUB_SHA" \
+            --validator-amendment-run-id "$VALIDATOR_AMENDMENT_RUN_ID" \
+            --disposition-run-id "$GITHUB_RUN_ID"
+
+      - name: Upload quarantined schema-7 disposition artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: f08-schema7-disposition-quarantined
+          path: output/
+          if-no-files-found: error
+          retention-days: 90

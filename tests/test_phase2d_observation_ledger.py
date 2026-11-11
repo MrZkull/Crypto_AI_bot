@@ -34,70 +34,89 @@ class TestPhase2DObservationLedger(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ledger.append_observation(path, "TEST-PHASE2D", conflict)
 
-    def test_f08_schema5_migrates_and_records_unrecoverable_count(self):
+    def test_f08_schema5_migration_is_blocked_pending_schema7_authorization(self):
         identity = {
             "experiment_id": "PHASE2D-HARDENED-20260924-F08",
             "candidate_sha256": "candidate",
             "production_sha256": "production",
             "feature_code_hash": "feature-code",
             "feature_schema_hash": "feature-schema",
-            "validator_code_hash": "validator-code-old",
+            "validator_code_hash": "validator-code-new",
         }
-        definition = {
-            "experiment_id": identity["experiment_id"],
-            "lookahead_bars": 24,
-            "buy_tp_r": 3.5,
-            "buy_sl_r": 2.5,
-            "sell_tp_r": 3.5,
-            "sell_sl_r": 2.5,
-            "friction_r": 0.12,
-            "candidate_thresholds": {"buy": 0.40, "sell": 1.01},
-            "production_thresholds": {"buy": 0.40, "sell": 0.45},
-        }
+        definition = {"experiment_id": identity["experiment_id"]}
         state = validator.empty_state(identity, definition)
         state["schema_version"] = 5
-        state["resolved"]["candidate"] = [{
-            "id": "candidate:ETHUSDT:123", "model": "candidate",
-            "symbol": "ETHUSDT", "open_time": 123, "signal": "BUY",
-            "status": "TP", "net_r": 3.38,
-        }]
-        state["resolved"]["production"] = [{
-            "id": "production:ETHUSDT:123", "model": "production",
-            "symbol": "ETHUSDT", "open_time": 123, "signal": "BUY",
-            "status": "SL", "net_r": -2.62,
-        }]
-        state["pending"]["candidate"] = [{
-            "id": "candidate:BTCUSDT:456", "model": "candidate",
-            "symbol": "BTCUSDT", "open_time": 456, "signal": "BUY",
-        }]
-        state["seen"]["candidate"] = ["ETHUSDT:123", "BTCUSDT:456", "SOLUSDT:789"]
-        state["seen"]["production"] = ["ETHUSDT:123"]
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state_path = root / "phase2d_state.json"
             observation_path = root / "phase2d_observations.jsonl"
             audit_path = root / "experiment_ledger.jsonl"
-            state_path.write_text(json.dumps(state), encoding="utf-8")
+            original = json.dumps(state, sort_keys=True)
+            state_path.write_text(original, encoding="utf-8")
 
             with patch.object(validator, "STATE_FILE", state_path), \
                  patch.object(validator, "OBSERVATION_LEDGER_FILE", observation_path), \
                  patch.object(validator, "LEDGER_FILE", audit_path):
-                restored, fresh, reason = validator.load_compatible_state(
-                    identity, definition, allow_fresh_start=False
-                )
+                with self.assertRaisesRegex(validator.StateCompatibilityError, "schema must be 7"):
+                    validator.load_compatible_state(identity, definition, allow_fresh_start=True)
 
-            self.assertFalse(fresh)
-            self.assertEqual(restored["schema_version"], 6)
-            self.assertIn("schema upgraded from 5 to 6", reason)
-            migration = restored["observation_ledger"]["migration"]
-            self.assertTrue(migration["initialized"])
-            self.assertEqual(migration["migrated_resolved"], 2)
-            self.assertEqual(migration["pending_at_migration"], 1)
-            self.assertEqual(migration["unrecoverable_seen"], 1)
-            self.assertEqual(len(ledger.load_observations(observation_path, identity["experiment_id"])), 2)
-            events = ledger.load_events(observation_path, identity["experiment_id"])
-            self.assertEqual(sum(e.get("event") == "F08_LEDGER_INITIALIZED_FROM_STATE" for e in events), 1)
+            self.assertEqual(state_path.read_text(encoding="utf-8"), original)
+            self.assertFalse(observation_path.exists())
+            self.assertFalse(audit_path.exists())
+
+
+    def test_f08_missing_state_cannot_be_recreated_with_fresh_start(self):
+        identity = {
+            "experiment_id": "PHASE2D-HARDENED-20260924-F08",
+            "candidate_sha256": "candidate",
+            "production_sha256": "production",
+            "feature_code_hash": "feature-code",
+            "feature_schema_hash": "feature-schema",
+            "validator_code_hash": "validator-code-new",
+        }
+        definition = {"experiment_id": identity["experiment_id"]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "missing_phase2d_state.json"
+            observation_path = root / "phase2d_observations.jsonl"
+            audit_path = root / "experiment_ledger.jsonl"
+            with patch.object(validator, "STATE_FILE", state_path), \
+                 patch.object(validator, "OBSERVATION_LEDGER_FILE", observation_path), \
+                 patch.object(validator, "LEDGER_FILE", audit_path):
+                with self.assertRaisesRegex(validator.StateCompatibilityError, "fresh start is prohibited"):
+                    validator.load_compatible_state(identity, definition, allow_fresh_start=True)
+            self.assertFalse(state_path.exists())
+            self.assertFalse(observation_path.exists())
+            self.assertFalse(audit_path.exists())
+
+    def test_f08_unreadable_state_cannot_be_replaced_with_fresh_start(self):
+        identity = {
+            "experiment_id": "PHASE2D-HARDENED-20260924-F08",
+            "candidate_sha256": "candidate",
+            "production_sha256": "production",
+            "feature_code_hash": "feature-code",
+            "feature_schema_hash": "feature-schema",
+            "validator_code_hash": "validator-code-new",
+        }
+        definition = {"experiment_id": identity["experiment_id"]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "phase2d_state.json"
+            observation_path = root / "phase2d_observations.jsonl"
+            audit_path = root / "experiment_ledger.jsonl"
+            state_path.write_text("{not-valid-json", encoding="utf-8")
+            before = state_path.read_bytes()
+            with patch.object(validator, "STATE_FILE", state_path), \
+                 patch.object(validator, "OBSERVATION_LEDGER_FILE", observation_path), \
+                 patch.object(validator, "LEDGER_FILE", audit_path):
+                with self.assertRaisesRegex(validator.StateCompatibilityError, "cannot be reset"):
+                    validator.load_compatible_state(identity, definition, allow_fresh_start=True)
+            self.assertEqual(state_path.read_bytes(), before)
+            self.assertFalse(observation_path.exists())
+            self.assertFalse(audit_path.exists())
 
     def test_load_reads_more_than_500_cache_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -206,76 +225,37 @@ class TestPhase2DObservationLedger(unittest.TestCase):
                     [record, conflict],
                 )
 
-    def test_f08_migration_records_source_schema_5(self):
+    def test_f08_schema6_cannot_auto_migrate_or_bypass_hash_mismatch(self):
         identity = {
             "experiment_id": "PHASE2D-HARDENED-20260924-F08",
             "candidate_sha256": "candidate",
             "production_sha256": "production",
             "feature_code_hash": "feature-code",
             "feature_schema_hash": "feature-schema",
-            "validator_code_hash": "validator-code-old",
+            "validator_code_hash": "validator-code-new",
         }
-
-        definition = {
-            "experiment_id": identity["experiment_id"],
-            "lookahead_bars": 24,
-            "buy_tp_r": 3.5,
-            "buy_sl_r": 2.5,
-            "sell_tp_r": 3.5,
-            "sell_sl_r": 2.5,
-            "friction_r": 0.12,
-            "candidate_thresholds": {"buy": 0.40, "sell": 1.01},
-            "production_thresholds": {"buy": 0.40, "sell": 0.45},
-        }
-
-        state = validator.empty_state(
-            identity,
-            definition,
-        )
-
-        state["schema_version"] = 5
-        state["resolved"]["candidate"] = [{
-            "id": "candidate:ETHUSDT:123",
-            "model": "candidate",
-            "symbol": "ETHUSDT",
-            "open_time": 123,
-            "signal": "BUY",
-            "status": "TP",
-            "net_r": 3.38,
-        }]
-        state["seen"]["candidate"] = ["ETHUSDT:123"]
+        definition = {"experiment_id": identity["experiment_id"]}
+        state = validator.empty_state(identity, definition)
+        state["schema_version"] = 6
+        state["locked_models"]["validator_code_hash"] = "old-validator-code"
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state_path = root / "phase2d_state.json"
             observation_path = root / "phase2d_observations.jsonl"
             audit_path = root / "experiment_ledger.jsonl"
-
-            state_path.write_text(
-                json.dumps(state),
-                encoding="utf-8",
-            )
+            original = json.dumps(state, sort_keys=True)
+            state_path.write_text(original, encoding="utf-8")
 
             with patch.object(validator, "STATE_FILE", state_path), \
                  patch.object(validator, "OBSERVATION_LEDGER_FILE", observation_path), \
                  patch.object(validator, "LEDGER_FILE", audit_path):
+                with self.assertRaisesRegex(validator.StateCompatibilityError, "cannot migrate or reset"):
+                    validator.load_compatible_state(identity, definition, allow_fresh_start=True)
 
-                restored, fresh, _ = validator.load_compatible_state(
-                    identity,
-                    definition,
-                    allow_fresh_start=False,
-                )
-
-            self.assertFalse(fresh)
-
-            migration = (
-                restored["observation_ledger"]["migration"]
-            )
-
-            self.assertEqual(
-                migration["legacy_state_schema"],
-                5,
-            )
+            self.assertEqual(state_path.read_text(encoding="utf-8"), original)
+            self.assertFalse(observation_path.exists())
+            self.assertFalse(audit_path.exists())
 
 
 if __name__ == "__main__":
