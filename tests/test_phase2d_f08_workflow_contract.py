@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AMENDMENT = ROOT / ".github/workflows/phase2d_f08_validator_amendment.yml"
 DISPOSITION = ROOT / ".github/workflows/phase2d_f08_controlled_disposition.yml"
+REGRESSION = ROOT / ".github/workflows/pull_request_regression.yml"
 
 
 def test_validator_amendment_handoff_contains_backfill_folder_and_approval_evidence():
@@ -79,7 +80,7 @@ PINNED_ACTIONS = {
 def test_external_actions_are_pinned_to_verified_full_commit_shas():
     import re
 
-    for workflow in (AMENDMENT, DISPOSITION):
+    for workflow in (AMENDMENT, DISPOSITION, REGRESSION):
         for line_number, line in enumerate(
             workflow.read_text(encoding="utf-8").splitlines(), start=1
         ):
