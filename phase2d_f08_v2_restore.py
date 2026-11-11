@@ -110,10 +110,34 @@ def _safe_copy(source: Path, destination: Path, label: str) -> None:
     shutil.copyfile(source, destination)
 
 
+def _assert_disjoint_directories(source: Path, destination: Path, label: str) -> None:
+    """Reject equal or ancestor/descendant roots before a recursive copy."""
+    disposition._reject_symlink_components(source, f"{label} source")
+    disposition._reject_symlink_components(destination, f"{label} destination")
+    try:
+        source_root = source.expanduser().resolve(strict=True)
+        destination_root = destination.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise V2RestoreError(
+            f"{label} source/destination cannot be safely resolved: {exc}"
+        ) from exc
+
+    if (
+        source_root == destination_root
+        or source_root in destination_root.parents
+        or destination_root in source_root.parents
+    ):
+        raise V2RestoreError(
+            f"{label} source and destination directories overlap: "
+            f"{source_root} <-> {destination_root}"
+        )
+
+
 def _copy_tree_no_links(source: Path, destination: Path, label: str) -> None:
     disposition._reject_symlink_components(source, label)
     if source.is_symlink() or not source.is_dir():
         raise V2RestoreError(f"Required {label} directory is missing or unsafe: {source}")
+    _assert_disjoint_directories(source, destination, label)
     destination.mkdir(parents=True, exist_ok=True)
     for path in sorted(source.rglob("*")):
         if path.is_symlink():
@@ -521,6 +545,9 @@ def restore_artifact(
         expected_source_commit=expected_source_commit,
         runtime_source_root=runtime_source_root,
     )
+    _assert_disjoint_directories(artifact_dir, output_dir, "V2 restore")
+    if output_dir.exists() and not output_dir.is_dir():
+        raise V2RestoreError(f"Restore destination exists and is not a directory: {output_dir}")
     if output_dir.exists() and any(output_dir.iterdir()):
         raise V2RestoreError(f"Refusing to overwrite non-empty restore destination: {output_dir}")
     disposition._reject_symlink_components(output_dir, "V2 restore destination")

@@ -638,6 +638,11 @@ def _validate_stored_approval(
         environment_name=environment_name,
         workflow_name=workflow_name,
     )
+    expected_keys = set(verified) | {"evidence_snapshot"}
+    if set(approval) != expected_keys:
+        raise DispositionError(
+            "Stored approval provenance contains missing or unexpected fields"
+        )
     for key, value in verified.items():
         if approval.get(key) != value:
             raise DispositionError(f"Stored approval provenance {key} does not match its evidence snapshot")

@@ -8,10 +8,10 @@ is not authorized for production use or official state mutation.
 
 LATEST VALIDATION — RELEASE CANDIDATE PR #15
 - Windows full regression before the follow-up pin/CI patch: 412 passed, 5 skipped, and 3 subtests passed. Four skips were Windows symlink limitations; one required the external authoritative recovery artifact path.
-- Latest Windows full regression after the follow-up patches (2026-11-11): 414 passed, 4 skipped, and 3 subtests passed in 32.19s. Focused regression: 70 passed in 9.90s.
+- Latest Windows full regression after consolidated hardening (2026-11-11): 417 passed, 4 skipped, and 3 subtests passed in 34.38s. Focused regression: 70 passed in 9.90s.
 - GitHub Actions PR regression run #15 on Ubuntu 26.04 / Python 3.12, initial candidate commit e1507a4b: 416 passed, 1 skipped, 14 warnings, and 3 subtests passed. All four symlink tests ran and passed on Linux.
 - The sole Linux skip was the real-authoritative-state test, which expected an external /mnt/data mount. The release candidate includes a byte-identical evidence/state.json copy; the follow-up test change uses it only after matching the pinned SHA256.
-- Follow-up CI adds pinned actionlint validation for both protected F08 workflows and the PR regression workflow. Results for the follow-up commit must be taken from its own GitHub Actions run; they are not pre-claimed here.
+- Latest GitHub Actions PR regression run #17 on commit `773adfb6c97e73ca84d2015c69eaec44a7fcd57c`: **418 passed, 0 skipped**, 14 warnings, and 3 subtests passed in 9.77s. The pinned actionlint 1.7.12 checksum, workflow lint, core-module compilation, and full Linux regression passed.
 - Pinned-vs-candidate differential audit: PASS for persisted observation summaries, model scoring fixture, BUY/SELL TP/SL/AMBIGUOUS/EXPIRED fixtures, feature-frame outputs, and frozen promotion-gate output.
 - Promotion gate replay stayed NOT_READY at 23 paired UTC blocks; only C15/C20 are evaluated; C25 remains unevaluated; experiment journal remained unchanged.
 

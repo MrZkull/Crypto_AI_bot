@@ -151,3 +151,20 @@ def test_v2_refuses_nonempty_restore_destination(fixture_set, tmp_path):
     with pytest.raises(v2.V2RestoreError, match="Refusing to overwrite"):
         v2.restore_artifact(artifact, destination, spec=f["spec"])
     assert (destination / "do-not-overwrite.txt").read_text() == "preserve"
+
+
+
+def test_v2_restore_rejects_destination_nested_inside_source_artifact(fixture_set, tmp_path):
+    f = fixture_set
+    _append_amendment(f)
+    _apply(f)
+    artifact = _package_from_fixture(f, tmp_path)
+    before_inventory = v2._inventory(artifact)
+    destination = artifact / "restore_inside_source"
+
+    with pytest.raises(v2.V2RestoreError, match="overlap"):
+        v2.restore_artifact(artifact, destination, spec=f["spec"])
+
+    assert not destination.exists()
+    assert not list(artifact.glob(".restore_inside_source.restore.*"))
+    assert v2._inventory(artifact) == before_inventory

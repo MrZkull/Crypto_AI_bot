@@ -965,3 +965,32 @@ def test_committed_provenance_bundle_matches_pinned_disposition_spec():
     assert verified["manifest"]["reconciliation_id"] == spec.reconciliation_id
     assert _sha(provenance_path.read_bytes()) == "d679494c5d58292f12227b95492ec3d47daf4b5b5f2a38b21f962ca465b994c8"
     assert verified["manifest"]["resolution_provenance"]["record_count"] == 618
+
+
+
+def test_validator_amendment_rejects_unrecognized_stored_approval_field(fixture_set):
+    f = fixture_set
+    _append_amendment(f)
+    rows = disposition._read_jsonl_bytes(f["journal_path"].read_bytes(), "journal")
+    approval = rows[-1]["owner_approval"]
+    approval["unexpected_provenance"] = "must be rejected"
+
+    with pytest.raises(DispositionError, match="unexpected fields"):
+        disposition._validate_stored_approval(
+            approval,
+            expected_owner_id=disposition.OWNER_ID,
+            environment_name=disposition.VALIDATOR_AMENDMENT_ENVIRONMENT,
+            workflow_name=disposition.VALIDATOR_AMENDMENT_WORKFLOW,
+        )
+
+
+def test_schema7_retry_rejects_unrecognized_stored_approval_field(fixture_set):
+    f = fixture_set
+    _append_amendment(f)
+    _apply(f)
+    rows = disposition._read_jsonl_bytes(f["ledger_path"].read_bytes(), "ledger")
+    rows[-1]["approval_provenance"]["unexpected_provenance"] = "must be rejected"
+    _write_jsonl(f["ledger_path"], rows)
+
+    with pytest.raises(DispositionError, match="unexpected fields"):
+        _apply(f)
