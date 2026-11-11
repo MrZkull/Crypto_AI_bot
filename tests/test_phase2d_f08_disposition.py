@@ -939,3 +939,29 @@ def test_path_alias_guard_detects_normalized_relative_alias(tmp_path):
             ((target, "source"), (alias, "alias")),
             operation="test operation",
         )
+
+
+
+def test_committed_provenance_bundle_matches_pinned_disposition_spec():
+    repo_root = Path(__file__).resolve().parents[1]
+    bundle_dir = repo_root / "research_outputs" / "f08_historical_backfill"
+    manifest_path = bundle_dir / "manifest.json"
+    bundle_path = bundle_dir / "observations.jsonl"
+    provenance_path = bundle_dir / "resolution_provenance.jsonl"
+    state_path = bundle_dir / "evidence" / "state.json"
+
+    spec = DispositionSpec()
+    state_raw = state_path.read_bytes()
+    assert _sha(state_raw) == spec.state_sha256
+    state = json.loads(state_raw.decode("utf-8"))
+    population = disposition.pending_population(state, spec)
+
+    verified = disposition._verify_backfill_bundle(
+        manifest_path, bundle_path, population, spec
+    )
+    assert verified["manifest_sha256"] == "1aae5f75292241298977378b81ac6297e24c3270e1afb5957776a1f8b1767ab3"
+    assert verified["manifest_sha256"] == spec.manifest_sha256
+    assert verified["bundle_sha256"] == spec.bundle_sha256
+    assert verified["manifest"]["reconciliation_id"] == spec.reconciliation_id
+    assert _sha(provenance_path.read_bytes()) == "d679494c5d58292f12227b95492ec3d47daf4b5b5f2a38b21f962ca465b994c8"
+    assert verified["manifest"]["resolution_provenance"]["record_count"] == 618

@@ -622,8 +622,19 @@ def test_real_production_resolver_remains_neutral_and_writer_tags_prospective():
 def test_exact_stale_ids_from_recovered_authoritative_state_can_be_disposition_checked(tmp_path):
     source = Path("/mnt/data/phase2d_authoritative_run_41720710702/research_outputs/phase2d_state.json")
     if not source.is_file():
-        pytest.skip("Authoritative recovery artifact is not mounted in this test environment")
-    state = json.loads(source.read_text(encoding="utf-8"))
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "research_outputs"
+            / "f08_historical_backfill"
+            / "evidence"
+            / "state.json"
+        )
+    if not source.is_file():
+        pytest.skip("Authoritative recovery artifact and byte-identical evidence copy are unavailable")
+    source_bytes = source.read_bytes()
+    if hashlib.sha256(source_bytes).hexdigest() != policy.EXPECTED_SOURCE_HASHES["state"]:
+        pytest.fail("Authoritative recovery state does not match the pinned SHA256")
+    state = json.loads(source_bytes.decode("utf-8"))
     stale_ids = policy._stale_pending_ids(state)
     assert {model: len(ids) for model, ids in stale_ids.items()} == policy.EXPECTED_PENDING_COUNTS
 

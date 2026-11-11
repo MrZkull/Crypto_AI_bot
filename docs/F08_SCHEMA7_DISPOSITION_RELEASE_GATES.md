@@ -9,8 +9,11 @@ This document describes the isolated schema-7 implementation and the conditions 
 - Repository: `MrZkull/Crypto_AI_bot`
 - Candidate's original source-ancestry/audit base: `ff821b60dbade382431149e86ff9b5ce13a3243f`
 - Original schema-7 source worktree base: `944744f632da260a8d874d7faacc84820164a30a`
-- Current isolated integration branch: `integration/f08-schema7-disposition-main-20261110`
-- Current isolated integration base fetched from `origin/main` on 2026-11-10: `7f294c2e98dddb99d3ba60d8056b6dc59d559101`. Re-fetch and re-verify `origin/main` immediately before any PR creation; do not silently rebase or overwrite the six runtime/research files identified during integration.
+- Historical integration source branch: `integration/f08-schema7-disposition-main-20261110` (integration snapshot based on `7f294c2e98dddb99d3ba60d8056b6dc59d559101`).
+- Release-candidate branch: `feature/f08-schema7-release-candidate-20261111`.
+- Release-candidate base: `dbbfd478bc3dcc57494d7a7eaf65e7986748a59e` (`origin/main` fetched on 2026-11-11).
+- Initial release-candidate commit: `e1507a4b7bb9233d8e35d4ef9c37142839b18412`; review is tracked in draft PR [#15](https://github.com/MrZkull/Crypto_AI_bot/pull/15).
+- Do not silently rebase the candidate or overwrite the six runtime/research files identified during integration.
 - Target branch for the controlled workflow: `main`
 - Experiment: `PHASE2D-HARDENED-20260924-F08`
 - Authoritative source run: `41720710702`
@@ -18,9 +21,11 @@ This document describes the isolated schema-7 implementation and the conditions 
 - Source state schema: 6
 - Source observations: 16,208 (candidate 2,959; production 13,249)
 - Pending cohort: 618 (candidate 74; production 544)
-- **Superseded pre-provenance reconciliation ID**: `F08-HIST-BF-c8a8330915c85db8fe923615e2df2a58` (historical reference only; not acceptable for the new bundle).
-- **Superseded pre-provenance manifest SHA256**: `a32917de06548c3d4d0bcc6ec09b7c6974c00235dc90ef86db0df057b836c691` (must be regenerated).
-- **Superseded pre-provenance bundle SHA256**: `3f05c466810fc86a911d4105575c951a59a73e78a3b6271c9c01cb0042386878` (must be regenerated with `resolution_provenance.jsonl`).
+- Reconciliation ID: `F08-HIST-BF-c8a8330915c85db8fe923615e2df2a58`. It remains the deterministic ID produced from source hashes, resolver identity, pending-ID digest, and normalized outcome-row digest; resolver timestamps and candle-time provenance are held in the separately hashed sidecar and do not change deterministic outcome-row identity.
+- Superseded pre-provenance manifest SHA256: `a32917de06548c3d4d0bcc6ec09b7c6974c00235dc90ef86db0df057b836c691`.
+- Current provenance-inclusive manifest SHA256: `1aae5f75292241298977378b81ac6297e24c3270e1afb5957776a1f8b1767ab3`.
+- Deterministic `observations.jsonl` SHA256: `3f05c466810fc86a911d4105575c951a59a73e78a3b6271c9c01cb0042386878` (the normalized observation rows remain byte-identical).
+- Separate `resolution_provenance.jsonl` SHA256: `d679494c5d58292f12227b95492ec3d47daf4b5b5f2a38b21f962ca465b994c8` (618 records; exact resolver timestamps and independently derived outcome-candle times).
 - Pending cohort ID digest: `a1751b84e4fedd5dad40348392bac0ccf8c1be00a419118d152ee561a9d1c644`
 - Frozen promotion gate canonical SHA256: `f787bc3caa810c9f82f56b44d2d8624637693e47eb4613e86a4c30f461c2faab`
 
@@ -89,7 +94,7 @@ The V2 restore module creates and verifies a separate manifest with `artifact_st
 ## Mandatory pre-run checks
 
 - [ ] Confirm the pinned artifact ID `13272461237` is still available and not expired.
-- [ ] Make the exact immutable backfill manifest, bundle, and all referenced `evidence/` files available under `research_outputs/f08_historical_backfill/` on the approved `main` commit. The integration worktree bundle reviewed on 2026-11-08 did not contain this full package, so both workflows must fail closed until it is present and its hashes pass.
+- [ ] Make the exact immutable backfill manifest, bundle, provenance sidecar, and all referenced `evidence/` files available under `research_outputs/f08_historical_backfill/` on the approved `main` commit. The complete package is included in draft PR #15 but is not yet on `main`; neither protected workflow may run before the reviewed package is present on the exact approved `main` commit and all hashes pass.
 - [ ] Confirm `resolution_provenance.jsonl` is included and its manifest SHA256, 618-record count, raw-window SHA256, one-to-one ID mapping, exact resolver timestamps, and candle-derived outcome close times all verify independently.
 - [ ] Confirm the main branch is protected by a branch protection rule/ruleset.
 - [ ] Configure both environments with only the designated owner as required reviewer, prevent self-review enabled, and protected-branches-only deployment policy.

@@ -1,20 +1,19 @@
 Crypto_AI_bot — F08 Schema 7 Disposition Candidate
-Checkpoint: 2026-11-08
+Checkpoint: 2026-11-11 — release candidate tracked in draft PR #15
 
 PURPOSE
 This is an isolated implementation candidate for the F08 controlled schema-7
 stale-pending disposition. It is not merged into the user's main project and
 is not authorized for production use or official state mutation.
 
-LATEST VALIDATION
-- Candidate source-only suite, independently rerun before this workflow-hardening patch: 157 passed, 1 skipped (the skip requires the authoritative recovery artifact to be mounted).
-- Isolated Windows integration full regression after schema-5 contract-test alignment and before this workflow-hardening patch: 367 passed, 5 skipped, and 3 subtests passed on 2026-11-08. Four skips were due to unavailable symlink creation; one required the authoritative recovery artifact.
-- Python compile check: passed for modified modules and audit runner.
-- Pinned-vs-candidate differential audit: PASS for persisted observation
-  summaries, model scoring fixture, BUY/SELL TP/SL/AMBIGUOUS/EXPIRED fixtures,
-  feature-frame outputs, and frozen promotion-gate output.
-- Promotion gate replay stayed NOT_READY at 23 paired UTC blocks; only C15/C20
-  are evaluated; C25 remains unevaluated; experiment journal remained unchanged.
+LATEST VALIDATION — RELEASE CANDIDATE PR #15
+- Windows full regression before the follow-up pin/CI patch: 412 passed, 5 skipped, and 3 subtests passed. Four skips were Windows symlink limitations; one required the external authoritative recovery artifact path.
+- Latest Windows full regression after the follow-up patches (2026-11-11): 414 passed, 4 skipped, and 3 subtests passed in 32.19s. Focused regression: 70 passed in 9.90s.
+- GitHub Actions PR regression run #15 on Ubuntu 26.04 / Python 3.12, initial candidate commit e1507a4b: 416 passed, 1 skipped, 14 warnings, and 3 subtests passed. All four symlink tests ran and passed on Linux.
+- The sole Linux skip was the real-authoritative-state test, which expected an external /mnt/data mount. The release candidate includes a byte-identical evidence/state.json copy; the follow-up test change uses it only after matching the pinned SHA256.
+- Follow-up CI adds pinned actionlint validation for both protected F08 workflows and the PR regression workflow. Results for the follow-up commit must be taken from its own GitHub Actions run; they are not pre-claimed here.
+- Pinned-vs-candidate differential audit: PASS for persisted observation summaries, model scoring fixture, BUY/SELL TP/SL/AMBIGUOUS/EXPIRED fixtures, feature-frame outputs, and frozen promotion-gate output.
+- Promotion gate replay stayed NOT_READY at 23 paired UTC blocks; only C15/C20 are evaluated; C25 remains unevaluated; experiment journal remained unchanged.
 
 HARD LIMITATION
 Full historical model replay is still BLOCKED because the authoritative
@@ -24,16 +23,20 @@ not substitutes for original historical inputs. See:
   docs/F08_VALIDATOR_DIFFERENTIAL_AUDIT_20261108.md
 
 HISTORICAL RESOLUTION PROVENANCE
-The bundle writer now requires a separately hashed resolution_provenance.jsonl
-sidecar with one record per stale prediction (74 candidate / 544 production).
-It preserves the exact resolver-returned UTC resolved_at value separately from
-the market outcome time, which is derived from the selected raw 15-minute OHLC
-candle's open timestamp plus 900,000 ms. The sidecar is verified one-to-one
-against every historical outcome row and the exact raw-window SHA256. The
-deterministic observations.jsonl continues to omit resolved_at. This artifact
-remains HISTORICAL_BACKFILL and is excluded from primary prospective scoring.
-The existing historical bundle must be regenerated under the reviewed code
-only after its source, resolver, and owner-approval release gates are met.
+The provenance-inclusive historical bundle is included in draft PR #15, but is
+not yet on main. Its immutable evidence hashes are:
+
+- manifest.json SHA256: 1aae5f75292241298977378b81ac6297e24c3270e1afb5957776a1f8b1767ab3
+- observations.jsonl SHA256: 3f05c466810fc86a911d4105575c951a59a73e78a3b6271c9c01cb0042386878
+- resolution_provenance.jsonl SHA256: d679494c5d58292f12227b95492ec3d47daf4b5b5f2a38b21f962ca465b994c8
+
+The deterministic observations.jsonl continues to omit resolved_at. Resolution
+timestamps and outcome-candle timing remain in the separately hashed provenance
+sidecar. The bundle remains HISTORICAL_BACKFILL and is excluded from primary
+prospective scoring.
+
+The disposition validator must pin the current manifest hash. Owner approval
+remains pending and separate. Approval must not rewrite the immutable bundle.
 
 IMPORTANT HASHES
 - Pinned validator canonical SHA256:
@@ -67,9 +70,14 @@ The audit runner creates research_outputs/f08_validator_differential_audit.json.
 It uses temporary copies and does not modify the supplied source/evidence files.
 
 SAFETY / RELEASE STATE
+- PR #15 remains a draft and is not merged.
+- The candidate is not authorized for production use or official state mutation.
+- GitHub main-branch protection and both protected environments remain admin gates.
+- Independent owner approvals remain required for the two separate protected workflows.
+- Complete historical model replay and V2 restore-selector handoff remain separate release gates.
+- Do not dispatch either protected workflow from this candidate branch.
 - Do not run F08 disposition with --apply.
 - Do not change the authoritative schema-6 state or official ledgers manually.
 - Do not append F08_VALIDATOR_AMENDMENT or STALE_PENDING_NOT_SCORED manually.
 - Do not evaluate C25, restart F08, promote a model, or enable live/full trading.
-- GitHub environment protection, independent owner approvals, complete
-  historical replay, V2 restore-selector handoff, and admin checks remain gates.
+- F08 remains disabled.
