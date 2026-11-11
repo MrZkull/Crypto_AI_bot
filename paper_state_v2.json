@@ -180,6 +180,10 @@
       "status": "OPENED",
       "timestamp_ms": 1794376608840
     },
+    "ENAUSDT_1794410212298": {
+      "status": "OPENED",
+      "timestamp_ms": 1794431777523
+    },
     "ETHUSDT_1793263660131": {
       "status": "OPENED",
       "timestamp_ms": 1793267297898
@@ -505,6 +509,10 @@
       "entry_bar_open_time_ms": 1794382200000,
       "status": "DIRECTION_LIMIT",
       "timestamp_ms": 1794405742951
+    },
+    "ZECUSDT_1794410240847": {
+      "status": "OPENED",
+      "timestamp_ms": 1794431778091
     }
   },
   "execution_mode": "PAPER_ONLY",
@@ -4477,6 +4485,136 @@
       "total_fees_usd": 15.873146958069832,
       "tp1": 0.1471769110307973,
       "tp2": 0.1416648093517085
+    },
+    "ENAUSDT_1794410212298": {
+      "atr_ref": 0.0012364693115072068,
+      "bars_processed": 1,
+      "entry_bar_close_time_ms": 1794411899999,
+      "entry_bar_observation_identity": [
+        "ENAUSDT",
+        1794411000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1794411000000,
+      "entry_fee_usd": 8.944176694947078,
+      "entry_observation_close_time": 1794410099999,
+      "entry_observation_identity": [
+        "ENAUSDT",
+        1794409200000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1794409200000,
+      "entry_price": 0.1536,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.1536,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.156691173278768,
+      "exit_reason": "STOP_LOSS",
+      "expires_at_ms": 1794432600000,
+      "final_exit_fee_usd": 9.124176694947078,
+      "generated_at": "2026-11-11T15:16:52.298407+00:00",
+      "generated_at_ms": 1794410212298,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1794411899999,
+      "last_observation_identity": [
+        "ENAUSDT",
+        1794411000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1794411000000,
+      "last_processed_candle_close_time": 1794411899999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "ENAUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": -1.0602278446329807,
+      "next_candle_open_time_ms": 1794411900000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1794410099999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1794409200000
+        },
+        "close_time": 1794410099999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1794409199999,
+            "interval": "1h",
+            "logical_symbol": "ENAUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794405600000
+          },
+          "4h": {
+            "close_time": 1794398399999,
+            "interval": "4h",
+            "logical_symbol": "ENAUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794384000000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "ENAUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1794409200000,
+        "retrieved_at_ms": 1794410211406
+      },
+      "observation_identity": [
+        "ENAUSDT",
+        1794409200000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1794409200000,
+      "opened_at_ms": 1794411000000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "ENAUSDT_1794410212298",
+      "qty": 97050.52837399175,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794431778658,
+      "resolved_candle_close_time": 1794411899999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "ENAUSDT",
+        1794409200000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.1536,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 0.156691173278768,
+      "symbol": "ENAUSDT",
+      "tp1": 0.14927235740972478,
+      "tp2": 0.14432648016369592
     },
     "ETHUSDT_1793263660131": {
       "atr_ref": 7.147489648353549,
@@ -8946,6 +9084,136 @@
       "total_fees_usd": 23.959109611383152,
       "tp1": 1.0771994921356742,
       "tp2": 1.050798911719302
+    },
+    "ZECUSDT_1794410240847": {
+      "atr_ref": 12.512041030302786,
+      "bars_processed": 1,
+      "entry_bar_close_time_ms": 1794411899999,
+      "entry_bar_observation_identity": [
+        "ZECUSDT",
+        1794411000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1794411000000,
+      "entry_fee_usd": 5.602539172484133,
+      "entry_observation_close_time": 1794410099999,
+      "entry_observation_identity": [
+        "ZECUSDT",
+        1794409200000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1794409200000,
+      "entry_price": 973.6,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 973.6,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": 1004.880102575757,
+      "exit_reason": "STOP_LOSS",
+      "expires_at_ms": 1794432600000,
+      "final_exit_fee_usd": 5.782539172484133,
+      "generated_at": "2026-11-11T15:17:20.847286+00:00",
+      "generated_at_ms": 1794410240847,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1794411899999,
+      "last_observation_identity": [
+        "ZECUSDT",
+        1794411000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1794411000000,
+      "last_processed_candle_close_time": 1794411899999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "ZECUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": -1.037950261149894,
+      "next_candle_open_time_ms": 1794411900000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1794410099999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1794409200000
+        },
+        "close_time": 1794410099999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1794409199999,
+            "interval": "1h",
+            "logical_symbol": "ZECUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794405600000
+          },
+          "4h": {
+            "close_time": 1794398399999,
+            "interval": "4h",
+            "logical_symbol": "ZECUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794384000000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "ZECUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1794409200000,
+        "retrieved_at_ms": 1794410239965
+      },
+      "observation_identity": [
+        "ZECUSDT",
+        1794409200000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1794409200000,
+      "opened_at_ms": 1794411000000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "ZECUSDT_1794410240847",
+      "qty": 9.59076138811992,
+      "realized_gross_pnl": -300.0,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794431779224,
+      "resolved_candle_close_time": 1794411899999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "ZECUSDT",
+        1794409200000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 973.6,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 1004.880102575757,
+      "symbol": "ZECUSDT",
+      "tp1": 929.8078563939403,
+      "tp2": 879.7596922727291
     }
   },
   "prospective_baseline_max_prediction_generated_at_ms": 1793102556606,
