@@ -35,6 +35,11 @@ def _package_from_fixture(f, tmp_path: Path) -> Path:
     ):
         shutil.copyfile(src, baseline / name)
 
+    for name in ("phase2d_results.json", "phase2d_latest_snapshot.json"):
+        raw = json.dumps({"fixture_file": name}, sort_keys=True).encode("utf-8")
+        (baseline / name).write_bytes(raw)
+        (working / name).write_bytes(raw)
+
     for src, name in (
         (f["state_path"], "phase2d_state.json"),
         (f["ledger_path"], "phase2d_observations.jsonl"),
@@ -168,3 +173,32 @@ def test_v2_restore_rejects_destination_nested_inside_source_artifact(fixture_se
     assert not destination.exists()
     assert not list(artifact.glob(".restore_inside_source.restore.*"))
     assert v2._inventory(artifact) == before_inventory
+
+
+
+def test_v2_package_contains_unchanged_results_and_latest_snapshot(fixture_set, tmp_path):
+    f = fixture_set
+    _append_amendment(f)
+    _apply(f)
+    artifact = _package_from_fixture(f, tmp_path)
+    manifest = json.loads((artifact / "manifest_v2.json").read_text(encoding="utf-8"))
+    hashes = manifest["verification"]["runtime_artifacts_unchanged"]
+
+    for name in ("phase2d_results.json", "phase2d_latest_snapshot.json"):
+        baseline = artifact / "baseline" / name
+        post = artifact / "disposition" / name
+        assert baseline.is_file() and post.is_file()
+        assert baseline.read_bytes() == post.read_bytes()
+        assert hashes[name] == v2._sha(baseline.read_bytes())
+
+
+def test_v2_rejects_runtime_results_or_snapshot_change_during_disposition(fixture_set, tmp_path):
+    f = fixture_set
+    _append_amendment(f)
+    _apply(f)
+    artifact = _package_from_fixture(f, tmp_path)
+    changed = artifact / "disposition" / "phase2d_results.json"
+    changed.write_text('{"changed":true}\n', encoding="utf-8")
+
+    with pytest.raises(v2.V2RestoreError, match="changed runtime artifact"):
+        v2._verify_transition(artifact, spec=f["spec"], expected_source_commit="a" * 40)

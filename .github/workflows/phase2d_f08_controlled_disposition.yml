@@ -126,11 +126,13 @@ jobs:
           cp approval_handoff/phase2d_state.schema6.json baseline/phase2d_state.json
           cp approval_handoff/phase2d_observations.baseline.jsonl baseline/phase2d_observations.jsonl
           cp approval_handoff/experiment_ledger.baseline.jsonl baseline/experiment_ledger.jsonl
+          cp approval_handoff/phase2d_results.baseline.json baseline/phase2d_results.json
+          cp approval_handoff/phase2d_latest_snapshot.baseline.json baseline/phase2d_latest_snapshot.json
           cp baseline/phase2d_state.json working/phase2d_state.json
           cp baseline/phase2d_observations.jsonl working/phase2d_observations.jsonl
           cp approval_handoff/experiment_ledger_after_amendment.jsonl working/experiment_ledger.jsonl
-          cp approval_handoff/phase2d_results.baseline.json working/phase2d_results.json
-          cp approval_handoff/phase2d_latest_snapshot.baseline.json working/phase2d_latest_snapshot.json
+          cp baseline/phase2d_results.json working/phase2d_results.json
+          cp baseline/phase2d_latest_snapshot.json working/phase2d_latest_snapshot.json
           cp approval_handoff/validator_amendment_approval_evidence.json working/validator_amendment_approval_evidence.json
           cp -a approval_handoff/f08_historical_backfill working/f08_historical_backfill
 
@@ -303,10 +305,57 @@ jobs:
             --validator-amendment-run-id "$VALIDATOR_AMENDMENT_RUN_ID" \
             --disposition-run-id "$GITHUB_RUN_ID"
 
+      - name: Package fixed immutable-Release asset candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python phase2d_f08_v2_restore.py verify \
+            --artifact-dir output \
+            --expected-source-commit "$GITHUB_SHA"
+          mkdir -p f08_release_asset_candidate
+          python - <<'PY'
+          import hashlib
+          import os
+          import stat
+          import zipfile
+          from pathlib import Path
+
+          source = Path("output")
+          archive = Path("f08_release_asset_candidate/f08-schema7-runtime-handoff.zip")
+          with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+              for path in sorted(source.rglob("*")):
+                  if path.is_symlink():
+                      raise SystemExit(f"Refusing symlink in Release asset: {path}")
+                  if not path.is_file():
+                      continue
+                  relative = path.relative_to(source).as_posix()
+                  if relative.startswith("/") or ".." in Path(relative).parts or "\\" in relative:
+                      raise SystemExit(f"Unsafe Release asset member: {relative}")
+                  info = zipfile.ZipInfo(relative, date_time=(2020, 1, 1, 0, 0, 0))
+                  info.compress_type = zipfile.ZIP_DEFLATED
+                  info.external_attr = (stat.S_IFREG | 0o644) << 16
+                  zf.writestr(info, path.read_bytes())
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          (archive.parent / "f08-schema7-runtime-handoff.zip.sha256").write_text(
+              f"{digest}  {archive.name}\n", encoding="ascii"
+          )
+          print(f"Release asset candidate SHA256: {digest}")
+          PY
+          test -s f08_release_asset_candidate/f08-schema7-runtime-handoff.zip
+          test -s f08_release_asset_candidate/f08-schema7-runtime-handoff.zip.sha256
+
       - name: Upload quarantined schema-7 disposition artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: f08-schema7-disposition-quarantined
           path: output/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload fixed Release asset candidate for owner publication
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: f08-schema7-runtime-handoff-release-candidate
+          path: f08_release_asset_candidate/
           if-no-files-found: error
           retention-days: 90

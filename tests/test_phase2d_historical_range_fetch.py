@@ -225,3 +225,170 @@ def test_prediction_window_does_not_resolve_before_final_followup_is_closed():
 
 def test_prediction_window_rejects_invalid_prediction_timestamp():
     assert validator.prediction_window_status({}, pd.DataFrame(), 2_000_000_000_000) == "INVALID_PREDICTION_TIME"
+
+def _pending_resolution_metrics():
+    return {
+        "pending_not_mature": 0,
+        "history_window_fetches": 0,
+        "history_window_cache_hits": 0,
+        "transient_fetch_failures": 0,
+        "history_unavailable": 0,
+        "history_gaps": 0,
+        "range_fetch_budget_exhausted": 0,
+    }
+
+
+def test_pending_resolution_uses_historical_fallback(monkeypatch):
+    entry = (1_700_000_000_000 // validator.ENTRY_MS) * validator.ENTRY_MS
+    prediction = {"id": "p1", "symbol": "ETHUSDT", "open_time": entry}
+    now_ms = entry + 25 * validator.ENTRY_MS
+    historical = _complete_window(entry)
+    calls = []
+
+    def fake_fetch(symbol, open_time):
+        calls.append((symbol, open_time))
+        return historical
+
+    monkeypatch.setattr(validator, "fetch_deribit_15m_window", fake_fetch)
+
+    metrics = _pending_resolution_metrics()
+    cache = {}
+    fetch_state = {"fetches": 0}
+
+    frame, status = validator.fetch_pending_resolution_window(
+        prediction,
+        {"ETHUSDT": pd.DataFrame()},
+        now_ms,
+        cache,
+        fetch_state,
+        metrics,
+    )
+
+    assert status == "COMPLETE"
+    assert frame is historical
+    assert calls == [("ETHUSDT", entry)]
+    assert fetch_state["fetches"] == 1
+    assert metrics["history_window_fetches"] == 1
+
+
+def test_pending_resolution_historical_fallback_is_cached_across_models(monkeypatch):
+    entry = (1_700_000_000_000 // validator.ENTRY_MS) * validator.ENTRY_MS
+    prediction = {"id": "p1", "symbol": "ETHUSDT", "open_time": entry}
+    now_ms = entry + 25 * validator.ENTRY_MS
+    historical = _complete_window(entry)
+    calls = []
+
+    def fake_fetch(symbol, open_time):
+        calls.append((symbol, open_time))
+        return historical
+
+    monkeypatch.setattr(validator, "fetch_deribit_15m_window", fake_fetch)
+
+    cache = {}
+    fetch_state = {"fetches": 0}
+    candidate_metrics = _pending_resolution_metrics()
+    production_metrics = _pending_resolution_metrics()
+    recent = {"ETHUSDT": pd.DataFrame()}
+
+    first = validator.fetch_pending_resolution_window(
+        prediction, recent, now_ms, cache, fetch_state, candidate_metrics
+    )
+    second = validator.fetch_pending_resolution_window(
+        prediction, recent, now_ms, cache, fetch_state, production_metrics
+    )
+
+    assert first[1] == second[1] == "COMPLETE"
+    assert calls == [("ETHUSDT", entry)]
+    assert fetch_state["fetches"] == 1
+    assert candidate_metrics["history_window_fetches"] == 1
+    assert production_metrics["history_window_fetches"] == 0
+    assert production_metrics["history_window_cache_hits"] == 1
+
+
+def test_pending_resolution_does_not_fetch_before_window_matures(monkeypatch):
+    entry = (1_700_000_000_000 // validator.ENTRY_MS) * validator.ENTRY_MS
+    prediction = {"id": "p1", "symbol": "ETHUSDT", "open_time": entry}
+    now_ms = entry + 25 * validator.ENTRY_MS - 1
+
+    def forbidden_fetch(*args):
+        raise AssertionError("Historical fetch must not run before maturity")
+
+    monkeypatch.setattr(
+        validator, "fetch_deribit_15m_window", forbidden_fetch
+    )
+
+    metrics = _pending_resolution_metrics()
+    frame, status = validator.fetch_pending_resolution_window(
+        prediction,
+        {"ETHUSDT": pd.DataFrame()},
+        now_ms,
+        {},
+        {"fetches": 0},
+        metrics,
+    )
+
+    assert status == "NOT_MATURE"
+    assert metrics["pending_not_mature"] == 1
+    assert metrics["history_window_fetches"] == 0
+
+
+def test_pending_resolution_respects_per_run_fetch_budget(monkeypatch):
+    entry = (1_700_000_000_000 // validator.ENTRY_MS) * validator.ENTRY_MS
+    prediction = {"id": "p1", "symbol": "ETHUSDT", "open_time": entry}
+    now_ms = entry + 25 * validator.ENTRY_MS
+
+    def forbidden_fetch(*args):
+        raise AssertionError("Fetch budget must prevent network access")
+
+    monkeypatch.setattr(
+        validator, "fetch_deribit_15m_window", forbidden_fetch
+    )
+
+    metrics = _pending_resolution_metrics()
+    frame, status = validator.fetch_pending_resolution_window(
+        prediction,
+        {"ETHUSDT": pd.DataFrame()},
+        now_ms,
+        {},
+        {"fetches": validator.MAX_PENDING_RANGE_FETCHES_PER_RUN},
+        metrics,
+    )
+
+    assert status == "FETCH_BUDGET_EXHAUSTED"
+    assert frame is None
+    assert metrics["range_fetch_budget_exhausted"] == 1
+    assert metrics["history_window_fetches"] == 0
+
+
+def test_pending_resolution_retains_prediction_after_transient_fetch_failure(monkeypatch):
+    entry = (1_700_000_000_000 // validator.ENTRY_MS) * validator.ENTRY_MS
+    prediction = {"id": "p1", "symbol": "ETHUSDT", "open_time": entry}
+    now_ms = entry + 25 * validator.ENTRY_MS
+
+    def failed_fetch(*args):
+        raise validator.TransientMarketDataError("simulated timeout")
+
+    monkeypatch.setattr(
+        validator, "fetch_deribit_15m_window", failed_fetch
+    )
+
+    metrics = _pending_resolution_metrics()
+    frame, status = validator.fetch_pending_resolution_window(
+        prediction,
+        {"ETHUSDT": pd.DataFrame()},
+        now_ms,
+        {},
+        {"fetches": 0},
+        metrics,
+    )
+
+    assert status == "TRANSIENT_FETCH_FAILURE"
+    assert frame is None
+    assert metrics["transient_fetch_failures"] == 1
+
+
+def test_main_pending_resolution_loop_uses_tested_fallback_helper():
+    import inspect
+
+    source = inspect.getsource(validator.main)
+    assert "fetch_pending_resolution_window(" in source

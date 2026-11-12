@@ -53,6 +53,7 @@ jobs:
           actionlint -color \
             .github/workflows/phase2d_f08_validator_amendment.yml \
             .github/workflows/phase2d_f08_controlled_disposition.yml \
+            .github/workflows/run_phase2d.yml \
             .github/workflows/pull_request_regression.yml
 
       - name: Set up Python
@@ -69,6 +70,7 @@ jobs:
       - name: Compile core modules
         run: |
           python -m py_compile dashboard.py deribit_client.py trade_executor.py paper_execution.py
+          python -m py_compile phase2d_f08_v2_handoff.py phase2d_f08_v2_restore.py phase2d_prospective_validator.py
           if [ -f paper_execution_v2.py ]; then
             python -m py_compile paper_execution_v2.py
           fi

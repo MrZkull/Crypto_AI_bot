@@ -824,6 +824,96 @@ def prediction_window_status(prediction: dict, frame: pd.DataFrame | None, now_m
     return "COMPLETE"
 
 
+def fetch_pending_resolution_window(
+    prediction: dict,
+    current_rows: dict,
+    now_ms: int,
+    window_cache: dict,
+    fetch_state: dict,
+    model_metrics: dict,
+) -> tuple[pd.DataFrame | None, str]:
+    """Return a complete pending window, using bounded historical fallback.
+
+    The caller retains the prediction as pending whenever the exact window
+    cannot be verified. Historical data is never substituted with partial data.
+    """
+    symbol = prediction["symbol"]
+    current_frame = current_rows.get(symbol)
+    status = prediction_window_status(prediction, current_frame, now_ms)
+
+    if status == "COMPLETE":
+        return current_frame, status
+
+    if status == "NOT_MATURE":
+        model_metrics["pending_not_mature"] += 1
+        return current_frame, status
+
+    try:
+        entry_open = int(prediction["open_time"])
+    except (KeyError, TypeError, ValueError):
+        return None, "INVALID_PREDICTION_TIME"
+
+    cache_key = (str(symbol), entry_open)
+    cached = window_cache.get(cache_key)
+
+    if cached is None:
+        if fetch_state["fetches"] >= MAX_PENDING_RANGE_FETCHES_PER_RUN:
+            cached = (None, "FETCH_BUDGET_EXHAUSTED")
+        else:
+            fetch_state["fetches"] += 1
+            model_metrics["history_window_fetches"] += 1
+
+            try:
+                fetched = fetch_deribit_15m_window(symbol, entry_open)
+                fetched_status = prediction_window_status(
+                    prediction, fetched, now_ms
+                )
+                cached = (fetched, fetched_status)
+
+            except TransientMarketDataError as exc:
+                print(
+                    f"WARN {symbol} historical window transient failure: {exc}"
+                )
+                cached = (None, "TRANSIENT_FETCH_FAILURE")
+
+            except HistoricalDataUnavailableError as exc:
+                print(
+                    f"WARN {symbol} historical window unavailable: {exc}"
+                )
+                cached = (None, "HISTORY_UNAVAILABLE")
+
+            except HistoricalRangeLimitError as exc:
+                print(f"WARN {symbol} historical range limit: {exc}")
+                cached = (None, "RANGE_LIMIT_EXCEEDED")
+
+            except Exception as exc:
+                print(
+                    f"WARN {symbol} historical window unexpected failure: {exc}"
+                )
+                cached = (None, "TRANSIENT_FETCH_FAILURE")
+
+        window_cache[cache_key] = cached
+
+    else:
+        model_metrics["history_window_cache_hits"] += 1
+
+    frame, status = cached
+
+    if status == "FETCH_BUDGET_EXHAUSTED":
+        model_metrics["range_fetch_budget_exhausted"] += 1
+
+    elif status in {"TRANSIENT_FETCH_FAILURE", "RANGE_LIMIT_EXCEEDED"}:
+        model_metrics["transient_fetch_failures"] += 1
+
+    elif status == "HISTORY_UNAVAILABLE":
+        model_metrics["history_unavailable"] += 1
+
+    elif status in {"CANDLE_GAP", "DUPLICATE_CANDLES"}:
+        model_metrics["history_gaps"] += 1
+
+    return frame, status
+
+
 def fetch_deribit_15m(symbol: str, limit: int = CANDLE_LIMIT_15M) -> pd.DataFrame:
     return fetch_deribit(symbol, "15", limit)
 
@@ -2946,7 +3036,7 @@ def main() -> int:
     }
 
     resolution_window_cache: dict[tuple[str, int], tuple[pd.DataFrame | None, str]] = {}
-    resolution_window_fetches = 0
+    resolution_fetch_state = {"fetches": 0}
 
     for name in (
         "candidate",
@@ -2964,59 +3054,19 @@ def main() -> int:
                 resolution_metrics[name]["stale_pending_not_scored"] += 1
                 continue
 
-            df15 = current_rows.get(pred["symbol"])
             now_ms = int(time.time() * 1000)
-            window_status = prediction_window_status(pred, df15, now_ms)
+            df15, window_status = fetch_pending_resolution_window(
+                pred,
+                current_rows,
+                now_ms,
+                resolution_window_cache,
+                resolution_fetch_state,
+                resolution_metrics[name],
+            )
 
             if window_status != "COMPLETE":
-                if window_status == "NOT_MATURE":
-                    resolution_metrics[name]["pending_not_mature"] += 1
-                    still_pending.append(pred)
-                    continue
-
-                cache_key = (str(pred["symbol"]), int(pred["open_time"]))
-                cached = resolution_window_cache.get(cache_key)
-                if cached is None:
-                    if resolution_window_fetches >= MAX_PENDING_RANGE_FETCHES_PER_RUN:
-                        cached = (None, "FETCH_BUDGET_EXHAUSTED")
-                    else:
-                        resolution_window_fetches += 1
-                        resolution_metrics[name]["history_window_fetches"] += 1
-                        try:
-                            fetched = fetch_deribit_15m_window(
-                                pred["symbol"], int(pred["open_time"])
-                            )
-                            fetched_status = prediction_window_status(pred, fetched, now_ms)
-                            cached = (fetched, fetched_status)
-                        except TransientMarketDataError as exc:
-                            print(f"WARN {pred['symbol']} historical window transient failure: {exc}")
-                            cached = (None, "TRANSIENT_FETCH_FAILURE")
-                        except HistoricalDataUnavailableError as exc:
-                            print(f"WARN {pred['symbol']} historical window unavailable: {exc}")
-                            cached = (None, "HISTORY_UNAVAILABLE")
-                        except HistoricalRangeLimitError as exc:
-                            print(f"WARN {pred['symbol']} historical range limit: {exc}")
-                            cached = (None, "RANGE_LIMIT_EXCEEDED")
-                        except Exception as exc:
-                            print(f"WARN {pred['symbol']} historical window unexpected failure: {exc}")
-                            cached = (None, "TRANSIENT_FETCH_FAILURE")
-                    resolution_window_cache[cache_key] = cached
-                else:
-                    resolution_metrics[name]["history_window_cache_hits"] += 1
-
-                df15, window_status = cached
-                if window_status == "FETCH_BUDGET_EXHAUSTED":
-                    resolution_metrics[name]["range_fetch_budget_exhausted"] += 1
-                elif window_status in {"TRANSIENT_FETCH_FAILURE", "RANGE_LIMIT_EXCEEDED"}:
-                    resolution_metrics[name]["transient_fetch_failures"] += 1
-                elif window_status == "HISTORY_UNAVAILABLE":
-                    resolution_metrics[name]["history_unavailable"] += 1
-                elif window_status in {"CANDLE_GAP", "DUPLICATE_CANDLES"}:
-                    resolution_metrics[name]["history_gaps"] += 1
-
-                if window_status != "COMPLETE":
-                    still_pending.append(pred)
-                    continue
+                still_pending.append(pred)
+                continue
 
             result = resolve_prediction(pred, df15)
             if result is None:

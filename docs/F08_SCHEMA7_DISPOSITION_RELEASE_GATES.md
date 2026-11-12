@@ -85,11 +85,17 @@ The attempt checkpoint is an artifact for recovery. It is not a new source-of-tr
 
 ## V1 immutability and V2 quarantine
 
-The V1 restore guard, V1 snapshot restore, V1 archive restore, and `.github/workflows/run_phase2d.yml` are frozen by the earlier review. The current normal workflow has not been changed to consume schema 7.
+The V1 restore guard, V1 snapshot restore, and V1 archive restore remain frozen. The `main` branch remains the production authority; this source-review candidate does not change `main` or authorize a workflow dispatch.
 
 The V2 restore module creates and verifies a separate manifest with `artifact_status: QUARANTINED_PENDING_PIPELINE_HANDOFF`. It verifies the exact baseline heads, the one-event observation-ledger extension, the one-event journal extension, the entire migrated state against the deterministic migration, event and approval evidence, the preserved C15/C20 history, and the absence of C25-or-later evaluations. Its restore command is a verify-before-write operation and refuses to overwrite a non-empty destination.
 
-**Do not point the normal Phase 2D validator at the V2 artifact yet.** The current `run_phase2d.yml` workflow's restore selection does not yet accept the V2 schema-7 artifact. A separate, reviewed V2 restore-selector/handoff change and differential validation are required before normal prospective execution can resume.
+The candidate branch now contains a separate V2 bootstrap and continuation handoff in `.github/workflows/run_phase2d.yml`, including an immutable Release bootstrap and a dedicated `phase2d-state-f08` continuation artifact referenced by a `bot-state` pointer. This is an implementation candidate only. It has passed local regression and workflow lint in the candidate worktree, but it has not been merged, dispatched, or validated against the live GitHub environment configuration. The handoff code must receive independent source review and the exact source-commit check before a Release bootstrap is eligible.
+
+**Do not enable F08 or dispatch the candidate handoff yet.** The production `main` workflow remains unchanged until a reviewed PR is approved and merged. After merge, the controlled amendment and disposition approvals, immutable Release publication, exact-commit bootstrap, GitHub environment protections, and runtime-state verification remain separate mandatory gates. None is implied by local tests.
+
+### Continuation artifact retention and recovery
+
+The candidate currently sets the dedicated `phase2d-state-f08` GitHub Actions artifact retention to 90 days. The `bot-state` pointer identifies that artifact by run and artifact ID. If the artifact expires or is deleted before a successor pointer is published, continuation deliberately fails closed. The current candidate does not provide an automatic recovery path for an expired continuation artifact: the one-time bootstrap refuses to replace an existing pointer, and the immutable initial Release is not a substitute for later prospective state. Before relying on unattended operation across a period in which no successful continuation is published, the owner must approve and test a durable recovery/checkpoint procedure. This is an operational-readiness blocker, not a reason to weaken the pointer or silently restore an older run.
 
 ## Mandatory pre-run checks
 

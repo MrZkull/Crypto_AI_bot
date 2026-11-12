@@ -4,8 +4,11 @@
 V1 snapshot/archive restore contracts remain frozen.  This V2 package is a
 separate, explicit artifact that proves the transition from the pinned schema-6
 baseline to schema-7 without introducing scored rows for the 618 stale pending
-predictions.  It is not consumed by the normal Phase 2D workflow until a
-separate, reviewed restore-selector handoff is implemented.
+predictions.  The F08 candidate branch contains a separate V2 bootstrap and
+continuation handoff in run_phase2d.yml; that handoff remains an unapproved
+release candidate until independently reviewed, merged, and all owner-controlled
+release gates are satisfied.  It does not authorize F08 activation, promotion,
+or live trading.
 """
 from __future__ import annotations
 
@@ -26,17 +29,22 @@ ARTIFACT_TYPE = "PHASE2D_F08_SCHEMA7_DISPOSITION"
 ARTIFACT_STATUS = "QUARANTINED_PENDING_PIPELINE_HANDOFF"
 BASELINE_NAMES = {
     "phase2d_state.json": "phase2d_state.json",
+    "phase2d_results.json": "phase2d_results.json",
+    "phase2d_latest_snapshot.json": "phase2d_latest_snapshot.json",
     "phase2d_observations.jsonl": "phase2d_observations.jsonl",
     "experiment_ledger.jsonl": "experiment_ledger.jsonl",
 }
 WORKING_NAMES = {
     "phase2d_state.json": "phase2d_state.json",
+    "phase2d_results.json": "phase2d_results.json",
+    "phase2d_latest_snapshot.json": "phase2d_latest_snapshot.json",
     "phase2d_observations.jsonl": "phase2d_observations.jsonl",
     "experiment_ledger.jsonl": "experiment_ledger.jsonl",
 }
 SOURCE_FILES = (
     "phase2d_f08_disposition.py",
     "phase2d_f08_v2_restore.py",
+    "phase2d_f08_v2_handoff.py",
     "phase2d_f08_historical_backfill.py",
     "phase2d_f08_resolution_provenance.py",
     "phase2d_observation_ledger.py",
@@ -197,6 +205,20 @@ def _verify_transition(
         raise V2RestoreError("V2 baseline observation-ledger SHA256 is not the frozen source")
     if _sha(baseline_journal_raw) != spec.journal_sha256:
         raise V2RestoreError("V2 baseline experiment-journal SHA256 is not the frozen source")
+
+    # These files are runtime continuation inputs.  They must be present in
+    # both package roots and must remain byte-identical across disposition.
+    runtime_artifact_hashes: dict[str, str] = {}
+    for name in ("phase2d_results.json", "phase2d_latest_snapshot.json"):
+        baseline_path = baseline / name
+        post_path = post / name
+        baseline_bytes = baseline_path.read_bytes()
+        post_bytes = post_path.read_bytes()
+        _read_json(baseline_path, f"V2 baseline {name}")
+        _read_json(post_path, f"V2 disposition {name}")
+        if baseline_bytes != post_bytes:
+            raise V2RestoreError(f"V2 disposition changed runtime artifact {name}")
+        runtime_artifact_hashes[name] = _sha(baseline_bytes)
 
     source_state = _read_json(baseline_state_path, "V2 baseline schema-6 state")
     population = disposition.pending_population(source_state, spec)
@@ -393,6 +415,7 @@ def _verify_transition(
         "live_trading_enabled": False,
         "bundle_manifest_sha256": bundle_info["manifest_sha256"],
         "historical_bundle_sha256": bundle_info["bundle_sha256"],
+        "runtime_artifacts_unchanged": runtime_artifact_hashes,
     }
 
 
