@@ -80,6 +80,11 @@
       "status": "OPENED",
       "timestamp_ms": 1794821218980
     },
+    "AVAXUSDT_1794852436912": {
+      "entry_bar_open_time_ms": 1794852900000,
+      "status": "DUPLICATE_SYMBOL_ACTIVE",
+      "timestamp_ms": 1794860294046
+    },
     "BCHUSDT_1794082541375": {
       "status": "OPENED",
       "timestamp_ms": 1794091168092
@@ -502,6 +507,10 @@
     "SOLUSDT_1794527329666": {
       "status": "OPENED",
       "timestamp_ms": 1794551433935
+    },
+    "SOLUSDT_1794852397221": {
+      "status": "OPENED",
+      "timestamp_ms": 1794860294699
     },
     "SUIUSDT_1793584310771": {
       "entry_bar_open_time_ms": 1793584800000,
@@ -2549,7 +2558,7 @@
     },
     "AVAXUSDT_1794815661335": {
       "atr_ref": 0.05301992584580005,
-      "bars_processed": 5,
+      "bars_processed": 24,
       "entry_bar_close_time_ms": 1794816899999,
       "entry_bar_observation_identity": [
         "AVAXUSDT",
@@ -2573,25 +2582,31 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 7.176,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 7.112,
+      "exit_reason": "EXPIRED",
       "expires_at_ms": 1794837600000,
+      "final_exit_fee_usd": 9.657953907541387,
+      "final_exit_qty": 2263.300034575691,
       "generated_at": "2026-11-16T07:54:21.335820+00:00",
       "generated_at_ms": 1794815661335,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794820499999,
+      "last_observation_close_time": 1794837599999,
       "last_observation_identity": [
         "AVAXUSDT",
-        1794819600000,
+        1794836700000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794819600000,
-      "last_processed_candle_close_time": 1794820499999,
+      "last_observation_open_time": 1794836700000,
+      "last_processed_candle_close_time": 1794837599999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "AVAXUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794820500000,
+      "net_pnl_usd": 125.44838367643388,
+      "net_r": 0.4181612789214463,
+      "next_candle_open_time_ms": 1794837600000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794815099999,
@@ -2653,7 +2668,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "AVAXUSDT_1794815661335",
       "qty": 2263.300034575691,
-      "remaining_qty": 2263.300034575691,
+      "realized_gross_pnl": 144.85120221284436,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794860295367,
+      "resolved_candle_close_time": 1794837599999,
       "side": "SELL",
       "signal_observation_identity": [
         "AVAXUSDT",
@@ -2663,10 +2681,11 @@
         "spot"
       ],
       "simulated_entry": 7.176,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 7.3085498146145005,
       "symbol": "AVAXUSDT",
+      "total_fees_usd": 19.402818536410482,
       "tp1": 6.9904302595397,
       "tp2": 6.7783505561565
     },
@@ -4130,7 +4149,7 @@
     },
     "BNBUSDT_1794815613654": {
       "atr_ref": 2.261392346195259,
-      "bars_processed": 5,
+      "bars_processed": 24,
       "entry_bar_close_time_ms": 1794816899999,
       "entry_bar_observation_identity": [
         "BNBUSDT",
@@ -4154,25 +4173,31 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 592.82,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 587.76,
+      "exit_reason": "EXPIRED",
       "expires_at_ms": 1794837600000,
+      "final_exit_fee_usd": 9.35678412266674,
+      "final_exit_qty": 26.532326467341377,
       "generated_at": "2026-11-16T07:53:33.654218+00:00",
       "generated_at_ms": 1794815613654,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794820499999,
+      "last_observation_close_time": 1794837599999,
       "last_observation_identity": [
         "BNBUSDT",
-        1794819600000,
+        1794836700000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794819600000,
-      "last_processed_candle_close_time": 1794820499999,
+      "last_observation_open_time": 1794836700000,
+      "last_processed_candle_close_time": 1794837599999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "BNBUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794820500000,
+      "net_pnl_usd": 306.71077900461506,
+      "net_r": 1.022369263348717,
+      "next_candle_open_time_ms": 1794837600000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794815099999,
@@ -4234,7 +4259,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "BNBUSDT_1794815613654",
       "qty": 53.064652934682755,
-      "remaining_qty": 53.064652934682755,
+      "realized_gross_pnl": 344.25357192474655,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794860296003,
+      "resolved_candle_close_time": 1794837599999,
       "side": "SELL",
       "signal_observation_identity": [
         "BNBUSDT",
@@ -4244,11 +4272,14 @@
         "spot"
       ],
       "simulated_entry": 592.82,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 598.4734808654882,
       "symbol": "BNBUSDT",
+      "total_fees_usd": 37.54279292013151,
       "tp1": 584.9051267883167,
+      "tp1_fee_usd": 9.311336265821591,
+      "tp1_realized_gross_pnl": 209.99999999999758,
       "tp2": 575.8595574035356
     },
     "CRVUSDT_1793434194259": {
@@ -6492,7 +6523,7 @@
     },
     "ENAUSDT_1794815639815": {
       "atr_ref": 0.0009083179382777772,
-      "bars_processed": 5,
+      "bars_processed": 24,
       "entry_bar_close_time_ms": 1794816899999,
       "entry_bar_observation_identity": [
         "ENAUSDT",
@@ -6516,25 +6547,31 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 0.1181,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": 0.116,
+      "exit_reason": "EXPIRED",
       "expires_at_ms": 1794837600000,
+      "final_exit_fee_usd": 4.5975091143943985,
+      "final_exit_qty": 66056.16543670114,
       "generated_at": "2026-11-16T07:53:59.816099+00:00",
       "generated_at_ms": 1794815639816,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1794820499999,
+      "last_observation_close_time": 1794837599999,
       "last_observation_identity": [
         "ENAUSDT",
-        1794819600000,
+        1794836700000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1794819600000,
-      "last_processed_candle_close_time": 1794820499999,
+      "last_observation_open_time": 1794836700000,
+      "last_processed_candle_close_time": 1794837599999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "ENAUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1794820500000,
+      "net_pnl_usd": 330.2042186541438,
+      "net_r": 1.100680728847146,
+      "next_candle_open_time_ms": 1794837600000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794815099999,
@@ -6596,7 +6633,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "ENAUSDT_1794815639815",
       "qty": 132112.33087340227,
-      "remaining_qty": 132112.33087340227,
+      "realized_gross_pnl": 348.71794741707214,
+      "remaining_qty": 0.0,
+      "resolved_at_ms": 1794860296827,
+      "resolved_candle_close_time": 1794837599999,
       "side": "SELL",
       "signal_observation_identity": [
         "ENAUSDT",
@@ -6606,11 +6646,14 @@
         "spot"
       ],
       "simulated_entry": 0.1181,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 0.12037079484569443,
       "symbol": "ENAUSDT",
+      "total_fees_usd": 18.513728762928324,
       "tp1": 0.11492088721602778,
+      "tp1_fee_usd": 4.5547398828446415,
+      "tp1_realized_gross_pnl": 210.00000000000037,
       "tp2": 0.11128761546291667
     },
     "ETHUSDT_1793263660131": {
@@ -10821,6 +10864,129 @@
       "tp1_fee_usd": 10.274827118887194,
       "tp1_realized_gross_pnl": 210.0,
       "tp2": 79.59859179392257
+    },
+    "SOLUSDT_1794852397221": {
+      "atr_ref": 0.5516277145705617,
+      "bars_processed": 8,
+      "entry_bar_close_time_ms": 1794853799999,
+      "entry_bar_observation_identity": [
+        "SOLUSDT",
+        1794852900000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1794852900000,
+      "entry_fee_usd": 9.308886889408026,
+      "entry_observation_close_time": 1794851999999,
+      "entry_observation_identity": [
+        "SOLUSDT",
+        1794851100000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1794851100000,
+      "entry_price": 71.32,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 71.32,
+      "execution_mode": "PAPER_ONLY",
+      "expires_at_ms": 1794874500000,
+      "generated_at": "2026-11-16T18:06:37.221401+00:00",
+      "generated_at_ms": 1794852397221,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1794860099999,
+      "last_observation_identity": [
+        "SOLUSDT",
+        1794859200000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1794859200000,
+      "last_processed_candle_close_time": 1794860099999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "SOLUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "next_candle_open_time_ms": 1794860100000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1794851999999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1794851100000
+        },
+        "close_time": 1794851999999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1794851999999,
+            "interval": "1h",
+            "logical_symbol": "SOLUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794848400000
+          },
+          "4h": {
+            "close_time": 1794844799999,
+            "interval": "4h",
+            "logical_symbol": "SOLUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794830400000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "SOLUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1794851100000,
+        "retrieved_at_ms": 1794852396345
+      },
+      "observation_identity": [
+        "SOLUSDT",
+        1794851100000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1794851100000,
+      "opened_at_ms": 1794852900000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "SOLUSDT_1794852397221",
+      "qty": 217.53801854103634,
+      "remaining_qty": 217.53801854103634,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "SOLUSDT",
+        1794851100000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 71.32,
+      "state": "OPEN",
+      "status": "ACTIVE",
+      "stop": 72.6990692864264,
+      "symbol": "SOLUSDT",
+      "tp1": 69.38930299900302,
+      "tp2": 67.18279214072078
     },
     "TRUMPUSDT_1794105931378": {
       "atr_ref": 0.0050745794675532115,
