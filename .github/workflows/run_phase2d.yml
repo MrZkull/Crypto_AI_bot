@@ -45,6 +45,12 @@ on:
         default: false
         type: boolean
 
+      bootstrap_f08_runtime:
+        description: "One-time explicit F08 schema-7 bootstrap from the fixed immutable Release; normal runs must leave this false"
+        required: false
+        default: false
+        type: boolean
+
   # External scheduler contract:
   # cron-job.org is the 2-hour scheduler for this workflow.
   #
@@ -70,7 +76,6 @@ env:
   PRODUCTION_MODEL_FILE: "pro_crypto_ai_model.pkl"
 
   STATE_ARTIFACT_NAME: "phase2d-state"
-  F08_SNAPSHOT_PASSPHRASE: ${{ secrets.F08_SNAPSHOT_PASSPHRASE }}
   STATE_DIR: "research_outputs"
 
   CANDIDATE_RELEASE_TAG_DEFAULT: "phase2d-htf-removal-candidate-20260921"
@@ -88,7 +93,7 @@ jobs:
       # CHECKOUT
       # ============================================================
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ============================================================
       # RUN CONTEXT
@@ -120,11 +125,34 @@ jobs:
           echo "Cadence                : External cron-job.org every 2 hours"
           echo "============================================================"
 
+      - name: Enforce F08 disabled-by-default runtime and no-fresh-start policy
+        if: ${{ (inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT) == 'PHASE2D-HARDENED-20260924-F08' && inputs.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != 'true' && inputs.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != 'true' }}
+        env:
+          PHASE2D_F08_RUNTIME_ENABLED: ${{ vars.PHASE2D_F08_RUNTIME_ENABLED }}
+          F08_ALLOW_FRESH_START: ${{ inputs.allow_fresh_start || github.event.client_payload.allow_fresh_start || false }}
+          F08_BOOTSTRAP_MODE: ${{ inputs.bootstrap_f08_runtime || github.event.client_payload.bootstrap_f08_runtime || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${PHASE2D_F08_RUNTIME_ENABLED,,}" != "true" ]]; then
+            echo "FATAL: Normal F08 runtime is disabled. PHASE2D_F08_RUNTIME_ENABLED must be explicitly enabled after all release gates." >&2
+            exit 2
+          fi
+          if [[ "${F08_ALLOW_FRESH_START,,}" == "true" ]]; then
+            echo "FATAL: F08 cannot use allow_fresh_start. Restore must come from the fixed bootstrap Release or verified schema-7 continuation." >&2
+            exit 2
+          fi
+          if [[ "${F08_BOOTSTRAP_MODE,,}" == "true" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "FATAL: One-time F08 bootstrap requires explicit manual workflow_dispatch." >&2
+            exit 2
+          fi
+          echo "PASS: F08 enablement and no-fresh-start gates verified."
+
       # ============================================================
       # PYTHON
       # ============================================================
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -248,8 +276,113 @@ jobs:
           echo "PASS: F08 amendment-only preconditions verified."
           echo "The existing state will be restored; no fresh start is allowed."
 
+      - name: Restore F08 schema-7 runtime — fixed Release bootstrap or pinned continuation
+        if: ${{ inputs.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != 'true' && (inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT) == 'PHASE2D-HARDENED-20260924-F08' && inputs.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != 'true' && inputs.allow_fresh_start != true && github.event.client_payload.allow_fresh_start != true && github.event.client_payload.allow_fresh_start != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          F08_BOOTSTRAP_MODE: ${{ inputs.bootstrap_f08_runtime || github.event.client_payload.bootstrap_f08_runtime || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "MrZkull/Crypto_AI_bot"
+          test "$GITHUB_REF" = "refs/heads/main"
+
+          CANDIDATE_SHA="7213987874543e5d6e18b0bac32556647d40080b3e4222532e40a225a1bf08a3"
+          PRODUCTION_SHA="f55b887c7f624179b3d9fee56d792c29424a589e3d8734edcd78ce1be71f2c21"
+          RELEASE_TAG="f08-schema7-disposition-v1"
+          RELEASE_ASSET="f08-schema7-runtime-handoff.zip"
+          STATE_BRANCH="bot-state"
+          POINTER_PATH="f08/phase2d-state-f08-pointer.json"
+          POINTER_URL="repos/${GITHUB_REPOSITORY}/contents/${POINTER_PATH}?ref=${STATE_BRANCH}"
+
+          # The pointer branch is an explicit persistence prerequisite. It is
+          # not created or silently substituted by this workflow.
+          gh api "repos/${GITHUB_REPOSITORY}/branches/${STATE_BRANCH}" >/dev/null
+
+          if [[ "${F08_BOOTSTRAP_MODE,,}" == "true" ]]; then
+            echo "F08 MODE: ONE-TIME FIXED RELEASE BOOTSTRAP"
+            if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+              echo "FATAL: F08 bootstrap requires explicit manual workflow_dispatch." >&2
+              exit 2
+            fi
+
+            if gh api "$POINTER_URL" >/dev/null 2>pointer_lookup_error.log; then
+              echo "FATAL: F08 bot-state pointer already exists; bootstrap cannot replace it." >&2
+              exit 2
+            else
+              if ! grep -q "HTTP 404" pointer_lookup_error.log; then
+                cat pointer_lookup_error.log >&2
+                echo "FATAL: Unable to prove that the first-run F08 pointer is absent." >&2
+                exit 2
+              fi
+            fi
+
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > f08_fixed_release.json
+            gh release download "$RELEASE_TAG" --pattern "$RELEASE_ASSET" --dir .
+            test -s "$RELEASE_ASSET"
+
+            git fetch --force origin "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+            RELEASE_TAG_COMMIT="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+            [[ "$RELEASE_TAG_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            if [[ "$RELEASE_TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+              echo "FATAL: Bootstrap must run from the exact source commit sealed into the immutable Release." >&2
+              exit 2
+            fi
+
+            python phase2d_f08_v2_handoff.py bootstrap-release \
+              --release-json f08_fixed_release.json \
+              --archive "$RELEASE_ASSET" \
+              --tag-commit "$RELEASE_TAG_COMMIT" \
+              --workflow-commit "$GITHUB_SHA" \
+              --output-dir f08_v2_runtime_handoff \
+              --candidate-sha "$CANDIDATE_SHA" \
+              --production-sha "$PRODUCTION_SHA"
+          else
+            echo "F08 MODE: NORMAL SCHEMA-7 CONTINUATION"
+            echo "The fixed disposition Release is not consulted during continuation."
+
+            gh api "$POINTER_URL" > f08_pointer_response.json
+            python phase2d_f08_v2_handoff.py decode-pointer \
+              --response-json f08_pointer_response.json \
+              --output-json f08_state_pointer.json > f08_pointer_blob_sha.txt
+
+            PREVIOUS_RUN_ID="$(python -c 'import json; print(json.load(open("f08_state_pointer.json", encoding="utf-8"))["producer_run_id"])')"
+            PREVIOUS_ARTIFACT_ID="$(python -c 'import json; print(json.load(open("f08_state_pointer.json", encoding="utf-8"))["artifact_id"])')"
+            [[ "$PREVIOUS_RUN_ID" =~ ^[0-9]+$ ]]
+            [[ "$PREVIOUS_ARTIFACT_ID" =~ ^[0-9]+$ ]]
+
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PREVIOUS_RUN_ID}" > f08_previous_run.json
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PREVIOUS_RUN_ID}/artifacts?per_page=100" > f08_previous_artifact.json
+            gh run download "$PREVIOUS_RUN_ID" --name "phase2d-state-f08" --dir f08_state_download
+
+            python phase2d_f08_v2_handoff.py prepare-continuation \
+              --pointer-json f08_state_pointer.json \
+              --run-json f08_previous_run.json \
+              --artifact-metadata-json f08_previous_artifact.json \
+              --artifact-dir f08_state_download \
+              --output-dir f08_v2_runtime_handoff \
+              --candidate-sha "$CANDIDATE_SHA" \
+              --production-sha "$PRODUCTION_SHA"
+          fi
+
+          # Install only the verified F08 runtime set. The helper verifies the
+          # staged package, installs the targeted files, then verifies their
+          # hashes in research_outputs. Failed verification stops publication.
+          python phase2d_f08_v2_handoff.py install-runtime \
+            --prepared-dir f08_v2_runtime_handoff \
+            --target-dir "${STATE_DIR}" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --production-sha "$PRODUCTION_SHA"
+
+          echo "F08 installed state schema : 7"
+          echo "Bootstrap or continuation : verified"
+          echo "Installed manifest hashes : verified after copy"
+          echo "Publication gate           : success-only"
+          echo "C25 evaluated              : no bootstrap/disposition scoring"
+          echo "Promotion/live trading     : NOT AUTHORIZED"
+
       - name: Restore previous Phase 2D state
-        if: ${{ inputs.restore_f08_authoritative_archive != true }}
+        if: ${{ inputs.restore_f08_authoritative_archive != true && (inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT) != 'PHASE2D-HARDENED-20260924-F08' }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -382,7 +515,6 @@ jobs:
             BEST_PRODUCTION=-1
             BEST_BLOCKS=-1
             BEST_SHA=""
-            BEST_STATE_DIR=""
 
             BASELINE_LEDGER=""
 
@@ -1588,11 +1720,36 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       # ============================================================
+      # SEAL AND PUBLISH DEDICATED F08 CONTINUATION STATE
+      # ============================================================
+      - name: Seal F08 schema-7 continuation state
+        if: ${{ success() && github.ref == 'refs/heads/main' && (inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT) == 'PHASE2D-HARDENED-20260924-F08' && inputs.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != 'true' && inputs.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python phase2d_f08_v2_handoff.py seal-continuation \
+            --runtime-dir "${STATE_DIR}" \
+            --output-dir f08_state_artifact \
+            --producer-run-id "$GITHUB_RUN_ID" \
+            --producer-commit "$GITHUB_SHA"
+          test -s f08_state_artifact/phase2d_state_f08_manifest.json
+          test -s f08_state_artifact/phase2d_state.json
+
+      - name: Upload dedicated F08 schema-7 continuation artifact
+        if: ${{ success() && github.ref == 'refs/heads/main' && (inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT) == 'PHASE2D-HARDENED-20260924-F08' && inputs.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != 'true' && inputs.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: phase2d-state-f08
+          path: f08_state_artifact/
+          if-no-files-found: error
+          retention-days: 90
+
+      # ============================================================
       # UPLOAD PHASE 2D STATE + AUDIT ARTIFACTS
       # ============================================================
       - name: Upload Phase 2D research artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
+        if: ${{ success() && (inputs.experiment_id || github.event.client_payload.experiment_id || env.PHASE2D_EXPERIMENT_ID_DEFAULT) != 'PHASE2D-HARDENED-20260924-F08' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase2d-state
           path: |
@@ -1611,7 +1768,7 @@ jobs:
       # ============================================================
       - name: Upload Phase 2D failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase2d-failure-diagnostics
           path: |
@@ -1619,6 +1776,96 @@ jobs:
             research_outputs/pre_reset_archive/**
           if-no-files-found: ignore
           retention-days: 14
+  # ============================================================
+  # ADVANCE THE SINGLE F08 CONTINUATION POINTER AFTER VERIFIED UPLOAD
+  # ============================================================
+  publish_f08_state_pointer:
+    needs: prospective
+    if: ${{ needs.prospective.result == 'success' && vars.PHASE2D_F08_RUNTIME_ENABLED == 'true' && github.ref == 'refs/heads/main' && (inputs.experiment_id || github.event.client_payload.experiment_id || 'PHASE2D-HARDENED-20260924-F08') == 'PHASE2D-HARDENED-20260924-F08' && inputs.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != true && github.event.client_payload.approve_f08_gate_amendment != 'true' && inputs.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != true && github.event.client_payload.restore_f08_authoritative_archive != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout exact producer commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify producer artifact and prepare pointer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "MrZkull/Crypto_AI_bot"
+          test "$GITHUB_REF" = "refs/heads/main"
+          gh api "repos/${GITHUB_REPOSITORY}/branches/bot-state" >/dev/null
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > f08_current_run.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" > f08_current_artifacts.json
+          gh run download "$GITHUB_RUN_ID" --name "phase2d-state-f08" --dir f08_state_artifact
+          python phase2d_f08_v2_handoff.py make-pointer \
+            --artifact-metadata-json f08_current_artifacts.json \
+            --artifact-dir f08_state_artifact \
+            --producer-run-id "$GITHUB_RUN_ID" \
+            --producer-commit "$GITHUB_SHA" \
+            --run-json f08_current_run.json \
+            --output-json f08_new_state_pointer.json
+
+      - name: Compare-and-swap the bot-state predecessor pointer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          F08_BOOTSTRAP_MODE: ${{ inputs.bootstrap_f08_runtime || github.event.client_payload.bootstrap_f08_runtime || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          POINTER_URL="repos/${GITHUB_REPOSITORY}/contents/f08/phase2d-state-f08-pointer.json?ref=bot-state"
+          if gh api "$POINTER_URL" > f08_existing_pointer_response.json 2>f08_pointer_get_error.log; then
+            if [[ "${F08_BOOTSTRAP_MODE,,}" == "true" ]]; then
+              echo "FATAL: Bootstrap cannot replace an existing F08 pointer." >&2
+              exit 2
+            fi
+            python phase2d_f08_v2_handoff.py decode-pointer \
+              --response-json f08_existing_pointer_response.json \
+              --output-json f08_existing_state_pointer.json > f08_existing_pointer_blob_sha.txt
+            python phase2d_f08_v2_handoff.py check-pointer-transition \
+              --new-pointer f08_new_state_pointer.json \
+              --existing-response f08_existing_pointer_response.json \
+              --bootstrap false
+            EXISTING_SHA="$(cat f08_existing_pointer_blob_sha.txt)"
+          else
+            if ! grep -q "HTTP 404" f08_pointer_get_error.log; then
+              cat f08_pointer_get_error.log >&2
+              echo "FATAL: Could not establish bot-state pointer state." >&2
+              exit 2
+            fi
+            if [[ "${F08_BOOTSTRAP_MODE,,}" != "true" ]]; then
+              echo "FATAL: Continuation pointer is missing; automatic bootstrap is prohibited." >&2
+              exit 2
+            fi
+            python phase2d_f08_v2_handoff.py check-pointer-transition \
+              --new-pointer f08_new_state_pointer.json \
+              --bootstrap true
+            EXISTING_SHA=""
+          fi
+
+          CONTENT_B64="$(base64 -w0 f08_new_state_pointer.json)"
+          if [[ -n "$EXISTING_SHA" ]]; then
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/f08/phase2d-state-f08-pointer.json" \
+              --field message="Advance verified F08 continuation pointer for run ${GITHUB_RUN_ID}" \
+              --field content="$CONTENT_B64" \
+              --field branch=bot-state \
+              --field sha="$EXISTING_SHA" >/dev/null
+          else
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/f08/phase2d-state-f08-pointer.json" \
+              --field message="Initialize verified F08 continuation pointer for run ${GITHUB_RUN_ID}" \
+              --field content="$CONTENT_B64" \
+              --field branch=bot-state >/dev/null
+          fi
+          echo "F08 bot-state pointer advanced only after artifact verification."
+
   # ============================================================
   # ONE-TIME F08 HISTORICAL LEDGER RECONCILIATION
   # ============================================================
@@ -1639,7 +1886,7 @@ jobs:
       # CHECKOUT
       # ============================================================
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ============================================================
       # MAIN-BRANCH GUARD
@@ -1662,7 +1909,7 @@ jobs:
       # PYTHON
       # ============================================================
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
           cache: pip
@@ -2479,7 +2726,7 @@ jobs:
       # ============================================================
       - name: Upload reconciled Phase 2D state
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase2d-state
           path: |

@@ -51,6 +51,16 @@ from phase2d_promotion_gate import (
     BLOCK_MS,
     evaluate_promotion,
 )
+from phase2d_evidence_policy import (
+    EXPERIMENT_ID as EVIDENCE_POLICY_EXPERIMENT_ID,
+    STALE_PENDING_MANIFEST_PATH,
+    EvidencePolicyError,
+    evaluate_promotion_with_evidence_policy,
+    validate_f08_execution_context,
+    tag_prospective_observation,
+    validate_evidence_population,
+    validate_stale_pending_disposition,
+)
 
 SYMBOLS = [
     "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "NEARUSDT", "LTCUSDT",
@@ -187,21 +197,24 @@ class StateCompatibilityError(RuntimeError):
 
 
 def file_sha256(path: Path) -> str:
+    """Hash data/source bytes exactly (used for the pinned feature source)."""
     if not path.exists():
         raise FileNotFoundError(
             f"Required hash input does not exist: {path}"
         )
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    digest = hashlib.sha256()
 
-    with path.open("rb") as handle:
-        for chunk in iter(
-            lambda: handle.read(1024 * 1024),
-            b"",
-        ):
-            digest.update(chunk)
-
-    return digest.hexdigest()
+def canonical_source_sha256(path: Path) -> str:
+    """Hash Python source consistently across CRLF/LF worktree checkouts."""
+    if not path.exists():
+        raise FileNotFoundError(f"Required source hash input does not exist: {path}")
+    try:
+        source = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"Required source hash input is not UTF-8: {path}") from exc
+    canonical = source.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def feature_schema_sha256() -> str:
@@ -228,7 +241,7 @@ def build_experiment_identity(
             FEATURE_CODE_FILE
         ),
         "feature_schema_hash": feature_schema_sha256(),
-        "validator_code_hash": file_sha256(
+        "validator_code_hash": canonical_source_sha256(
             Path(__file__).resolve()
         ),
     }
@@ -383,6 +396,7 @@ def print_section(title: str) -> None:
 def validate_state_integrity(state: dict) -> None:
     """Fail closed on duplicate/cross-state corruption."""
 
+    schema_version = state.get("schema_version")
     required_top = {
         "schema_version",
         "locked_models",
@@ -391,6 +405,10 @@ def validate_state_integrity(state: dict) -> None:
         "resolved",
         "seen",
     }
+    if schema_version == 7:
+        required_top.update({"dispositioned", "f08_disposition_migration"})
+    elif schema_version != STATE_SCHEMA:
+        raise StateCompatibilityError(f"Unsupported Phase 2D state schema: {schema_version!r}")
 
     missing_top = required_top - set(state)
 
@@ -495,6 +513,30 @@ def validate_state_integrity(state: dict) -> None:
                     f"{item.get('id')} missing from seen"
                 )
 
+    if schema_version == 7:
+        if state.get("locked_models", {}).get("experiment_id") != "PHASE2D-HARDENED-20260924-F08":
+            raise StateCompatibilityError("Schema-7 state is reserved for the controlled F08 disposition")
+        try:
+            from phase2d_f08_disposition import validate_schema7_state
+            validate_schema7_state(state)
+        except Exception as exc:
+            raise StateCompatibilityError(f"Schema-7 F08 disposition integrity failed: {exc}") from exc
+
+        dispositioned = state.get("dispositioned", {})
+        for name in ("candidate", "production"):
+            rows = dispositioned.get(name, [])
+            for item in rows:
+                payload = item.get("prediction_payload") if isinstance(item, dict) else None
+                if not isinstance(payload, dict):
+                    raise StateCompatibilityError(f"{name}: dispositioned entry has no original prediction payload")
+                symbol = payload.get("symbol")
+                open_time = payload.get("open_time")
+                if symbol is None or open_time is None:
+                    raise StateCompatibilityError(f"{name}: dispositioned payload missing symbol/open_time")
+                key = f"{symbol}:{int(open_time)}"
+                if key not in state["seen"][name]:
+                    raise StateCompatibilityError(f"{name}: dispositioned prediction {item.get('id')} missing from seen")
+
 
 def load_json_strict(path: Path):
     with path.open(
@@ -559,6 +601,317 @@ def fetch_deribit(symbol: str, resolution: str = "15", limit: int = CANDLE_LIMIT
     raw = raw[raw["close_time"] <= now_ms]
     raw["taker_buy_base_vol"] = raw["volume"] * 0.5
     return raw.tail(limit).reset_index(drop=True)
+
+
+class MarketDataFetchError(RuntimeError):
+    """Base error for bounded historical market-data retrieval."""
+
+
+class TransientMarketDataError(MarketDataFetchError):
+    """The request or upstream payload failed transiently; retry later."""
+
+
+class HistoricalDataUnavailableError(MarketDataFetchError):
+    """The upstream endpoint confirmed that requested historical data is absent."""
+
+
+class HistoricalRangeLimitError(MarketDataFetchError):
+    """The requested time range exceeds the explicit pagination safety bound."""
+
+
+RANGE_PAGE_CANDLES = 300
+MAX_RANGE_FETCH_PAGES = 16
+MAX_PENDING_RANGE_FETCHES_PER_RUN = 25
+
+
+def fetch_deribit_range(
+    symbol: str,
+    resolution: str,
+    start_timestamp_ms: int,
+    end_timestamp_ms: int,
+    *,
+    page_size: int = RANGE_PAGE_CANDLES,
+    max_pages: int = MAX_RANGE_FETCH_PAGES,
+) -> pd.DataFrame:
+    """Fetch a bounded, paginated Deribit candle range with stable ordering.
+
+    The end timestamp is exclusive for pagination. Boundary duplicates are
+    removed after all pages have been collected. API/network failures are
+    reported as transient; a successful empty range is reported as unavailable.
+    """
+    if resolution not in {"15", "60"}:
+        raise ValueError(f"Unsupported resolution: {resolution}")
+    if isinstance(start_timestamp_ms, bool) or isinstance(end_timestamp_ms, bool):
+        raise ValueError("Historical range timestamps must be integer milliseconds")
+    start_ms, end_ms = int(start_timestamp_ms), int(end_timestamp_ms)
+    if start_ms < 0 or end_ms <= start_ms:
+        raise ValueError("Historical range must be a positive [start, end) interval")
+    interval_ms = ENTRY_MS if resolution == "15" else HOUR_MS
+    if start_ms % interval_ms or end_ms % interval_ms:
+        raise ValueError("Historical range bounds must align to the requested candle interval")
+    if not isinstance(page_size, int) or isinstance(page_size, bool) or page_size < 2:
+        raise ValueError("page_size must be an integer of at least two candles")
+    if not isinstance(max_pages, int) or isinstance(max_pages, bool) or max_pages < 1:
+        raise ValueError("max_pages must be a positive integer")
+
+    requested_bars = (end_ms - start_ms + interval_ms - 1) // interval_ms
+    required_pages = (requested_bars + page_size - 1) // page_size
+    if required_pages > max_pages:
+        raise HistoricalRangeLimitError(
+            f"Requested {requested_bars} candles requires {required_pages} pages; limit is {max_pages}"
+        )
+
+    url = "https://www.deribit.com/api/v2/public/get_tradingview_chart_data"
+    pages: list[pd.DataFrame] = []
+    page_start = start_ms
+    pages_fetched = 0
+    now_ms = int(time.time() * 1000)
+
+    while page_start < end_ms:
+        page_end = min(end_ms, page_start + page_size * interval_ms)
+        try:
+            response = requests.get(
+                url,
+                params={
+                    "instrument_name": _deribit_symbol(symbol),
+                    "resolution": resolution,
+                    "start_timestamp": page_start,
+                    # Deribit accepts an inclusive end; one millisecond short
+                    # keeps pages non-overlapping at the boundary.
+                    "end_timestamp": page_end - 1,
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            raise TransientMarketDataError(
+                f"{symbol} {resolution}m historical request failed: {exc}"
+            ) from exc
+        status_code = int(getattr(response, "status_code", 200))
+        if status_code == 429 or 500 <= status_code <= 599:
+            raise TransientMarketDataError(
+                f"{symbol} {resolution}m historical endpoint returned HTTP {status_code}"
+            )
+        if status_code >= 400:
+            raise HistoricalDataUnavailableError(
+                f"{symbol} {resolution}m historical endpoint returned HTTP {status_code}"
+            )
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise TransientMarketDataError(
+                f"{symbol} {resolution}m historical endpoint returned invalid JSON"
+            ) from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("result"), dict):
+            if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+                raise HistoricalDataUnavailableError(
+                    f"{symbol} {resolution}m historical endpoint error: {payload['error']}"
+                )
+            raise TransientMarketDataError(
+                f"{symbol} {resolution}m historical payload has an invalid shape"
+            )
+
+        result = payload["result"]
+        ticks = result.get("ticks", [])
+        columns = {
+            "open": result.get("open", []),
+            "high": result.get("high", []),
+            "low": result.get("low", []),
+            "close": result.get("close", []),
+            "volume": result.get("volume", []),
+        }
+        if not isinstance(ticks, list) or any(not isinstance(values, list) for values in columns.values()):
+            raise TransientMarketDataError(
+                f"{symbol} {resolution}m historical payload has non-list candle arrays"
+            )
+        lengths = {len(ticks), *(len(values) for values in columns.values())}
+        if len(lengths) != 1:
+            raise TransientMarketDataError(
+                f"{symbol} {resolution}m historical payload has inconsistent OHLCV array lengths"
+            )
+        if ticks:
+            raw = pd.DataFrame({"open_time": ticks, **columns})
+            for column in ("open", "high", "low", "close", "volume", "open_time"):
+                raw[column] = pd.to_numeric(raw[column], errors="coerce")
+            raw = raw.dropna(subset=["open_time", "open", "high", "low", "close", "volume"]).copy()
+            if not raw.empty:
+                raw["open_time"] = raw["open_time"].astype("int64")
+                raw = raw[
+                    (raw["open_time"] >= page_start)
+                    & (raw["open_time"] < page_end)
+                ].copy()
+                if not raw.empty:
+                    raw["close_time"] = raw["open_time"] + interval_ms
+                    raw = raw[raw["close_time"] <= now_ms]
+                    raw["taker_buy_base_vol"] = raw["volume"] * 0.5
+                    if not raw.empty:
+                        pages.append(raw)
+
+        pages_fetched += 1
+        if page_end <= page_start:
+            raise TransientMarketDataError("Historical candle pagination failed to advance")
+        page_start = page_end
+
+    if not pages:
+        raise HistoricalDataUnavailableError(
+            f"{symbol} {resolution}m range returned no completed candles"
+        )
+
+    combined = pd.concat(pages, ignore_index=True)
+    combined["open_time"] = pd.to_numeric(combined["open_time"], errors="coerce")
+    combined = combined.dropna(subset=["open_time"]).copy()
+    combined["open_time"] = combined["open_time"].astype("int64")
+    duplicate_rows = combined[combined["open_time"].duplicated(keep=False)]
+    if not duplicate_rows.empty:
+        compare_columns = ["open", "high", "low", "close", "volume"]
+        for candle_time, group in duplicate_rows.groupby("open_time", sort=False):
+            if any(group[column].nunique(dropna=False) > 1 for column in compare_columns):
+                raise TransientMarketDataError(
+                    f"{symbol} {resolution}m duplicate candle {int(candle_time)} has conflicting OHLCV values"
+                )
+    combined = combined.drop_duplicates("open_time", keep="last")
+    combined = combined.sort_values("open_time").reset_index(drop=True)
+    combined.attrs["pages_fetched"] = pages_fetched
+    return combined
+
+
+def fetch_deribit_15m_window(symbol: str, entry_open_time_ms: int) -> pd.DataFrame:
+    """Fetch exactly the entry candle plus 24 follow-up 15m candles."""
+    entry_open_time_ms = int(entry_open_time_ms)
+    return fetch_deribit_range(
+        symbol,
+        "15",
+        entry_open_time_ms,
+        entry_open_time_ms + (LOOKAHEAD + 1) * ENTRY_MS,
+    )
+
+
+def prediction_window_status(prediction: dict, frame: pd.DataFrame | None, now_ms: int) -> str:
+    """Return a non-scoring status until the exact 25-candle window is complete."""
+    try:
+        entry_open = int(prediction["open_time"])
+    except (KeyError, TypeError, ValueError):
+        return "INVALID_PREDICTION_TIME"
+    expected = [entry_open + index * ENTRY_MS for index in range(LOOKAHEAD + 1)]
+    final_close = expected[-1] + ENTRY_MS
+    if int(now_ms) < final_close:
+        return "NOT_MATURE"
+    if frame is None or frame.empty or "open_time" not in frame.columns:
+        return "HISTORY_UNAVAILABLE"
+
+    numeric_times = pd.to_numeric(frame["open_time"], errors="coerce")
+    valid = frame.loc[numeric_times.notna()].copy()
+    valid["open_time"] = numeric_times[numeric_times.notna()].astype("int64")
+    times = valid["open_time"]
+    in_window = valid.loc[
+        (times >= entry_open) & (times <= expected[-1]), "open_time"
+    ]
+    if in_window.duplicated().any():
+        return "DUPLICATE_CANDLES"
+    if entry_open not in set(int(value) for value in in_window.tolist()):
+        return "HISTORY_UNAVAILABLE"
+    # A timestamp that is not one of the expected 15m opens, or an out-of-order
+    # candle, would shift resolve_prediction()'s positional k=1..24 walk.
+    # Require the actual in-window row sequence to equal the exact expected
+    # timestamps, not merely that a set of expected timestamps is present.
+    if in_window.tolist() != expected:
+        return "CANDLE_GAP"
+    if "close_time" in valid.columns:
+        close_times = pd.to_numeric(
+            valid.loc[valid["open_time"].isin(expected), "close_time"], errors="coerce"
+        ).dropna()
+        if len(close_times) != len(expected) or (close_times > int(now_ms)).any():
+            return "NOT_MATURE"
+    return "COMPLETE"
+
+
+def fetch_pending_resolution_window(
+    prediction: dict,
+    current_rows: dict,
+    now_ms: int,
+    window_cache: dict,
+    fetch_state: dict,
+    model_metrics: dict,
+) -> tuple[pd.DataFrame | None, str]:
+    """Return a complete pending window, using bounded historical fallback.
+
+    The caller retains the prediction as pending whenever the exact window
+    cannot be verified. Historical data is never substituted with partial data.
+    """
+    symbol = prediction["symbol"]
+    current_frame = current_rows.get(symbol)
+    status = prediction_window_status(prediction, current_frame, now_ms)
+
+    if status == "COMPLETE":
+        return current_frame, status
+
+    if status == "NOT_MATURE":
+        model_metrics["pending_not_mature"] += 1
+        return current_frame, status
+
+    try:
+        entry_open = int(prediction["open_time"])
+    except (KeyError, TypeError, ValueError):
+        return None, "INVALID_PREDICTION_TIME"
+
+    cache_key = (str(symbol), entry_open)
+    cached = window_cache.get(cache_key)
+
+    if cached is None:
+        if fetch_state["fetches"] >= MAX_PENDING_RANGE_FETCHES_PER_RUN:
+            cached = (None, "FETCH_BUDGET_EXHAUSTED")
+        else:
+            fetch_state["fetches"] += 1
+            model_metrics["history_window_fetches"] += 1
+
+            try:
+                fetched = fetch_deribit_15m_window(symbol, entry_open)
+                fetched_status = prediction_window_status(
+                    prediction, fetched, now_ms
+                )
+                cached = (fetched, fetched_status)
+
+            except TransientMarketDataError as exc:
+                print(
+                    f"WARN {symbol} historical window transient failure: {exc}"
+                )
+                cached = (None, "TRANSIENT_FETCH_FAILURE")
+
+            except HistoricalDataUnavailableError as exc:
+                print(
+                    f"WARN {symbol} historical window unavailable: {exc}"
+                )
+                cached = (None, "HISTORY_UNAVAILABLE")
+
+            except HistoricalRangeLimitError as exc:
+                print(f"WARN {symbol} historical range limit: {exc}")
+                cached = (None, "RANGE_LIMIT_EXCEEDED")
+
+            except Exception as exc:
+                print(
+                    f"WARN {symbol} historical window unexpected failure: {exc}"
+                )
+                cached = (None, "TRANSIENT_FETCH_FAILURE")
+
+        window_cache[cache_key] = cached
+
+    else:
+        model_metrics["history_window_cache_hits"] += 1
+
+    frame, status = cached
+
+    if status == "FETCH_BUDGET_EXHAUSTED":
+        model_metrics["range_fetch_budget_exhausted"] += 1
+
+    elif status in {"TRANSIENT_FETCH_FAILURE", "RANGE_LIMIT_EXCEEDED"}:
+        model_metrics["transient_fetch_failures"] += 1
+
+    elif status == "HISTORY_UNAVAILABLE":
+        model_metrics["history_unavailable"] += 1
+
+    elif status in {"CANDLE_GAP", "DUPLICATE_CANDLES"}:
+        model_metrics["history_gaps"] += 1
+
+    return frame, status
 
 
 def fetch_deribit_15m(symbol: str, limit: int = CANDLE_LIMIT_15M) -> pd.DataFrame:
@@ -1439,6 +1792,17 @@ def load_compatible_state(
         reason
     """
 
+    expected_f08_identity = (
+        isinstance(identity, dict)
+        and identity.get("experiment_id") == "PHASE2D-HARDENED-20260924-F08"
+    )
+    if expected_f08_identity and not STATE_FILE.exists():
+        raise StateCompatibilityError(
+            "Canonical F08 state is missing. An F08 fresh start is prohibited; "
+            "restore the verified authoritative state and complete the controlled "
+            "validator-amendment/disposition gates."
+        )
+
     if not STATE_FILE.exists():
         if not allow_fresh_start:
             raise StateCompatibilityError(
@@ -1472,6 +1836,10 @@ def load_compatible_state(
             STATE_FILE
         )
     except Exception as exc:
+        if expected_f08_identity:
+            raise StateCompatibilityError(
+                f"Existing canonical F08 state is unreadable and cannot be reset: {exc}"
+            ) from exc
         if not allow_fresh_start:
             raise StateCompatibilityError(
                 f"Existing Phase 2D state is unreadable: {exc}"
@@ -1513,38 +1881,50 @@ def load_compatible_state(
         != expected_value
     }
 
-    stored_schema_version = raw.get(
-        "schema_version"
-    )
+    stored_schema_version = raw.get("schema_version")
     source_state_schema_version = stored_schema_version
-
-    controlled_f08_migration = (
-        stored_schema_version in {5, 6}
-        and actual_identity.get("experiment_id")
-        == "PHASE2D-HARDENED-20260924-F08"
-        and identity.get("experiment_id")
-        == "PHASE2D-HARDENED-20260924-F08"
+    is_f08_state = (
+        actual_identity.get("experiment_id") == "PHASE2D-HARDENED-20260924-F08"
+        and identity.get("experiment_id") == "PHASE2D-HARDENED-20260924-F08"
     )
 
-    if controlled_f08_migration:
-        # The validator code hash necessarily changes for this migration.
-        # Model hashes, feature hashes, experiment ID, and definition still
-        # have to match exactly.
-        identity_mismatches.pop(
-            "validator_code_hash",
-            None,
+    # Schema 6 F08 is deliberately not auto-migrated by the ordinary validator.
+    # The separate two-stage, protected-environment workflow owns that change.
+    if is_f08_state and stored_schema_version == 6:
+        raise StateCompatibilityError(
+            "F08 schema-6 state is frozen pending the separately authorized "
+            "F08_VALIDATOR_AMENDMENT and STALE_PENDING_NOT_SCORED disposition. "
+            "Ordinary validation cannot migrate or reset this state."
+        )
+    if is_f08_state and stored_schema_version != 7:
+        raise StateCompatibilityError(
+            f"Canonical F08 state schema must be 7 after controlled disposition; got {stored_schema_version!r}."
         )
 
-    schema_mismatch = (
-        stored_schema_version != STATE_SCHEMA
-        and not controlled_f08_migration
-    )
+    controlled_f08_migration = is_f08_state and stored_schema_version == 7
+
+    if controlled_f08_migration:
+        try:
+            from phase2d_f08_disposition import verify_validator_amendment_record
+            verify_validator_amendment_record(
+                state=raw,
+                experiment_journal_path=LEDGER_FILE,
+                validator_path=Path(__file__).resolve(),
+                promotion_gate_path=Path(__file__).resolve().with_name("phase2d_promotion_gate.py"),
+            )
+        except Exception as exc:
+            raise StateCompatibilityError(
+                f"Schema-7 F08 state lacks a valid independent validator amendment: {exc}"
+            ) from exc
+
+    expected_schema_version = 7 if controlled_f08_migration else STATE_SCHEMA
+    schema_mismatch = stored_schema_version != expected_schema_version
 
     if schema_mismatch:
         identity_mismatches[
             "state_schema_version"
         ] = {
-            "expected": STATE_SCHEMA,
+            "expected": expected_schema_version,
             "actual": raw.get(
                 "schema_version"
             ),
@@ -1686,26 +2066,14 @@ def load_compatible_state(
         )
 
     if controlled_f08_migration:
-        raw["schema_version"] = STATE_SCHEMA
-
-        # Persist the current validator identity and the current experiment
-        # definition after the one-time F08 legacy-methodology migration.
-        # This converts the known independent-bootstrap F08 state to the
-        # frozen paired-bootstrap methodology. The immutable observation
-        # ledger is preserved unchanged.
-        raw["locked_models"] = dict(
-            raw.get("locked_models", {})
-        )
-
-        raw["locked_models"]["validator_code_hash"] = (
-            identity["validator_code_hash"]
-        )
-
-        raw["experiment_definition"] = json.loads(
-            json.dumps(
-                experiment_definition
-            )
-        )
+        # A validated schema-7 state remains schema 7.  Its validator identity
+        # can only match after verify_validator_amendment_record above succeeds.
+        # This block is an idempotent compatibility normalization, not a state
+        # migration and never downgrades the schema.
+        raw["schema_version"] = 7
+        raw["locked_models"] = dict(raw.get("locked_models", {}))
+        raw["locked_models"]["validator_code_hash"] = identity["validator_code_hash"]
+        raw["experiment_definition"] = json.loads(json.dumps(experiment_definition))
 
     validate_state_integrity(
         raw
@@ -1763,7 +2131,7 @@ def load_compatible_state(
         raw,
         False,
         (
-            "compatible state restored; schema upgraded from 5 to 6"
+            "compatible schema-7 F08 state restored after amendment verification"
             if controlled_f08_migration
             else "compatible state restored"
         ),
@@ -1787,6 +2155,16 @@ def append_resolved_unique(
         item.get("id")
         for item in state["resolved"][model_name]
     }
+    dispositioned_ids = {
+        item.get("id")
+        for item in state.get("dispositioned", {}).get(model_name, [])
+        if isinstance(item, dict)
+    }
+
+    if prediction_id in dispositioned_ids:
+        raise RuntimeError(
+            f"{model_name}: dispositioned prediction cannot be resolved: {prediction_id}"
+        )
 
     if prediction_id in existing_ids:
         raise RuntimeError(
@@ -1828,6 +2206,73 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    preflight_state = None
+    if STATE_FILE.exists():
+        try:
+            preflight_state = load_json_strict(STATE_FILE)
+        except Exception as exc:
+            # Do not let an unreadable existing canonical state be overwritten
+            # through --allow-fresh-start when its identity cannot be inspected.
+            if args.allow_fresh_start:
+                raise StateCompatibilityError(
+                    "Cannot authorize a fresh start while an existing Phase 2D state is unreadable."
+                ) from exc
+        if preflight_state is not None and not isinstance(preflight_state, dict):
+            raise StateCompatibilityError(
+                "Existing Phase 2D state is not a JSON object; refusing fresh-start replacement."
+            )
+
+    is_authoritative_f08 = validate_f08_execution_context(
+        EXPERIMENT_ID,
+        args.allow_fresh_start,
+        preflight_state if isinstance(preflight_state, dict) else None,
+    )
+    if is_authoritative_f08:
+        # This must happen before model/data work or the legacy state loader,
+        # whose migration helper can initialize the official observation ledger.
+        if not STATE_FILE.is_file() or not isinstance(preflight_state, dict):
+            raise StateCompatibilityError(
+                "Authoritative F08 state is missing or invalid; fresh start is prohibited."
+            )
+        validate_state_integrity(preflight_state)
+        stored_experiment_id = (
+            preflight_state.get("experiment_definition", {}).get("experiment_id")
+            or preflight_state.get("locked_models", {}).get("experiment_id")
+        )
+        if stored_experiment_id != EVIDENCE_POLICY_EXPERIMENT_ID:
+            raise StateCompatibilityError(
+                "Existing state does not carry the canonical F08 experiment identity."
+            )
+        if not OBSERVATION_LEDGER_FILE.is_file():
+            raise EvidencePolicyError(
+                "Authoritative F08 observation ledger is missing; refusing state migration."
+            )
+        preflight_observations = load_observations(
+            OBSERVATION_LEDGER_FILE,
+            experiment_id=EXPERIMENT_ID,
+        )
+        preflight_by_model = {
+            model: [row for row in preflight_observations if row.get("model") == model]
+            for model in ("candidate", "production")
+        }
+        _, _, preflight_evidence_policy = validate_evidence_population(
+            preflight_by_model["candidate"],
+            preflight_by_model["production"],
+        )
+        preflight_stale_disposition = validate_stale_pending_disposition(
+            preflight_state,
+            OBSERVATION_LEDGER_FILE,
+            manifest_path=STALE_PENDING_MANIFEST_PATH,
+            experiment_id=EXPERIMENT_ID,
+        )
+    else:
+        preflight_evidence_policy = None
+        preflight_stale_disposition = {
+            "status": "NOT_APPLICABLE",
+            "skip_ids": {"candidate": set(), "production": set()},
+            "pending_count": 0,
+        }
 
     run_id = os.getenv(
         "GITHUB_RUN_ID",
@@ -2109,6 +2554,23 @@ def main() -> int:
             args.allow_fresh_start,
         )
     )
+
+    # Repeat the read-only disposition validation against the restored state
+    # and prove the approved IDs did not change during compatibility migration.
+    if is_authoritative_f08:
+        stale_pending_disposition = validate_stale_pending_disposition(
+            state,
+            OBSERVATION_LEDGER_FILE,
+            manifest_path=STALE_PENDING_MANIFEST_PATH,
+            experiment_id=EXPERIMENT_ID,
+        )
+        for model in ("candidate", "production"):
+            if stale_pending_disposition["skip_ids"][model] != preflight_stale_disposition["skip_ids"][model]:
+                raise EvidencePolicyError(
+                    f"F08 {model} stale-pending ID set changed during state restore"
+                )
+    else:
+        stale_pending_disposition = preflight_stale_disposition
 
     print_section(
         "[04] STATE RESTORE"
@@ -2538,24 +3000,43 @@ def main() -> int:
                 state["pending"]["candidate"]
             ),
             "resolved_this_run": 0,
+            "stale_pending_not_scored": 0,
             "TP": 0,
             "SL": 0,
             "EXPIRED": 0,
             "AMBIGUOUS": 0,
             "INVALID": 0,
+            "pending_not_mature": 0,
+            "history_window_fetches": 0,
+            "history_window_cache_hits": 0,
+            "transient_fetch_failures": 0,
+            "history_unavailable": 0,
+            "history_gaps": 0,
+            "range_fetch_budget_exhausted": 0,
         },
         "production": {
             "pending_before": len(
                 state["pending"]["production"]
             ),
             "resolved_this_run": 0,
+            "stale_pending_not_scored": 0,
             "TP": 0,
             "SL": 0,
             "EXPIRED": 0,
             "AMBIGUOUS": 0,
             "INVALID": 0,
+            "pending_not_mature": 0,
+            "history_window_fetches": 0,
+            "history_window_cache_hits": 0,
+            "transient_fetch_failures": 0,
+            "history_unavailable": 0,
+            "history_gaps": 0,
+            "range_fetch_budget_exhausted": 0,
         },
     }
+
+    resolution_window_cache: dict[tuple[str, int], tuple[pd.DataFrame | None, str]] = {}
+    resolution_fetch_state = {"fetches": 0}
 
     for name in (
         "candidate",
@@ -2566,40 +3047,39 @@ def main() -> int:
         for pred in state[
             "pending"
         ].get(name, []):
-            df15 = current_rows.get(
-                pred["symbol"]
-            )
-
-            if df15 is None:
-                try:
-                    df15 = fetch_deribit_15m(
-                        pred["symbol"]
-                    )
-                except Exception as exc:
-                    print(
-                        f"WARN "
-                        f"{pred['symbol']} "
-                        f"resolution fetch: "
-                        f"{exc}"
-                    )
-
-                    still_pending.append(
-                        pred
-                    )
-
-                    continue
-
-            result = resolve_prediction(
-                pred,
-                df15,
-            )
-
-            if result is None:
-                still_pending.append(
-                    pred
-                )
-
+            # The disposition is an exclusion from scoring, not a state
+            # resolution.  Keep the original prediction in pending forever.
+            if pred["id"] in stale_pending_disposition["skip_ids"].get(name, set()):
+                still_pending.append(pred)
+                resolution_metrics[name]["stale_pending_not_scored"] += 1
                 continue
+
+            now_ms = int(time.time() * 1000)
+            df15, window_status = fetch_pending_resolution_window(
+                pred,
+                current_rows,
+                now_ms,
+                resolution_window_cache,
+                resolution_fetch_state,
+                resolution_metrics[name],
+            )
+
+            if window_status != "COMPLETE":
+                still_pending.append(pred)
+                continue
+
+            result = resolve_prediction(pred, df15)
+            if result is None:
+                # Defensive invariant: the resolver must only be called after
+                # the exact entry + 24 completed follow-up candles are present.
+                resolution_metrics[name]["history_gaps"] += 1
+                still_pending.append(pred)
+                continue
+
+            # evidence_class belongs at the official prospective writer, not
+            # inside resolve_prediction(), which is also used by backfill.
+            if is_authoritative_f08:
+                result = tag_prospective_observation(result)
 
             append_resolved_unique(
                 state,
@@ -2676,6 +3156,16 @@ def main() -> int:
         ],
     }
 
+    # Enforce the evidence-class whitelist before producing cumulative
+    # statistics.  This also proves the exact fingerprinted legacy cohorts.
+    if is_authoritative_f08:
+        _, _, evidence_policy_summary = validate_evidence_population(
+            ledger_by_model["candidate"],
+            ledger_by_model["production"],
+        )
+    else:
+        evidence_policy_summary = {"status": "NOT_APPLICABLE"}
+
     candidate_summary = summarize(
         ledger_by_model["candidate"]
     )
@@ -2729,10 +3219,16 @@ def main() -> int:
         )
     )
 
-    promotion_gate = evaluate_promotion(
-        ledger_by_model["candidate"],
-        ledger_by_model["production"],
-    )
+    if is_authoritative_f08:
+        promotion_gate = evaluate_promotion_with_evidence_policy(
+            ledger_by_model["candidate"],
+            ledger_by_model["production"],
+        )
+    else:
+        promotion_gate = evaluate_promotion(
+            ledger_by_model["candidate"],
+            ledger_by_model["production"],
+        )
 
     print_section(
         "[08] COVERAGE / STATISTICAL GATE"
@@ -2805,7 +3301,7 @@ def main() -> int:
         "state": {
             "fresh_start": fresh_start,
             "reason": state_reason,
-            "schema_version": STATE_SCHEMA,
+            "schema_version": state.get("schema_version", STATE_SCHEMA),
         },
 
         "market_data": {
@@ -2824,6 +3320,21 @@ def main() -> int:
 
         "resolution_metrics":
             resolution_metrics,
+
+        "stale_pending_disposition": {
+            "status": stale_pending_disposition.get("status"),
+            "reconciliation_id": stale_pending_disposition.get("reconciliation_id"),
+            "manifest_sha256": stale_pending_disposition.get("manifest_sha256"),
+            "pending_count": stale_pending_disposition.get("pending_count", 0),
+            "pending_by_model": stale_pending_disposition.get("pending_by_model", {}),
+            "dispositioned_count": stale_pending_disposition.get("dispositioned_count", 0),
+            "dispositioned_by_model": stale_pending_disposition.get("dispositioned_by_model", {}),
+            "event_id": stale_pending_disposition.get("event_id"),
+            "event_sha256": stale_pending_disposition.get("event_sha256"),
+            "outcome_rows_appended": stale_pending_disposition.get("outcome_rows_appended", 0),
+        },
+
+        "evidence_policy": evidence_policy_summary,
 
         "candidate": candidate_summary,
 

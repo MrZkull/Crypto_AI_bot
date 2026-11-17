@@ -29,13 +29,35 @@ jobs:
 
     steps:
       - name: Checkout PR merge commit or selected ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           persist-credentials: false
 
+      - name: Install pinned actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="1.7.12"
+          archive="/tmp/actionlint_${version}_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 \
+            "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8" "$archive" | sha256sum --check
+          tar -xzf "$archive" -C /tmp actionlint
+          sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
+          actionlint -version
+
+      - name: Lint F08 and regression workflow definitions
+        run: |
+          actionlint -color \
+            .github/workflows/phase2d_f08_validator_amendment.yml \
+            .github/workflows/phase2d_f08_controlled_disposition.yml \
+            .github/workflows/run_phase2d.yml \
+            .github/workflows/pull_request_regression.yml
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -48,6 +70,7 @@ jobs:
       - name: Compile core modules
         run: |
           python -m py_compile dashboard.py deribit_client.py trade_executor.py paper_execution.py
+          python -m py_compile phase2d_f08_v2_handoff.py phase2d_f08_v2_restore.py phase2d_prospective_validator.py
           if [ -f paper_execution_v2.py ]; then
             python -m py_compile paper_execution_v2.py
           fi
