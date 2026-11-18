@@ -7728,8 +7728,9 @@
       "tp2": 1992.5779895916978
     },
     "ETHUSDT_1794993149921": {
+      "ambiguous_barrier": true,
       "atr_ref": 6.741015890294577,
-      "bars_processed": 14,
+      "bars_processed": 22,
       "entry_bar_close_time_ms": 1794994199999,
       "entry_bar_observation_identity": [
         "ETHUSDT",
@@ -7753,25 +7754,29 @@
       "entry_price_source": "NEXT_BAR_OPEN",
       "entry_ref": 1812.52,
       "execution_mode": "PAPER_ONLY",
+      "exit_price": null,
+      "exit_reason": "AMBIGUOUS_BARRIER",
       "expires_at_ms": 1795014900000,
+      "final_exit_fee_usd": 0.0,
       "generated_at": "2026-11-18T09:12:29.921776+00:00",
       "generated_at_ms": 1794993149921,
       "initial_risk_usd": 300.0,
       "interval": "15m",
-      "last_observation_close_time": 1795005899999,
+      "last_observation_close_time": 1795013099999,
       "last_observation_identity": [
         "ETHUSDT",
-        1795005000000,
+        1795012200000,
         "15m",
         "binance",
         "spot"
       ],
-      "last_observation_open_time": 1795005000000,
-      "last_processed_candle_close_time": 1795005899999,
+      "last_observation_open_time": 1795012200000,
+      "last_processed_candle_close_time": 1795013099999,
       "live_was_executed_at_signal": false,
       "logical_symbol": "ETHUSDT",
       "model_version": "2026-08-23T19:30:12.136077+00:00",
-      "next_candle_open_time_ms": 1795005900000,
+      "net_r": null,
+      "next_candle_open_time_ms": 1795013100000,
       "observation_contract": {
         "btc_source": {
           "close_time": 1794992399999,
@@ -7833,7 +7838,10 @@
       "paper_policy_version": "stage2e-v2",
       "pred_id": "ETHUSDT_1794993149921",
       "qty": 17.80147116590696,
+      "realized_gross_pnl": null,
       "remaining_qty": 17.80147116590696,
+      "resolved_at_ms": 1795036806610,
+      "resolved_candle_close_time": 1795013099999,
       "side": "SELL",
       "signal_observation_identity": [
         "ETHUSDT",
@@ -7843,8 +7851,8 @@
         "spot"
       ],
       "simulated_entry": 1812.52,
-      "state": "OPEN",
-      "status": "ACTIVE",
+      "state": "CLOSED",
+      "status": "CLOSED",
       "stop": 1829.3725397257365,
       "symbol": "ETHUSDT",
       "tp1": 1788.926444383969,
