@@ -322,6 +322,10 @@
       "status": "DUPLICATE_SYMBOL_ACTIVE",
       "timestamp_ms": 1794480831787
     },
+    "ETHUSDT_1794993149921": {
+      "status": "OPENED",
+      "timestamp_ms": 1795006602149
+    },
     "FILUSDT_1793149419428": {
       "status": "OPENED",
       "timestamp_ms": 1793165153952
@@ -7722,6 +7726,129 @@
       "total_fees_usd": 33.81312028383271,
       "tp1": 2027.571061809459,
       "tp2": 1992.5779895916978
+    },
+    "ETHUSDT_1794993149921": {
+      "atr_ref": 6.741015890294577,
+      "bars_processed": 14,
+      "entry_bar_close_time_ms": 1794994199999,
+      "entry_bar_observation_identity": [
+        "ETHUSDT",
+        1794993300000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1794993300000,
+      "entry_fee_usd": 19.35931351057781,
+      "entry_observation_close_time": 1794992399999,
+      "entry_observation_identity": [
+        "ETHUSDT",
+        1794991500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1794991500000,
+      "entry_price": 1812.52,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 1812.52,
+      "execution_mode": "PAPER_ONLY",
+      "expires_at_ms": 1795014900000,
+      "generated_at": "2026-11-18T09:12:29.921776+00:00",
+      "generated_at_ms": 1794993149921,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1795005899999,
+      "last_observation_identity": [
+        "ETHUSDT",
+        1795005000000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1795005000000,
+      "last_processed_candle_close_time": 1795005899999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "ETHUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "next_candle_open_time_ms": 1795005900000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1794992399999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1794991500000
+        },
+        "close_time": 1794992399999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1794992399999,
+            "interval": "1h",
+            "logical_symbol": "ETHUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794988800000
+          },
+          "4h": {
+            "close_time": 1794988799999,
+            "interval": "4h",
+            "logical_symbol": "ETHUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1794974400000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "ETHUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1794991500000,
+        "retrieved_at_ms": 1794993149042
+      },
+      "observation_identity": [
+        "ETHUSDT",
+        1794991500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1794991500000,
+      "opened_at_ms": 1794993300000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "ETHUSDT_1794993149921",
+      "qty": 17.80147116590696,
+      "remaining_qty": 17.80147116590696,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "ETHUSDT",
+        1794991500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 1812.52,
+      "state": "OPEN",
+      "status": "ACTIVE",
+      "stop": 1829.3725397257365,
+      "symbol": "ETHUSDT",
+      "tp1": 1788.926444383969,
+      "tp2": 1761.9623808227907
     },
     "FILUSDT_1793149419428": {
       "atr_ref": 0.004545389336849398,
