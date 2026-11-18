@@ -46,6 +46,9 @@ def test_factory_rejects_unknown_backend():
 def test_factory_enforces_fencing_when_shared_postgres_is_required(monkeypatch):
     import execution_storage
 
+    # Isolate the factory default from CI's localhost SSL override.
+    monkeypatch.delenv("EXECUTION_LEDGER_SSLMODE", raising=False)
+
     captured = {}
 
     class FakePostgresLedger:
