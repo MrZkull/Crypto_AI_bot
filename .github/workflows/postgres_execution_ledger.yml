@@ -1,0 +1,102 @@
+name: PostgreSQL Execution Ledger Integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'exchange_reliability.py'
+      - 'execution_storage.py'
+      - 'postgres_execution_ledger.py'
+      - 'requirements-postgres.txt'
+      - 'scripts/migrate_execution_ledger.py'
+      - 'tests/test_postgres_execution_ledger.py'
+      - 'tests/test_execution_storage.py'
+      - '.github/workflows/postgres_execution_ledger.yml'
+      - 'docs/NEON_POSTGRESQL_OPERATIONS.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-ledger-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-ledger:
+    name: Real PostgreSQL ledger integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cryptobot_test
+          POSTGRES_USER: cryptobot_admin
+          POSTGRES_PASSWORD: cryptobot_admin_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cryptobot_admin -d cryptobot_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_ADMIN_DSN: postgresql://cryptobot_admin:cryptobot_admin_ci_only@127.0.0.1:5432/cryptobot_test
+      EXECUTION_LEDGER_MIGRATION_DSN: postgresql://cryptobot_admin:cryptobot_admin_ci_only@127.0.0.1:5432/cryptobot_test
+      EXECUTION_LEDGER_TEST_MIGRATION_DSN: postgresql://cryptobot_admin:cryptobot_admin_ci_only@127.0.0.1:5432/cryptobot_test
+      EXECUTION_LEDGER_TEST_DSN: postgresql://cryptobot_writer:cryptobot_writer_ci_only@127.0.0.1:5432/cryptobot_test
+      EXECUTION_LEDGER_SSLMODE: disable
+      EXECUTION_LEDGER_TEST_SSLMODE: disable
+      EXECUTION_LEDGER_TEST_EXPECT_DML_ONLY: 'true'
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install focused PostgreSQL CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest -r requirements-postgres.txt
+
+      - name: Compile PostgreSQL execution modules
+        run: |
+          python -m py_compile exchange_reliability.py postgres_execution_ledger.py execution_storage.py scripts/migrate_execution_ledger.py
+
+      - name: Apply schema using migration owner
+        run: python scripts/migrate_execution_ledger.py
+
+      - name: Provision isolated DML-only runtime role
+        run: |
+          psql "$DB_ADMIN_DSN" -v ON_ERROR_STOP=1 <<'SQL'
+          REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+          CREATE ROLE cryptobot_writer LOGIN PASSWORD 'cryptobot_writer_ci_only';
+          GRANT CONNECT ON DATABASE cryptobot_test TO cryptobot_writer;
+          GRANT USAGE ON SCHEMA public TO cryptobot_writer;
+          GRANT SELECT, INSERT, UPDATE ON TABLE
+            order_intents, run_leases, execution_mutations, execution_protection_links
+            TO cryptobot_writer;
+          GRANT SELECT, INSERT ON TABLE
+            order_events, execution_mutation_events TO cryptobot_writer;
+          GRANT SELECT ON TABLE execution_ledger_schema TO cryptobot_writer;
+          GRANT USAGE, SELECT ON SEQUENCE
+            order_events_event_id_seq, execution_mutation_events_event_id_seq
+            TO cryptobot_writer;
+          SQL
+
+      - name: Run PostgreSQL integration tests (skips are failures)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q -rs tests/test_postgres_execution_ledger.py tests/test_execution_storage.py | tee postgres-ledger-pytest.log
+          if grep -Eq '[0-9]+ skipped' postgres-ledger-pytest.log; then
+            echo "PostgreSQL CI must execute every database integration test; skipped tests are not accepted." >&2
+            exit 1
+          fi
