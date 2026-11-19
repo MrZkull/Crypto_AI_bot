@@ -1,0 +1,62 @@
+name: Deribit Testnet Read-only Preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_symbols:
+        description: "Number of configured symbols to verify (1-25)"
+        required: true
+        default: "25"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deribit-testnet-readonly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  readonly-preflight:
+    if: github.ref == 'refs/heads/main'
+    name: Authenticate and verify Testnet reads only
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: deribit-testnet-readonly
+    steps:
+      - name: Checkout reviewed main branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install minimal read-only dependencies
+        run: python -m pip install --disable-pip-version-check requests
+
+      - name: Validate input
+        env:
+          MAX_SYMBOLS: ${{ inputs.max_symbols }}
+        run: |
+          python -c 'import os; value = int(os.environ["MAX_SYMBOLS"]); assert 1 <= value <= 25, "max_symbols must be from 1 to 25"'
+
+      - name: Run read-only Testnet preflight
+        env:
+          DERIBIT_TESTNET_READONLY_CLIENT_ID: ${{ secrets.DERIBIT_TESTNET_READONLY_CLIENT_ID }}
+          DERIBIT_TESTNET_READONLY_CLIENT_SECRET: ${{ secrets.DERIBIT_TESTNET_READONLY_CLIENT_SECRET }}
+          MAX_SYMBOLS: ${{ inputs.max_symbols }}
+        run: |
+          python testnet_readonly_check.py --max-symbols "$MAX_SYMBOLS" --output testnet_readonly_evidence.json
+
+      - name: Upload redacted credential-free evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deribit-testnet-readonly-${{ github.run_id }}
+          path: testnet_readonly_evidence.json
+          if-no-files-found: warn
+          retention-days: 14

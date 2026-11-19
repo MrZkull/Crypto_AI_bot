@@ -14,7 +14,7 @@ def test_manual_execution_mode_workflow_wiring_is_fail_closed():
 
     dispatch_start = text.index("  workflow_dispatch:")
     dispatch_end = text.index(
-        "  repository_dispatch:",
+        "jobs:",
         dispatch_start,
     )
 

@@ -93,15 +93,16 @@ class TestDashboardAuthentication(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         client_factory.assert_not_called()
 
-    def test_same_origin_mutation_passes_guard_then_reaches_handler(self):
-        with patch.object(dashboard, "deribit_client", return_value=None) as client_factory:
+    def test_same_origin_mutation_is_blocked_by_release_read_only_policy(self):
+        with patch.object(dashboard, "deribit_client") as client_factory:
             response = self.client.post(
                 "/api/close_trade",
                 headers={**basic_auth_header(), "Origin": PUBLIC_ORIGIN},
                 json={"symbol": "ETHUSDT"},
             )
-        self.assertEqual(response.status_code, 500)
-        client_factory.assert_called_once()
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"], "dashboard_read_only")
+        client_factory.assert_not_called()
 
     def test_weak_password_and_invalid_origin_fail_closed(self):
         with patch.dict(os.environ, {"DASHBOARD_AUTH_PASSWORD": "too-short"}):

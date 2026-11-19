@@ -127,8 +127,40 @@ _SCHEMA_STATEMENTS = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_execution_protection_active ON execution_protection_links(protective_intent_id, active)",
+    """CREATE TABLE IF NOT EXISTS account_risk_snapshots (
+        exchange TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        currency TEXT NOT NULL,
+        observed_at DOUBLE PRECISION NOT NULL,
+        equity TEXT NOT NULL,
+        source TEXT NOT NULL,
+        PRIMARY KEY(exchange, environment, account_id, currency, observed_at)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_account_risk_snapshots_lookup ON account_risk_snapshots(exchange, environment, account_id, currency, observed_at DESC)",
+    """CREATE TABLE IF NOT EXISTS daily_risk_halts (
+        exchange TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        utc_day TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        baseline_equity TEXT NOT NULL,
+        current_equity TEXT NOT NULL,
+        loss_fraction TEXT NOT NULL,
+        observed_at DOUBLE PRECISION NOT NULL,
+        PRIMARY KEY(exchange, environment, account_id, utc_day)
+    )""",
     "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (3, EXTRACT(EPOCH FROM NOW())) ON CONFLICT (version) DO NOTHING",
     "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (4, EXTRACT(EPOCH FROM NOW())) ON CONFLICT (version) DO NOTHING",
+    "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (5, EXTRACT(EPOCH FROM NOW())) ON CONFLICT (version) DO NOTHING",
+    """CREATE TABLE IF NOT EXISTS risk_capture_leases (
+        lease_key TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        expires_at DOUBLE PRECISION NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL,
+        fencing_token BIGINT NOT NULL DEFAULT 0
+    )""",
+    "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (6, EXTRACT(EPOCH FROM NOW())) ON CONFLICT (version) DO NOTHING",
 )
 
 
@@ -175,7 +207,7 @@ def apply_schema_migrations(
                 cur.execute("SELECT MAX(version) AS version FROM execution_ledger_schema")
                 row = cur.fetchone()
                 version = int(row["version"] or 0) if row else 0
-                if version != 4:
+                if version != 6:
                     raise ReliabilityError("Unsupported execution-ledger schema version after migration")
                 return version
     except ReliabilityError:
@@ -244,7 +276,7 @@ class PostgresExecutionLedger:
                 with conn.cursor() as cur:
                     cur.execute("SELECT MAX(version) AS version FROM execution_ledger_schema")
                     row = cur.fetchone()
-                    if not row or int(row["version"] or 0) != 4:
+                    if not row or int(row["version"] or 0) != 6:
                         raise ReliabilityError("Unsupported execution-ledger schema version")
         except ReliabilityError:
             raise
@@ -1061,3 +1093,328 @@ class PostgresExecutionLedger:
                     (str(intent_id),),
                 )
                 return [dict(row) for row in cur.fetchall()]
+
+    def _assert_fenced_risk_capture_lease(
+        self, cur, *, lease_key: str, lease_owner_id: str, fencing_token: int,
+    ) -> None:
+        """Validate the dedicated read-only baseline writer lease, not run_leases."""
+        key = str(lease_key or "").strip()
+        owner = str(lease_owner_id or "").strip()
+        try:
+            token = int(fencing_token)
+        except (TypeError, ValueError, OverflowError):
+            token = 0
+        if not key or not owner or token < 1:
+            raise ReliabilityError("A risk-capture lease key, owner and positive fence are required")
+        cur.execute(
+            """SELECT lease_key FROM risk_capture_leases
+            WHERE lease_key=%s AND owner_id=%s AND fencing_token=%s
+              AND expires_at > EXTRACT(EPOCH FROM clock_timestamp())
+            FOR UPDATE""",
+            (key, owner, token),
+        )
+        if cur.fetchone() is None:
+            raise ReliabilityError("Risk-capture lease is expired, replaced or fenced")
+
+    def acquire_fenced_risk_capture_lease(
+        self, lease_key: str, owner_id: str, *, ttl_seconds: float = 180.0,
+    ) -> Optional[int]:
+        """Acquire an independently fenced lease isolated from trading run_leases."""
+        key = str(lease_key or "").strip()
+        owner = str(owner_id or "").strip()
+        ttl = float(ttl_seconds)
+        if not key or not owner or not math.isfinite(ttl) or ttl <= 0:
+            raise ValueError("risk-capture lease identity and positive finite TTL are required")
+        query = """WITH db_clock AS (
+            SELECT EXTRACT(EPOCH FROM clock_timestamp())::double precision AS now_epoch
+        )
+        INSERT INTO risk_capture_leases(lease_key,owner_id,expires_at,updated_at,fencing_token)
+        SELECT %s,%s,db_clock.now_epoch + %s,db_clock.now_epoch,1 FROM db_clock WHERE TRUE
+        ON CONFLICT (lease_key) DO UPDATE SET
+            owner_id=EXCLUDED.owner_id,
+            expires_at=EXCLUDED.expires_at,
+            updated_at=EXCLUDED.updated_at,
+            fencing_token=CASE
+                WHEN risk_capture_leases.fencing_token < 1 THEN 1
+                WHEN risk_capture_leases.expires_at <= EXCLUDED.updated_at THEN risk_capture_leases.fencing_token + 1
+                ELSE risk_capture_leases.fencing_token
+            END
+        WHERE risk_capture_leases.expires_at <= EXCLUDED.updated_at
+           OR risk_capture_leases.owner_id = EXCLUDED.owner_id
+        RETURNING fencing_token"""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (key, owner, ttl))
+                row = cur.fetchone()
+                return int(row["fencing_token"]) if row is not None else None
+
+    def renew_fenced_risk_capture_lease(
+        self, lease_key: str, owner_id: str, fencing_token: int, *, ttl_seconds: float = 180.0,
+    ) -> bool:
+        ttl = float(ttl_seconds)
+        try:
+            token = int(fencing_token)
+        except (TypeError, ValueError, OverflowError):
+            token = 0
+        if not math.isfinite(ttl) or ttl <= 0 or token < 1:
+            raise ValueError("risk-capture TTL and fencing token must be positive and finite")
+        query = """WITH db_clock AS (
+            SELECT EXTRACT(EPOCH FROM clock_timestamp())::double precision AS now_epoch
+        )
+        UPDATE risk_capture_leases
+        SET expires_at=db_clock.now_epoch + %s, updated_at=db_clock.now_epoch
+        FROM db_clock
+        WHERE lease_key=%s AND owner_id=%s AND fencing_token=%s
+          AND risk_capture_leases.expires_at>db_clock.now_epoch
+        RETURNING risk_capture_leases.fencing_token"""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (ttl, str(lease_key), str(owner_id), token))
+                return cur.fetchone() is not None
+
+    def release_fenced_risk_capture_lease(
+        self, lease_key: str, owner_id: str, fencing_token: int,
+    ) -> bool:
+        try:
+            token = int(fencing_token)
+        except (TypeError, ValueError, OverflowError):
+            token = 0
+        if token < 1:
+            return False
+        query = """WITH db_clock AS (
+            SELECT EXTRACT(EPOCH FROM clock_timestamp())::double precision AS now_epoch
+        )
+        UPDATE risk_capture_leases
+        SET expires_at=db_clock.now_epoch, updated_at=db_clock.now_epoch
+        FROM db_clock
+        WHERE lease_key=%s AND owner_id=%s AND fencing_token=%s
+        RETURNING risk_capture_leases.lease_key"""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (str(lease_key), str(owner_id), token))
+                return cur.fetchone() is not None
+
+    def record_account_risk_snapshot_with_capture_lease(
+        self, *, exchange: str, environment: str, account_id: str,
+        currency: str, equity: Any, observed_at: Optional[float] = None,
+        source: str = "readonly_daily_baseline_capture",
+        risk_capture_lease_key: str, risk_capture_lease_owner_id: str,
+        risk_capture_fencing_token: int,
+    ) -> dict:
+        """Append a baseline using only the dedicated risk-capture lease table."""
+        scope = (
+            str(exchange or "").strip().upper(),
+            str(environment or "").strip().lower(),
+            str(account_id or "").strip(),
+            str(currency or "").strip().upper(),
+        )
+        if not all(scope):
+            raise ValueError("Risk snapshot exchange, environment, account and currency are required")
+        amount = _decimal(equity, "equity")
+        stamp = float(time.time() if observed_at is None else observed_at)
+        if amount <= 0 or not math.isfinite(stamp) or stamp <= 0:
+            raise ValueError("Risk snapshot equity and timestamp must be positive and finite")
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    self._assert_fenced_risk_capture_lease(
+                        cur, lease_key=risk_capture_lease_key,
+                        lease_owner_id=risk_capture_lease_owner_id,
+                        fencing_token=risk_capture_fencing_token,
+                    )
+                    cur.execute(
+                        """INSERT INTO account_risk_snapshots
+                        (exchange,environment,account_id,currency,observed_at,equity,source)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT(exchange,environment,account_id,currency,observed_at) DO NOTHING""",
+                        (*scope, stamp, str(amount), str(source or "readonly_daily_baseline_capture")),
+                    )
+                    cur.execute(
+                        """SELECT exchange,environment,account_id,currency,observed_at,equity,source
+                        FROM account_risk_snapshots
+                        WHERE exchange=%s AND environment=%s AND account_id=%s AND currency=%s AND observed_at=%s""",
+                        (*scope, stamp),
+                    )
+                    row = cur.fetchone()
+            if row is None:
+                raise ReliabilityError("Risk-capture account snapshot could not be persisted")
+            normalized = dict(row)
+            if _decimal(normalized.get("equity"), "persisted_equity") != amount:
+                raise ReliabilityError("Risk snapshot timestamp collided with a different equity observation")
+            return normalized
+        except ReliabilityError:
+            raise
+        except Exception as exc:
+            raise ReliabilityError(
+                f"Could not persist read-only baseline snapshot ({type(exc).__name__})"
+            ) from exc
+
+    def record_account_risk_snapshot(
+        self, *, exchange: str, environment: str, account_id: str,
+        currency: str, equity: Any, observed_at: Optional[float] = None,
+        source: str = "exchange_account_snapshot",
+        lease_key: Optional[str] = None, lease_owner_id: Optional[str] = None,
+        fencing_token: Optional[int] = None,
+    ) -> dict:
+        """Append an immutable account-equity checkpoint under the current writer fence."""
+        scope = (
+            str(exchange or "").strip().upper(),
+            str(environment or "").strip().lower(),
+            str(account_id or "").strip(),
+            str(currency or "").strip().upper(),
+        )
+        if not all(scope):
+            raise ValueError("Risk snapshot exchange, environment, account and currency are required")
+        amount = _decimal(equity, "equity")
+        stamp = float(time.time() if observed_at is None else observed_at)
+        if amount <= 0 or not math.isfinite(stamp) or stamp <= 0:
+            raise ValueError("Risk snapshot equity and timestamp must be positive and finite")
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    self._assert_fenced_lease(
+                        cur, lease_key=lease_key, lease_owner_id=lease_owner_id,
+                        fencing_token=fencing_token,
+                    )
+                    cur.execute(
+                        """INSERT INTO account_risk_snapshots
+                        (exchange,environment,account_id,currency,observed_at,equity,source)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT(exchange,environment,account_id,currency,observed_at) DO NOTHING""",
+                        (*scope, stamp, str(amount), str(source or "exchange_account_snapshot")),
+                    )
+                    cur.execute(
+                        """SELECT exchange,environment,account_id,currency,observed_at,equity,source
+                        FROM account_risk_snapshots
+                        WHERE exchange=%s AND environment=%s AND account_id=%s AND currency=%s AND observed_at=%s""",
+                        (*scope, stamp),
+                    )
+                    row = cur.fetchone()
+            if row is None:
+                raise ReliabilityError("Account risk snapshot could not be persisted")
+            return dict(row)
+        except ReliabilityError:
+            raise
+        except Exception as exc:
+            raise ReliabilityError(
+                f"Could not persist account risk snapshot ({type(exc).__name__})"
+            ) from exc
+
+    def latest_account_risk_snapshot_before(
+        self, *, exchange: str, environment: str, account_id: str,
+        currency: str, cutoff: float,
+    ) -> Optional[dict]:
+        stamp = float(cutoff)
+        if not math.isfinite(stamp) or stamp <= 0:
+            raise ValueError("Risk snapshot cutoff must be positive and finite")
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT exchange,environment,account_id,currency,observed_at,equity,source
+                        FROM account_risk_snapshots
+                        WHERE exchange=%s AND environment=%s AND account_id=%s AND currency=%s AND observed_at<=%s
+                        ORDER BY observed_at DESC LIMIT 1""",
+                        (str(exchange).upper(), str(environment).lower(), str(account_id), str(currency).upper(), stamp),
+                    )
+                    row = cur.fetchone()
+            return dict(row) if row is not None else None
+        except Exception as exc:
+            raise ReliabilityError(
+                f"Could not read account risk baseline ({type(exc).__name__})"
+            ) from exc
+
+    def first_account_risk_snapshot_between(
+        self, *, exchange: str, environment: str, account_id: str,
+        currency: str, start: float, end: float,
+    ) -> Optional[dict]:
+        """Return the earliest immutable account snapshot in a bounded UTC window."""
+        start_value, end_value = float(start), float(end)
+        if (not math.isfinite(start_value) or not math.isfinite(end_value)
+                or start_value <= 0 or end_value < start_value):
+            raise ValueError("Risk snapshot window is invalid")
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT exchange,environment,account_id,currency,observed_at,equity,source
+                        FROM account_risk_snapshots
+                        WHERE exchange=%s AND environment=%s AND account_id=%s AND currency=%s
+                          AND observed_at>=%s AND observed_at<=%s
+                        ORDER BY observed_at ASC LIMIT 1""",
+                        (str(exchange).upper(), str(environment).lower(), str(account_id),
+                         str(currency).upper(), start_value, end_value),
+                    )
+                    row = cur.fetchone()
+            return dict(row) if row is not None else None
+        except Exception as exc:
+            raise ReliabilityError(
+                f"Could not read daily account-risk baseline ({type(exc).__name__})"
+            ) from exc
+
+    def get_daily_risk_halt(
+        self, *, exchange: str, environment: str, account_id: str, utc_day: str,
+    ) -> Optional[dict]:
+        from datetime import date
+        date.fromisoformat(str(utc_day))
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT * FROM daily_risk_halts
+                        WHERE exchange=%s AND environment=%s AND account_id=%s AND utc_day=%s""",
+                        (str(exchange).upper(), str(environment).lower(), str(account_id), str(utc_day)),
+                    )
+                    row = cur.fetchone()
+            return dict(row) if row is not None else None
+        except Exception as exc:
+            raise ReliabilityError(
+                f"Could not read daily risk halt ({type(exc).__name__})"
+            ) from exc
+
+    def latch_daily_risk_halt(
+        self, *, exchange: str, environment: str, account_id: str, utc_day: str,
+        reason: str, baseline_equity: Any, current_equity: Any,
+        loss_fraction: Any, observed_at: Optional[float] = None,
+        lease_key: Optional[str] = None, lease_owner_id: Optional[str] = None,
+        fencing_token: Optional[int] = None,
+    ) -> dict:
+        """Persist a sticky per-UTC-day entry halt under the current writer fence."""
+        from datetime import date
+        date.fromisoformat(str(utc_day))
+        amount0 = _decimal(baseline_equity, "baseline_equity")
+        amount1 = _decimal(current_equity, "current_equity")
+        fraction = _decimal(loss_fraction, "loss_fraction")
+        stamp = float(time.time() if observed_at is None else observed_at)
+        if amount0 <= 0 or amount1 < 0 or fraction < 0 or not math.isfinite(stamp) or stamp <= 0:
+            raise ValueError("Daily risk halt values are invalid")
+        scope = (str(exchange).upper(), str(environment).lower(), str(account_id), str(utc_day))
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    self._assert_fenced_lease(
+                        cur, lease_key=lease_key, lease_owner_id=lease_owner_id,
+                        fencing_token=fencing_token,
+                    )
+                    cur.execute(
+                        """INSERT INTO daily_risk_halts
+                        (exchange,environment,account_id,utc_day,reason,baseline_equity,current_equity,loss_fraction,observed_at)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT(exchange,environment,account_id,utc_day) DO NOTHING""",
+                        (*scope, str(reason or "DAILY_RISK_LIMIT"), str(amount0), str(amount1), str(fraction), stamp),
+                    )
+                    cur.execute(
+                        """SELECT * FROM daily_risk_halts
+                        WHERE exchange=%s AND environment=%s AND account_id=%s AND utc_day=%s""",
+                        scope,
+                    )
+                    row = cur.fetchone()
+            if row is None:
+                raise ReliabilityError("Daily risk halt could not be persisted")
+            return dict(row)
+        except ReliabilityError:
+            raise
+        except Exception as exc:
+            raise ReliabilityError(
+                f"Could not persist daily risk halt ({type(exc).__name__})"
+            ) from exc
