@@ -345,6 +345,15 @@ nav {
   transition: all 0.18s;
 }
 .btn-kill:hover { background: var(--red); color: #fff; transform: translateY(-1px); }
+.monitoring-only-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--cyan); background: var(--cyan2);
+  color: var(--cyan); font: 700 10px var(--mono); letter-spacing: .02em;
+}
+.monitoring-action-disabled {
+  color: var(--text3); font: 10px var(--mono); opacity: .85;
+}
 .last-upd { font-family: var(--mono); font-size: 10px; color: var(--text3); }
 
 .page { display: none; padding: 24px; flex: 1; }
@@ -701,13 +710,12 @@ nav {
       <span class="top-stat" id="execModeBadge" style="background:var(--cyan2);border-color:var(--cyan);color:var(--cyan);font-weight:700;">
         🛡️ PREDICT ONLY
       </span>
-      <span class="top-stat">Balance: <span id="topBalance">—</span> USDT</span>
+      <span class="top-stat">Balance: <span id="topBalance">—</span></span>
       <span class="top-stat">Acc: <span style="color:var(--green)" id="topAccuracy">—</span></span>
       <span class="top-stat"><span style="color:var(--blue)" id="topMonitoredCount">—</span> pairs · <span style="color:var(--cyan)" id="topTiersCount">—</span></span>
       <span class="last-upd" id="lastUpd">—</span>
       <span class="live-badge offline" id="liveBadge">OFFLINE</span>
-      <button class="btn-scan" id="scanBtn" onclick="triggerScan()">▶ Scan</button>
-      <button class="btn-kill" onclick="openKillModal()">🚨 Kill Switch</button>
+      <span class="monitoring-only-pill" role="status" aria-label="Monitoring only; execution controls disabled">◉ MONITORING ONLY · EXECUTION CONTROLS DISABLED</span>
     </div>
   </div>
 
@@ -722,10 +730,10 @@ nav {
   <!-- 1. DASHBOARD PAGE -->
   <div class="page active" id="page-dashboard">
     <div class="stats-row">
-      <div class="stat-card c-green"><div class="stat-label">Testnet Balance</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub">USDT Live Balance</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Account Equity</div><div class="stat-value green" id="statBalance">—</div><div class="stat-sub" id="statBalanceSub">Currency shown with value</div></div>
       <div class="stat-card c-blue"><div class="stat-label">Open Trades</div><div class="stat-value blue" id="statOpen">0</div><div class="stat-sub" id="statOpenSub">—</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Win Rate</div><div class="stat-value cyan" id="statWR">—</div><div class="stat-sub" id="statWRSub">— W / — L</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="statPnl">+0.0000</div><div class="stat-sub">USDT closed trades</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="statPnl">+0.0000</div><div class="stat-sub" id="statPnlSub">Currency-verified realised PnL</div></div>
       <div class="stat-card c-purple"><div class="stat-label">Model Accuracy</div><div class="stat-value purple" id="statModelAcc">—</div><div class="stat-sub" id="statModelSub">—</div></div>
       <div class="stat-card c-green"><div class="stat-label">Today Signals</div><div class="stat-value green" id="statSigToday">0</div><div class="stat-sub" id="statSigSub">0 BUY · 0 SELL</div></div>
       <div class="stat-card c-blue"><div class="stat-label">Monitoring</div><div class="stat-value blue" style="font-size:16px" id="statPairsCount">—</div><div class="stat-sub" id="statTiersSub">—</div></div>
@@ -775,7 +783,7 @@ nav {
           <div class="panel-body">
             <div class="balance-card">
               <div class="bal-num" id="balMain">—</div>
-              <div class="bal-sub">USDT Available</div>
+              <div class="bal-sub" id="balMainSub">Account Equity</div>
             </div>
             <div id="balAssets" style="margin-top:10px">
               <div style="font-size:10px;color:var(--text3);text-align:center">Loading assets...</div>
@@ -805,6 +813,41 @@ nav {
       </div>
     </div>
   </div>
+
+    <div class="panel" id="testnetOverviewPanel" style="margin-top:16px">
+      <div class="panel-header">
+        <span class="panel-title">Deribit Testnet — Exchange Monitor</span>
+        <div class="panel-meta">
+          <span class="panel-badge" id="tn-connection">CHECKING</span>
+          <span class="panel-badge">READ-ONLY</span>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="stats-row" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:14px">
+          <div class="stat-card c-cyan"><div class="stat-label">Verified Host</div><div class="stat-value" id="tn-host" style="font-size:13px">—</div><div class="stat-sub">Expected: test.deribit.com</div></div>
+          <div class="stat-card c-green"><div class="stat-label">Account Equity</div><div class="stat-value green" id="tn-equity">—</div><div class="stat-sub">Private account summary</div></div>
+          <div class="stat-card c-blue"><div class="stat-label">Exchange Positions</div><div class="stat-value blue" id="tn-position-count">—</div><div class="stat-sub">Complete snapshot required</div></div>
+          <div class="stat-card c-purple"><div class="stat-label">Recent Exchange Fills</div><div class="stat-value purple" id="tn-fill-count">—</div><div class="stat-sub" id="tn-fill-scope">Selected recent symbols</div></div>
+        </div>
+        <div id="tn-status-message" style="font-size:11px;color:var(--text2);margin:4px 0 12px">Waiting for authenticated Testnet snapshot…</div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;color:var(--text3);margin:12px 0 6px">EXCHANGE POSITIONS</div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px">
+            <thead><tr style="color:var(--text3);text-align:left"><th style="padding:7px">Instrument</th><th>Side</th><th>Qty</th><th>Entry</th><th>Mark</th><th>Unrealized PnL</th><th>Stop Order</th></tr></thead>
+            <tbody id="tn-positions"><tr><td colspan="7" style="padding:12px;color:var(--text3)">Not yet verified</td></tr></tbody>
+          </table>
+        </div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;color:var(--text3);margin:18px 0 6px">RECENT EXCHANGE FILLS</div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px">
+            <thead><tr style="color:var(--text3);text-align:left"><th style="padding:7px">Time (UTC)</th><th>Symbol</th><th>Side</th><th>Amount</th><th>Fill Price</th><th>Fee</th><th>Order ID</th></tr></thead>
+            <tbody id="tn-fills"><tr><td colspan="7" style="padding:12px;color:var(--text3)">Not yet verified</td></tr></tbody>
+          </table>
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:10px">Stop-order presence checks are limited to the first four position symbols; presence does not prove full quantity coverage. Exchange fills are queried for up to four selected symbols. The bot journal remains a separate data source.</div>
+        <div id="tn-updated" style="font-size:9px;color:var(--text3);margin-top:5px">Last checked: —</div>
+      </div>
+    </div>
 
   <!-- 2. SIGNALS PAGE -->
   <div class="page" id="page-signals">
@@ -885,8 +928,8 @@ nav {
   <div class="page" id="page-trades">
     <div class="stats-row">
       <div class="stat-card c-blue"><div class="stat-label">Open Positions</div><div class="stat-value blue" id="ot-count">0</div><div class="stat-sub" id="ot-max-sub">—</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Unrealised PnL</div><div class="stat-value" id="ot-upnl">+0.0000</div><div class="stat-sub">USDT combined</div></div>
-      <div class="stat-card c-green"><div class="stat-label">Capital at Risk</div><div class="stat-value green" id="ot-risk">—</div><div class="stat-sub" id="ot-risk-sub">USDT Risk</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Unrealised PnL</div><div class="stat-value" id="ot-upnl">+0.0000</div><div class="stat-sub">Exchange-reported currency</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Capital at Risk</div><div class="stat-value green" id="ot-risk">—</div><div class="stat-sub" id="ot-risk-sub">Risk currency shown</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Avg Confidence</div><div class="stat-value cyan" id="ot-conf">—</div><div class="stat-sub">ML score avg</div></div>
     </div>
     <div class="panel">
@@ -1011,7 +1054,7 @@ nav {
       <div class="stat-card c-green"><div class="stat-label">Wins</div><div class="stat-value green" id="h-wins">0</div><div class="stat-sub">profitable closes</div></div>
       <div class="stat-card c-red"><div class="stat-label">Losses</div><div class="stat-value red" id="h-losses">0</div><div class="stat-sub">stopped out</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Win Rate</div><div class="stat-value cyan" id="h-wr">—</div><div class="stat-sub">closed trades</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="h-pnl">+0.0000</div><div class="stat-sub">USDT net</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Total PnL</div><div class="stat-value" id="h-pnl">+0.0000</div><div class="stat-sub" id="h-pnl-sub">Currency-verified net</div></div>
     </div>
     
     <div class="panel">
@@ -1043,7 +1086,7 @@ nav {
           <button class="fbtn sell-btn" onclick="setHistResult('loss',this)">✕ Losses</button>
 
           <div style="margin-left:auto;display:flex;gap:6px">
-            <button onclick="openEmailModal()" class="fbtn" style="background:var(--purple2);border-color:var(--purple);color:var(--purple);font-weight:700;">✉️ Email</button>
+            <span class="tag" style="color:var(--text3);border:1px solid var(--border)">Email sharing disabled in monitoring-only mode</span>
             <button onclick="downloadCSVReport()" class="fbtn" style="background:var(--green2);border-color:var(--green);color:var(--green);font-weight:700;">📥 CSV</button>
             <button onclick="printPDFReport()" class="fbtn" style="background:var(--blue2);border-color:var(--blue);color:var(--blue);font-weight:700;">📄 PDF</button>
           </div>
@@ -1100,7 +1143,7 @@ nav {
               <th>Dir</th>
               <th>Entry</th>
               <th>Close</th>
-              <th>PnL (USDT)</th>
+              <th>PnL (currency)</th>
               <th>Result</th>
               <th>Opened</th>
               <th>Duration</th>
@@ -1147,10 +1190,10 @@ nav {
   <!-- 6. PERFORMANCE PAGE -->
   <div class="page" id="page-performance">
     <div class="stats-row">
-      <div class="stat-card c-green"><div class="stat-label">Best Trade</div><div class="stat-value green" id="p-best">—</div><div class="stat-sub" id="p-best-sym">USDT profit</div></div>
-      <div class="stat-card c-red"><div class="stat-label">Worst Trade</div><div class="stat-value red" id="p-worst">—</div><div class="stat-sub" id="p-worst-sym">USDT loss</div></div>
-      <div class="stat-card c-cyan"><div class="stat-label">Avg Win</div><div class="stat-value cyan" id="p-avgwin">—</div><div class="stat-sub" id="p-avgwin-sub">USDT per win</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Avg Loss</div><div class="stat-value amber" id="p-avgloss">—</div><div class="stat-sub" id="p-avgloss-sub">USDT per loss</div></div>
+      <div class="stat-card c-green"><div class="stat-label">Best Trade</div><div class="stat-value green" id="p-best">—</div><div class="stat-sub" id="p-best-sym">Verified PnL currency</div></div>
+      <div class="stat-card c-red"><div class="stat-label">Worst Trade</div><div class="stat-value red" id="p-worst">—</div><div class="stat-sub" id="p-worst-sym">Verified PnL currency</div></div>
+      <div class="stat-card c-cyan"><div class="stat-label">Avg Win</div><div class="stat-value cyan" id="p-avgwin">—</div><div class="stat-sub" id="p-avgwin-sub">Verified currency per win</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Avg Loss</div><div class="stat-value amber" id="p-avgloss">—</div><div class="stat-sub" id="p-avgloss-sub">Verified currency per loss</div></div>
     </div>
     <div class="g2">
       <div class="panel">
@@ -1183,7 +1226,7 @@ nav {
       <div class="stat-card c-green"><div class="stat-label">Sharpe Ratio</div><div class="stat-value green" id="q-sharpe">—</div><div class="stat-sub">Annualized</div></div>
       <div class="stat-card c-cyan"><div class="stat-label">Sortino Ratio</div><div class="stat-value cyan" id="q-sortino">—</div><div class="stat-sub">Downside Risk</div></div>
       <div class="stat-card c-purple"><div class="stat-label">Profit Factor</div><div class="stat-value purple" id="q-pf">—</div><div class="stat-sub">Gross Win/Loss</div></div>
-      <div class="stat-card c-amber"><div class="stat-label">Expectancy (E)</div><div class="stat-value amber" id="q-expect">—</div><div class="stat-sub">USDT/trade</div></div>
+      <div class="stat-card c-amber"><div class="stat-label">Expectancy (E)</div><div class="stat-value amber" id="q-expect">—</div><div class="stat-sub" id="q-expect-sub">Verified currency / trade</div></div>
       <div class="stat-card c-red"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="q-maxdd">—</div><div class="stat-sub">Peak to Trough</div></div>
     </div>
 
@@ -1336,12 +1379,7 @@ nav {
     <div class="mon-card" style="margin-bottom:16px;">
       <div class="mon-card-hd">
         <span class="mon-card-title">🔒 Probation Tracker (+10.0% Confidence Premium Required)</span>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <select id="benchCoinSelect" class="fselect" style="max-width:140px;">
-            <option value="">Select Coin...</option>
-          </select>
-          <button onclick="manualBenchCoin()" class="fbtn" style="background:var(--amber2);border-color:var(--amber);color:var(--amber);font-weight:700;">➕ Bench Coin</button>
-        </div>
+        <span class="panel-badge" style="color:var(--text3);border-color:var(--border)">MONITORING ONLY · CHANGES DISABLED</span>
       </div>
       <div style="overflow-x:auto;">
         <table class="htable">
@@ -1352,7 +1390,7 @@ nav {
               <th>Consecutive Losses</th>
               <th>7-Day Cooldown Timer</th>
               <th>Required Threshold</th>
-              <th>Action</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody id="probationTrackerBody">
@@ -1377,7 +1415,7 @@ nav {
               <th>Reason</th>
               <th>Blocked At</th>
               <th>Time Remaining</th>
-              <th>Action</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody id="cooldownTrackerBody">
@@ -1480,37 +1518,7 @@ nav {
 
 </div> <!-- end .main -->
 
-<!-- EMERGENCY KILL SWITCH MODAL -->
-<div class="modal-overlay" id="killModal">
-  <div class="modal-box">
-    <div style="font-size:17px;font-weight:800;color:var(--red);margin-bottom:10px;display:flex;align-items:center;gap:8px;">🚨 EMERGENCY KILL SWITCH</div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:18px;line-height:1.6;">
-      This action will immediately:
-      <ul style="margin-left:18px;margin-top:6px;">
-        <li>Cancel <b>ALL</b> resting SL/TP orders on Deribit.</li>
-        <li>Issue <b>REDUCE-ONLY MARKET ORDERS</b> to flatten all open positions.</li>
-        <li>Clear local state records from <code>trades.json</code>.</li>
-      </ul>
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;">
-      <button onclick="closeKillModal()" class="fbtn">Cancel</button>
-      <button onclick="triggerKillSwitch()" class="btn-kill">CONFIRM FLATTEN ALL</button>
-    </div>
-  </div>
-</div>
-
-<!-- EMAIL DISPATCH MODAL -->
-<div class="modal-overlay" id="emailModal">
-  <div class="modal-box" style="border-color:var(--purple);box-shadow:0 10px 30px rgba(139,92,246,0.25)">
-    <div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px;">✉️ Send Performance Report</div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">Enter the recipient email address to send the filtered execution report.</div>
-    <input type="email" id="emailRecipient" placeholder="e.g. investor@fund.com" style="width:100%;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-size:12px;margin-bottom:16px;outline:none;font-family:var(--sans);">
-    <div style="display:flex;justify-content:flex-end;gap:10px;">
-      <button onclick="closeEmailModal()" class="fbtn">Cancel</button>
-      <button onclick="sendEmailReport()" class="fbtn" style="background:var(--purple);border-color:var(--purple);color:#fff;font-weight:700;">SEND REPORT</button>
-    </div>
-  </div>
-</div>
+<!-- Report email dispatch is disabled in the monitoring-only dashboard. -->
 <script>
 let ALL_COINS = [];
 let COIN_TIERS_MAP = {};
@@ -1603,6 +1611,11 @@ const timeAgo = ts => {
 };
 
 async function apiFetch(path, fallback, opts) {
+  const method = String((opts && opts.method) || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !['/api/download_report_pdf', '/api/download_paper_report_pdf'].includes(path)) {
+    console.warn(`[Monitoring only] Blocked dashboard mutation request: ${method} ${path}`);
+    return fallback;
+  }
   try {
     const r = await fetch(path, opts || { cache: 'no-store' });
     if (r.status === 429) {
@@ -1691,11 +1704,21 @@ function applyDashboardState(d) {
     const wrSub = document.getElementById('statWRSub');
     if (wrSub) wrSub.textContent = (d.status.wins || 0) + ' W / ' + (d.status.losses || 0) + ' L';
 
-    const pnl = d.status.total_pnl || 0;
+    const pnl = d.status.total_pnl;
+    const pnlCurrency = d.status.pnl_currency || null;
     const pnlEl = document.getElementById('statPnl');
+    const pnlSub = document.getElementById('statPnlSub');
     if (pnlEl) {
-      pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
-      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      if (pnl == null || !pnlCurrency || !Number.isFinite(Number(pnl))) {
+        pnlEl.textContent = '—';
+        pnlEl.style.color = 'var(--text3)';
+        if (pnlSub) pnlSub.textContent = 'PnL currency missing or mixed; not aggregated';
+      } else {
+        const value = Number(pnl);
+        pnlEl.textContent = (value >= 0 ? '+' : '') + value.toFixed(4) + ' ' + pnlCurrency;
+        pnlEl.style.color = value >= 0 ? 'var(--green)' : 'var(--red)';
+        if (pnlSub) pnlSub.textContent = 'Currency-verified realised PnL';
+      }
     }
 
     const acc = d.status.model_accuracy || '—';
@@ -1712,10 +1735,23 @@ function applyDashboardState(d) {
   }
 
   if (d.balance) {
-    const usdt = d.balance.usdt != null ? Number(d.balance.usdt).toFixed(2) : '—';
-    document.getElementById('statBalance').textContent = usdt;
-    document.getElementById('topBalance').textContent  = usdt;
-    document.getElementById('balMain').textContent      = usdt;
+    const riskValue = d.balance.risk_equity != null ? Number(d.balance.risk_equity) : NaN;
+    const riskCurrency = d.balance.risk_equity_currency || '';
+    const usdValue = d.balance.usdt != null && d.balance.equity_currency === 'USD'
+      ? Number(d.balance.usdt) : NaN;
+    const hasUsd = Number.isFinite(usdValue);
+    const hasRisk = Number.isFinite(riskValue) && riskValue > 0 && riskCurrency;
+    const equityText = hasUsd
+      ? usdValue.toFixed(2) + ' USD'
+      : (hasRisk ? riskValue.toFixed(4) + ' ' + riskCurrency : '—');
+    ['statBalance','topBalance','balMain'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = equityText;
+    });
+    const sub = document.getElementById('statBalanceSub');
+    if (sub) sub.textContent = hasUsd ? 'Account-wide USD equity' : (hasRisk ? 'Validated risk equity' : 'Equity unavailable');
+    const mainSub = document.getElementById('balMainSub');
+    if (mainSub) mainSub.textContent = hasUsd ? 'Account-wide equity' : (hasRisk ? 'USDC risk equity' : 'Account equity unavailable');
   }
 
   const tradesData = Array.isArray(d.trades) ? d.trades : [];
@@ -1797,30 +1833,12 @@ function renderConfigUI(cfg) {
   }
 }
    
-async function healTradeBracket(symbol) {
-  if (!confirm(`Attach fresh Stop-Loss and Take-Profit brackets to ${symbol} on Deribit?`)) return;
-  try {
-    const r = await apiFetch('/api/trades/heal', { ok: false }, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol })
-    });
-    if (r && r.ok) {
-      alert(`✅ ${symbol} Repaired!\n${r.message}`);
-      await refreshAll();
-    } else {
-      alert(`🚨 Repair Failed: ${r.error || 'Server error'}`);
-    }
-  } catch(e) { alert(`🚨 Error: ${e.message}`); }
-}
-
 async function fetchProbationData() {
   const d = await apiFetch('/api/probation', { ok: false, probated_coins: [] });
   if (d && d.ok) {
     probatedCoinsData = d.probated_coins || [];
     probatedCoinsSet = new Set(probatedCoinsData.map(c => c.symbol));
     renderProbationTracker();
-    populateBenchSelect();
     updateCoinChips();
   }
 }
@@ -1848,62 +1866,13 @@ function renderProbationTracker() {
           BUY ≥${buyConf}% | SELL ≥${sellConf}%
         </span>
       </td>
-      <td><button onclick="releaseProbation('${c.symbol}')" class="fbtn" style="color:var(--green);border-color:var(--green)">🔓 Release</button></td>
+      <td><span class="tag" style="color:var(--text3);border:1px solid var(--border)">Automatic policy only</span></td>
     </tr>
   `}).join('');
 }
 
-function populateBenchSelect() {
-  const sel = document.getElementById('benchCoinSelect');
-  if (!sel || !ALL_COINS.length) return;
-  const eligible = ALL_COINS.filter(c => !probatedCoinsSet.has(c));
-  sel.innerHTML = '<option value="">Select Coin...</option>' +
-    eligible.map(c => `<option value="${c}">${c.replace('USDT','')}</option>`).join('');
-}
-
-async function manualBenchCoin() {
-  const sel = document.getElementById('benchCoinSelect');
-  const symbol = sel ? sel.value : '';
-  if (!symbol) {
-    alert("Please select a coin to place on probation.");
-    return;
-  }
-  if (!confirm(`Place ${symbol} on probation?\n\nEnforces a +10% confidence premium.`)) return;
-  try {
-    const r = await fetch('/api/probation/bench', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol })
-    });
-    const data = await r.json().catch(() => ({}));
-    if (r.ok && data.ok) {
-      await fetchProbationData();
-    } else {
-      alert(`🚨 Bench failed: ${data.error || 'Server error'}`);
-    }
-  } catch(e) {
-    alert(`🚨 Connection error: ${e.message}`);
-  }
-}
-
-async function releaseProbation(symbol) {
-  if (!confirm(`Manually release ${symbol} from probation?`)) return;
-  try {
-    const r = await fetch('/api/probation/release', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol })
-    });
-    const body = await r.json().catch(() => ({}));
-    if (r.ok && body.ok) {
-      await fetchProbationData();
-    } else {
-      alert(`🚨 Release failed: ${body.error || `HTTP ${r.status}`}`);
-    }
-  } catch (e) {
-    alert(`🚨 Connection error: ${e.message}`);
-  }
-}
+// Probation state is displayed for monitoring only in this release. Manual
+// bench/release actions are intentionally absent from the dashboard control plane.
 
 async function fetchCooldownData() {
   const d = await apiFetch('/api/cooldown', { ok: false, cooldowns: [] });
@@ -1930,29 +1899,12 @@ function renderCooldownTracker(cooldowns) {
       <td style="color:var(--text2);font-size:10px;">${c.reason}</td>
       <td style="color:var(--text3);font-size:10px;">${c.blocked_at}</td>
       <td style="color:var(--amber);">${c.time_left_hrs}h remaining</td>
-      <td><button onclick="releaseCooldown('${c.symbol}')" class="fbtn" style="color:var(--green);border-color:var(--green)">🔓 Release</button></td>
+      <td><span class="tag" style="color:var(--text3);border:1px solid var(--border)">Automatic expiry</span></td>
     </tr>
   `).join('');
 }
 
-async function releaseCooldown(symbol) {
-  if (!confirm(`Manually clear the cooldown for ${symbol}?`)) return;
-  try {
-    const r = await fetch('/api/cooldown/release', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol })
-    });
-    const body = await r.json().catch(() => ({}));
-    if (r.ok && body.ok) {
-      await fetchCooldownData();
-    } else {
-      alert(`🚨 Release failed: ${body.error || `HTTP ${r.status}`}`);
-    }
-  } catch (e) {
-    alert(`🚨 Connection error: ${e.message}`);
-  }
-}
+// Cooldown release is intentionally unavailable in the monitoring-only dashboard.
 
 async function fetchStatus() {
   const d = await apiFetch('/api/status', null);
@@ -1992,18 +1944,33 @@ async function fetchStatus() {
 
 async function fetchBalance() {
   const d = await apiFetch('/api/balance', null);
-  if (!d || !d.ok) return;
+  if (!d || !d.ok) {
+    ['statBalance','topBalance','balMain'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent='—'; });
+    return;
+  }
 
-  const usdt = d.usdt != null ? d.usdt.toFixed(2) : '—';
-  document.getElementById('statBalance').textContent = usdt;
-  document.getElementById('topBalance').textContent  = usdt;
-  document.getElementById('balMain').textContent      = usdt;
+  const usdValue = d.usdt != null && d.equity_currency === 'USD'
+    ? Number(d.usdt) : NaN;
+  const nativeValue = d.native_equity != null ? Number(d.native_equity) : NaN;
+  const equityCurrency = Number.isFinite(usdValue) ? 'USD' : (d.native_equity_currency || '');
+  const equityValue = Number.isFinite(usdValue) ? usdValue : nativeValue;
+  const equityText = Number.isFinite(equityValue) && equityCurrency
+    ? equityValue.toFixed(4) + ' ' + equityCurrency : '—';
+  ['statBalance','topBalance','balMain'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = equityText;
+  });
+  const sub = document.getElementById('statBalanceSub');
+  if (sub) sub.textContent = Number.isFinite(usdValue) ? 'Account-wide USD equity' : (Number.isFinite(nativeValue) ? 'Native account equity' : 'Equity unavailable');
+  const mainSub = document.getElementById('balMainSub');
+  if (mainSub) mainSub.textContent = Number.isFinite(usdValue) ? 'Account-wide equity' : (Number.isFinite(nativeValue) ? 'Native account equity' : 'Account equity unavailable');
 
   if (d.assets && d.assets.length) {
     const validAssets = d.assets.filter(a => parseFloat(a.total||a.free||0) > 0);
     const html = validAssets.map(a => {
       const val = parseFloat(a.total||0);
-      const valStr = val > 0 ? "$"+val.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}) : Number(a.free).toFixed(6);
+      const unit = a.unit || a.asset || "";
+      const valStr = val > 0 ? val.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:6}) + " " + unit : Number(a.free).toFixed(6) + " " + unit;
       return `<div class="bal-row"><span style="color:var(--text3)">${a.asset}</span><span style="color:var(--cyan)">${valStr}</span></div>`;
     }).join('');
     const el = document.getElementById('balAssets');
@@ -2011,9 +1978,84 @@ async function fetchBalance() {
   }
 }
 
+async function applyDashboardMode() {
+  const scan = document.getElementById('scanBtn');
+  const kill = document.querySelector('.btn-kill');
+  // Keep execution controls hidden while deployment mode is unresolved.
+  if (scan) { scan.disabled = true; scan.style.display = 'none'; }
+  if (kill) kill.style.display = 'none';
+  let readOnly = true; // Fail closed if the mode cannot be verified.
+  try {
+    const mode = await apiFetch('/api/dashboard/mode', null);
+    readOnly = !(mode && mode.ok === true && mode.read_only === false);
+  } catch (e) {
+    readOnly = true;
+  }
+  if (scan) { scan.disabled = readOnly; scan.style.display = readOnly ? 'none' : ''; }
+  if (kill) kill.style.display = readOnly ? 'none' : '';
+  document.documentElement.dataset.dashboardReadOnly = readOnly ? 'true' : 'false';
+}
+
+async function fetchTestnetOverview() {
+  const d = await apiFetch('/api/testnet/overview', null);
+  const setText = (id, value) => { const el=document.getElementById(id); if(el) el.textContent=value; };
+  const positionsEl = document.getElementById('tn-positions');
+  const fillsEl = document.getElementById('tn-fills');
+  if (!d || !d.ok) {
+    setText('tn-connection', 'UNVERIFIED');
+    setText('tn-host', '—'); setText('tn-equity', '—');
+    setText('tn-position-count', '—'); setText('tn-fill-count', '—');
+    setText('tn-status-message', 'Testnet private API is unavailable. Position state is unknown, not flat. Check read-only credentials and the exchange connection.');
+    if (positionsEl) positionsEl.innerHTML = '<tr><td colspan="7" style="padding:12px;color:var(--amber)">Exchange snapshot unavailable — not a flat-account confirmation.</td></tr>';
+    if (fillsEl) fillsEl.innerHTML = '<tr><td colspan="7" style="padding:12px;color:var(--text3)">Exchange fills unavailable.</td></tr>';
+    return;
+  }
+
+  setText('tn-connection', d.connection || 'UNVERIFIED');
+  setText('tn-host', d.verified_host || '—');
+  setText('tn-equity', d.account_equity_usd != null ? '$' + Number(d.account_equity_usd).toFixed(2) : (d.account_equity_native != null ? Number(d.account_equity_native).toFixed(4) + ' ' + (d.account_equity_currency || 'native') : 'â€”'));
+  setText('tn-position-count', String((d.positions || []).length));
+  setText('tn-fill-count', String((d.fills || []).length));
+  const scope = (d.fills_scope_symbols || []).join(', ');
+  setText('tn-fill-scope', scope ? `Symbols: ${scope}` : 'No recent symbols selected');
+  const fillState = d.fills_complete_for_scope ? 'fill queries complete for selected symbols' : 'some fill queries failed; see logs';
+  const orderState = (d.order_query_errors || []).length ? `${d.order_query_errors.length} stop-order queries failed` : `${d.order_checks_completed || 0}/${d.order_check_scope_limit || 4} stop-order presence checks`;
+  setText('tn-status-message', `Authenticated Testnet snapshot · ${fillState} · ${orderState} · stop presence is not quantity-coverage proof.`);
+  setText('tn-updated', `Last checked: ${d.checked_at || '—'}`);
+
+  if (positionsEl) {
+    const positions = Array.isArray(d.positions) ? d.positions : [];
+    positionsEl.innerHTML = positions.length ? positions.map(p => `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:8px">${paperEsc(p.instrument_name || p.symbol)}</td>
+      <td>${paperEsc(String(p.direction || '—').toUpperCase())}</td>
+      <td>${paperEsc(p.quantity == null ? '—' : Number(p.quantity).toPrecision(6))}</td>
+      <td>${paperEsc(p.average_price == null ? '—' : Number(p.average_price).toFixed(4))}</td>
+      <td>${paperEsc(p.mark_price == null ? '—' : Number(p.mark_price).toFixed(4))}</td>
+      <td>${paperEsc(p.unrealized_pnl_usd == null ? '—' : '$' + Number(p.unrealized_pnl_usd).toFixed(4))}</td>
+      <td>${paperEsc(p.stop_status || 'UNKNOWN')}</td>
+    </tr>`).join('') : '<tr><td colspan="7" style="padding:12px;color:var(--text3)">No open positions in the verified exchange snapshot.</td></tr>';
+  }
+
+  if (fillsEl) {
+    const fills = Array.isArray(d.fills) ? d.fills : [];
+    fillsEl.innerHTML = fills.length ? fills.map(f => `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:8px">${paperEsc(f.timestamp_utc || '—')}</td>
+      <td>${paperEsc(f.symbol || '—')}</td>
+      <td>${paperEsc(String(f.direction || '—').toUpperCase())}</td>
+      <td>${paperEsc(f.amount == null ? '—' : f.amount)}</td>
+      <td>${paperEsc(f.price == null ? '—' : Number(f.price).toFixed(6))}</td>
+      <td>${paperEsc(f.fee == null ? '—' : `${f.fee} ${f.fee_currency || ''}`)}</td>
+      <td>${paperEsc(f.order_id || '—')}</td>
+    </tr>`).join('') : '<tr><td colspan="7" style="padding:12px;color:var(--text3)">No exchange fills returned for the selected symbols.</td></tr>';
+  }
+
+}
+
+
 async function fetchOpenTrades() {
-  const data = await apiFetch('/api/trades/open', []);
-  const tradesArray = Array.isArray(data) ? data : [];
+  const data = await apiFetch('/api/trades/open', null);
+  const snapshotAvailable = Array.isArray(data);
+  const tradesArray = snapshotAvailable ? data : [];
   allTrades = {};
   tradesArray.forEach(t => { if (t && t.symbol) allTrades[t.symbol] = t; });
 
@@ -2027,8 +2069,10 @@ async function fetchOpenTrades() {
   const badge = document.getElementById('openBadge');
   if (badge) badge.textContent = count + ' active';
 
-  const html = tradesArray.length ? tradesArray.map(t => renderTradeCard(t)).join('') :
-    '<div class="empty" style="text-align:center;padding:40px;color:var(--text3);"><div style="font-size:36px;margin-bottom:10px;">📭</div><div>No open trades.<br><small>Bot scans every 15 min.</small></div></div>';
+  const html = !snapshotAvailable ?
+    '<div class="empty" style="text-align:center;padding:28px;color:var(--amber);">Exchange position snapshot unavailable. Account state is unverified; this is not confirmation that the account is flat.</div>' :
+    (tradesArray.length ? tradesArray.map(t => renderTradeCard(t)).join('') :
+    '<div class="empty" style="text-align:center;padding:40px;color:var(--text3);"><div style="font-size:36px;margin-bottom:10px;">📭</div><div>No open exchange positions in the verified snapshot.</div></div>');
 
   ['openTradesBody','openTradesFullBody'].forEach(id => {
     const el = document.getElementById(id);
@@ -2381,7 +2425,7 @@ function renderTradeCard(t) {
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
       <span style="font-family:var(--mono);font-size:10px;color:var(--text3);">AI ${t.confidence||0}% · Score ${t.score||0}/6</span>
-      <button class="btn-close-trade" onclick="closeTrade('${t.symbol}')">✕ Close</button>
+      <span class="monitoring-action-disabled">Close via approved control plane only</span>
     </div>
   </div>`;
 }
@@ -2399,7 +2443,7 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
       <div style="height:6px;background:rgba(244,63,94,0.15);border-radius:3px;border:1px dashed var(--red)"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
         <span style="font-size:10px;color:var(--red);font-weight:700">⚠️ SL/TP Missing on Deribit</span>
-        <button onclick="healTradeBracket('${t.symbol}')" class="fbtn" style="border-color:var(--blue);color:var(--blue);padding:3px 8px;font-size:10px;">🛡️ Attach SL/TP</button>
+        <span class="monitoring-action-disabled">Manual repair disabled in monitoring view</span>
       </div>
     </div>`;
   }
@@ -2486,37 +2530,6 @@ function buildTradeProgress(t, isBuy, pnl, sigCol) {
   </div>`;
 }
 
-async function closeTrade(symbol) {
-  if (!confirm(`🚨 Completely close ${symbol}?`)) return;
-
-  const buttons = document.querySelectorAll('.btn-close-trade');
-  buttons.forEach(b => {
-    if (b.getAttribute('onclick')?.includes(symbol)) {
-      b.disabled = true;
-      b.textContent = '⏳ Closing...';
-    }
-  });
-
-  try {
-    const r = await apiFetch('/api/close_trade', { ok: false }, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol })
-    });
-
-    if (r && (r.ok || r.status === 'closed')) {
-      alert(`✅ ${symbol} Closed!`);
-      refreshAll();
-    } else {
-      alert('🚨 Close Failed: ' + (r?.error || r?.message || 'Server error'));
-      refreshAll();
-    }
-  } catch (err) {
-    alert('🚨 Connection Error: ' + err.message);
-    refreshAll();
-  }
-}
-
 async function fetchIntel() {  
   const [preds, dossier, proposals] = await Promise.all([    
     apiFetch('/api/predictions', {}),    
@@ -2560,48 +2573,14 @@ async function fetchIntel() {
         <span style="font-size:10px;color:var(--text3);font-family:var(--mono);">${p.occurrences} occurrences</span>      
       </div>      
       <div style="font-size:12px;color:var(--text2);margin:8px 0">${p.suggested_change}</div>      
-      <div style="display:flex;gap:10px;justify-content:flex-end">        
-        <button class="fbtn" style="border-color:var(--red);color:var(--red)" onclick="rejectProposal('${p.id}', this)">✕ Reject</button>
-        <button class="fbtn" style="border-color:var(--green);color:var(--green)" onclick="approveProposal('${p.id}', this)">✓ Approve</button>      
-      </div>    
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <span class="tag" style="color:var(--text3);border:1px solid var(--border)">Offline review required · no dashboard mutation</span>
+      </div>
     </div>`).join('') : '<div class="empty"><div class="emsg">No pending proposals</div></div>';
 }
 
-async function approveProposal(id, btn) {
-  if (!confirm('Approve this adaptation?')) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Applying...'; }
-  try {
-    const res = await fetch(`/api/adaptation_proposals/${id}/approve`, { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.ok) {
-      await fetchIntel();
-    } else {
-      alert(`🚨 Approval Failed: ${data.error || `HTTP ${res.status}`}`);
-      if (btn) { btn.disabled = false; btn.textContent = '✓ Approve'; }
-    }
-  } catch (err) {
-    alert(`🚨 Connection Error: ${err.message}`);
-    if (btn) { btn.disabled = false; btn.textContent = '✓ Approve'; }
-  }
-}
-
-async function rejectProposal(id, btn) {
-  if (!confirm('Reject and dismiss this adaptation proposal?')) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rejecting...'; }
-  try {
-    const res = await fetch(`/api/adaptation_proposals/${id}/reject`, { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.ok) {
-      await fetchIntel();
-    } else {
-      alert(`🚨 Rejection Failed: ${data.error || `HTTP ${res.status}`}`);
-      if (btn) { btn.disabled = false; btn.textContent = '✕ Reject'; }
-    }
-  } catch (err) {
-    alert(`🚨 Connection Error: ${err.message}`);
-    if (btn) { btn.disabled = false; btn.textContent = '✕ Reject'; }
-  }
-}
+// Adaptation proposals are informational only here. Approval/rejection must be
+// handled through the separately reviewed configuration-change workflow.
 
 async function fetchSignals() {
   const data = await apiFetch('/api/signals', []);
@@ -2826,7 +2805,10 @@ function renderHistoryFiltered() {
   const loss  = real.filter(t => !isWin(t));
   const total = real.length;
   const wr    = total ? (wins.length / total * 100).toFixed(1) : 0;
-  const tpnl  = real.reduce((s,t) => s + (parseFloat(t.pnl || 0)), 0);
+  const pnlCurrencies = [...new Set(real.map(t => String(t.pnl_currency || '').toUpperCase()))];
+  const pnlCurrencyValid = real.length === 0 || (pnlCurrencies.length === 1 && !!pnlCurrencies[0]);
+  const pnlCurrency = pnlCurrencyValid ? (pnlCurrencies[0] || 'USDC') : null;
+  const tpnl = pnlCurrencyValid ? real.reduce((s,t) => s + (parseFloat(t.pnl || 0)), 0) : null;
 
   const el_t = document.getElementById('h-total');   if(el_t) el_t.textContent = total;
   const el_w = document.getElementById('h-wins');    if(el_w) el_w.textContent = wins.length;
@@ -2834,7 +2816,12 @@ function renderHistoryFiltered() {
   const el_wr= document.getElementById('h-wr');
   if(el_wr) { el_wr.textContent = wr ? (wr+'%') : '—'; el_wr.className = 'stat-value '+(parseFloat(wr)>=60?'green':parseFloat(wr)>=40?'amber':'red'); }
   const el_p = document.getElementById('h-pnl');
-  if(el_p) { el_p.textContent = (tpnl>0?'+':'')+tpnl.toFixed(4); el_p.style.color = tpnl>=0?'var(--green)':'var(--red)'; }
+  if(el_p) {
+    el_p.textContent = tpnl == null ? '—' : ((tpnl>0?'+':'')+tpnl.toFixed(4)+' '+pnlCurrency);
+    el_p.style.color = tpnl == null ? 'var(--text3)' : (tpnl>=0?'var(--green)':'var(--red)');
+  }
+  const histPnlSub = document.getElementById('h-pnl-sub');
+  if (histPnlSub) histPnlSub.textContent = pnlCurrencyValid ? ('Currency: '+pnlCurrency) : 'Mixed or missing currency; not aggregated';
 
   const histBadge = document.getElementById('histBadge');
   if (histBadge) histBadge.textContent = total + ' trades';
@@ -2858,7 +2845,7 @@ function renderHistoryFiltered() {
       <td><span class="tag ${t.signal==='BUY'?'buy':'sell'}">${t.signal||'—'}</span></td>
       <td style="color:var(--blue)">${fp(t.entry,dec)}</td>
       <td>${fp(t.close_price,dec)}</td>
-      <td style="color:${win?'var(--green)':'var(--red)'};font-weight:700">${(parseFloat(t.pnl || 0)>0?'+':'')}${(parseFloat(t.pnl || 0)).toFixed(4)}</td>
+      <td style="color:${win?'var(--green)':'var(--red)'};font-weight:700">${(parseFloat(t.pnl || 0)>0?'+':'')}${(parseFloat(t.pnl || 0)).toFixed(4)} ${t.pnl_currency || 'currency unverified'}</td>
       <td><span class="tag ${win?'win':'loss'}">${win?'WIN':'LOSS'}</span></td>
       <td style="color:var(--text3)">${t.opened_at?new Date(t.opened_at).toLocaleDateString():' —'}</td>
       <td style="color:var(--text3)">${dur}</td>
@@ -2874,6 +2861,11 @@ function renderPerfBars(trades) {
     container.innerHTML = '<div class="empty"><div class="emsg">No closed trades yet</div></div>';
     return;
   }
+  const units = [...new Set(trades.map(t => String(t.pnl_currency || '').toUpperCase()))];
+  if (units.length !== 1 || !units[0]) {
+    container.innerHTML = '<div class="empty"><div class="emsg">Mixed or unverified PnL currencies — magnitude chart unavailable</div></div>';
+    return;
+  }
 
   const recent = trades.slice(-40);
   const maxPnl = Math.max(...recent.map(t => Math.abs(parseFloat(t.pnl || 0))), 1);
@@ -2882,7 +2874,7 @@ function renderPerfBars(trades) {
     const pnl = parseFloat(t.pnl || 0);
     const isWin = pnl >= 0;
     const heightPct = Math.max(8, Math.min(100, Math.round((Math.abs(pnl) / maxPnl) * 100)));
-    const tooltip = `${t.symbol}: ${isWin ? '+' : ''}$${pnl.toFixed(2)} USDT (${t.close_reason || 'Closed'})`;
+    const tooltip = `${t.symbol}: ${isWin ? '+' : ''}${pnl.toFixed(2)} ${t.pnl_currency || 'currency unverified'} (${t.close_reason || 'Closed'})`;
 
     return `<div class="perf-bar ${isWin ? 'win' : 'loss'}" 
                  style="height:${heightPct}%; cursor:pointer;" 
@@ -2929,19 +2921,27 @@ async function fetchHistory() {
   const isWin = t => (parseFloat(t.pnl || 0)) > 0 || ['TP1','TP2','WIN'].some(k => (t.close_reason || '').includes(k));
   const wins  = real.filter(t => isWin(t));
   const loss  = real.filter(t => !isWin(t));
-  const avgW  = wins.length  ? wins.reduce((s,t)=>s+(parseFloat(t.pnl || 0)),0)/wins.length  : 0;
-  const avgL  = loss.length  ? loss.reduce((s,t)=>s+(parseFloat(t.pnl || 0)),0)/loss.length  : 0;
-  const best  = real.length  ? real.reduce((a,b) => (parseFloat(a.pnl || 0)) > (parseFloat(b.pnl || 0)) ? a : b) : null;
-  const worst = real.length  ? real.reduce((a,b) => (parseFloat(a.pnl || 0)) < (parseFloat(b.pnl || 0)) ? a : b) : null;
+  const historyCurrencies = [...new Set(real.map(t => String(t.pnl_currency || '').toUpperCase()))];
+  const historyPnlValid = real.length === 0 || (historyCurrencies.length === 1 && !!historyCurrencies[0]);
+  const historyCurrency = historyPnlValid ? (historyCurrencies[0] || 'USDC') : null;
+  const avgW  = historyPnlValid && wins.length ? wins.reduce((s,t)=>s+(parseFloat(t.pnl || 0)),0)/wins.length : null;
+  const avgL  = historyPnlValid && loss.length ? loss.reduce((s,t)=>s+(parseFloat(t.pnl || 0)),0)/loss.length : null;
+  const best  = historyPnlValid && real.length ? real.reduce((a,b) => (parseFloat(a.pnl || 0)) > (parseFloat(b.pnl || 0)) ? a : b) : null;
+  const worst = historyPnlValid && real.length ? real.reduce((a,b) => (parseFloat(a.pnl || 0)) < (parseFloat(b.pnl || 0)) ? a : b) : null;
+
+  ['p-best-sym','p-worst-sym','p-avgwin-sub','p-avgloss-sub'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = historyPnlValid ? ('Currency: '+historyCurrency) : 'Mixed or missing currency; not aggregated';
+  });
 
   ['p-best','p-worst','p-avgwin','p-avgloss'].forEach((id,i) => {
     const el = document.getElementById(id);
     if (!el) return;
     const vals = [
-      best  ? ((parseFloat(best.pnl || 0))>0?'+':'')+(parseFloat(best.pnl || 0)).toFixed(4) : '—',
-      worst ? ((parseFloat(worst.pnl || 0))>0?'+':'')+(parseFloat(worst.pnl || 0)).toFixed(4) : '—',
-      avgW  ? '+'+avgW.toFixed(4) : '—',
-      avgL  ? avgL.toFixed(4)     : '—',
+      best  ? (((parseFloat(best.pnl || 0))>0?'+':'')+(parseFloat(best.pnl || 0)).toFixed(4)+' '+historyCurrency) : '—',
+      worst ? (((parseFloat(worst.pnl || 0))>0?'+':'')+(parseFloat(worst.pnl || 0)).toFixed(4)+' '+historyCurrency) : '—',
+      avgW  != null ? '+'+avgW.toFixed(4)+' '+historyCurrency : '—',
+      avgL  != null ? avgL.toFixed(4)+' '+historyCurrency : '—',
     ];
     el.textContent = vals[i];
   });
@@ -2962,16 +2962,19 @@ function renderCoinPerformance(realTrades) {
     const total   = cTrades.length;
     const wins    = cTrades.filter(isWin).length;
     const losses  = total - wins;
-    const pnl     = cTrades.reduce((s,t) => s + (parseFloat(t.pnl || 0)), 0);
+    const currencies = [...new Set(cTrades.map(t => String(t.pnl_currency || '').toUpperCase()))];
+    const pnlValid = !total || (currencies.length === 1 && !!currencies[0]);
+    const pnl      = pnlValid ? cTrades.reduce((s,t) => s + (parseFloat(t.pnl || 0)), 0) : null;
+    const pnlCurrency = pnlValid ? (currencies[0] || 'USDC') : null;
     const wr      = total ? (wins / total * 100).toFixed(0) : null;
     const wrColor = wr == null ? 'var(--text3)' : wr >= 60 ? 'var(--green)' : wr >= 40 ? 'var(--amber)' : 'var(--red)';
-    const pnlColor= pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)';
+    const pnlColor= pnl == null ? 'var(--text3)' : pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text3)';
 
     return `
       <div class="coin-perf-card">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <span class="coin-perf-sym">${coin.replace('USDT','')}</span>
-          <span style="font-family:var(--mono);font-size:10px;color:${pnlColor};font-weight:700;">${pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '$0'}</span>
+          <span style="font-family:var(--mono);font-size:10px;color:${pnlColor};font-weight:700;">${pnl == null ? '—' : ((pnl !== 0 ? (pnl>0?'+':'') + pnl.toFixed(2) : '0.00') + ' ' + pnlCurrency)}</span>
         </div>
         <div class="coin-perf-wr" style="color:${wrColor}">${wr != null ? wr + '%' : '—'}</div>
         <div class="coin-perf-sub">${total > 0 ? `${wins}W / ${losses}L` : 'No trades'}</div>
@@ -3082,8 +3085,10 @@ async function fetchAnalytics() {
   document.getElementById('q-sharpe').textContent = d.sharpe_ratio != null ? d.sharpe_ratio : '—';
   document.getElementById('q-sortino').textContent = d.sortino_ratio != null ? d.sortino_ratio : '—';
   document.getElementById('q-pf').textContent = d.profit_factor != null ? d.profit_factor : '—';
-  document.getElementById('q-expect').textContent = d.expectancy_usdt != null ? (d.expectancy_usdt >= 0 ? '+$' : '-$') + Math.abs(d.expectancy_usdt).toFixed(2) : '—';
-  document.getElementById('q-maxdd').textContent = d.max_drawdown_usdt != null ? '-$' + d.max_drawdown_usdt.toFixed(2) : '—';
+  document.getElementById('q-expect').textContent = d.expectancy != null && d.pnl_currency ? (d.expectancy >= 0 ? '+' : '-') + Math.abs(d.expectancy).toFixed(2) + ' ' + d.pnl_currency : '—';
+  document.getElementById('q-maxdd').textContent = d.max_drawdown != null && d.pnl_currency ? '-' + d.max_drawdown.toFixed(2) + ' ' + d.pnl_currency : '—';
+  const expectSub = document.getElementById('q-expect-sub');
+  if (expectSub) expectSub.textContent = d.pnl_metrics_available ? ('Currency: '+d.pnl_currency+' / trade') : 'PnL currency mixed or unverified';
 
   renderEquityChart(d.equity_curve || []);
   renderDailyPnlChart(d.daily_pnl || []);
@@ -3093,14 +3098,16 @@ async function fetchExecutionData() {
   const d = await apiFetch('/api/execution', null);
   if (!d || !d.ok) return;
 
-  document.getElementById('ex-slip').textContent = `${d.avg_slippage_pct}%`;
-  document.getElementById('ex-fees').textContent = `-$${d.total_fees}`;
-  document.getElementById('ex-vol').textContent = `$${(d.total_volume_traded_usd / 1000).toFixed(1)}k`;
-  document.getElementById('ex-dur').textContent = `${d.avg_duration_h}h`;
+  const fmt = (value, digits=2) => Number.isFinite(Number(value)) && value !== null ? Number(value).toFixed(digits) : 'N/A';
+  document.getElementById('ex-slip').textContent = d.avg_slippage_pct == null ? 'N/A' : `${fmt(d.avg_slippage_pct, 4)}%`;
+  document.getElementById('ex-fees').textContent = d.total_fees == null ? 'N/A' : `-$${fmt(d.total_fees)}`;
+  document.getElementById('ex-vol').textContent = d.total_volume_traded_usd == null ? 'N/A' : `$${(Number(d.total_volume_traded_usd) / 1000).toFixed(1)}k`;
+  document.getElementById('ex-dur').textContent = d.avg_duration_h == null ? 'N/A' : `${fmt(d.avg_duration_h, 2)}h`;
 
-  document.getElementById('ex-gross').textContent = `${d.gross_pnl >= 0 ? '+' : ''}$${d.gross_pnl.toFixed(2)} USDT`;
-  document.getElementById('ex-fees-sub').textContent = `-$${d.total_fees.toFixed(2)} USDT`;
-  document.getElementById('ex-net').textContent = `${d.net_pnl >= 0 ? '+' : ''}$${d.net_pnl.toFixed(2)} USDT`;
+  const pnlUnit = d.pnl_currency || 'currency unverified';
+  document.getElementById('ex-gross').textContent = d.gross_pnl == null ? 'N/A — mixed/unverified currency' : `${Number(d.gross_pnl) >= 0 ? '+' : ''}${fmt(d.gross_pnl)} ${pnlUnit}`;
+  document.getElementById('ex-fees-sub').textContent = d.total_fees == null ? 'Fees not measured in PnL currency' : `-${fmt(d.total_fees)} ${d.fee_currency || 'currency unverified'}`;
+  document.getElementById('ex-net').textContent = d.net_pnl == null ? 'N/A — matching measured fees required' : `${Number(d.net_pnl) >= 0 ? '+' : ''}${fmt(d.net_pnl)} ${pnlUnit}`;
 }
 
 async function fetchModelHealth() {
@@ -3152,7 +3159,7 @@ function renderEquityChart(points) {
     data: {
       labels: allEquityPoints.map(p => p.time),
       datasets: [{
-        label: 'Equity (USDT)',
+        label: `Equity (${allEquityPoints[0]?.currency || 'currency unverified'})`,
         data: allEquityPoints.map(p => p.equity),
         borderColor: '#10b981',
         borderWidth: 2.5,
@@ -3180,7 +3187,7 @@ function renderEquityChart(points) {
           bodyColor: '#10b981',
           borderColor: isLight ? '#e2e8f0' : '#1e293b',
           borderWidth: 1, padding: 10, displayColors: false,
-          callbacks: { label: (ctx) => ` Equity: $${Number(ctx.raw).toLocaleString('en', {minimumFractionDigits: 2})}` }
+          callbacks: { label: (ctx) => ` Equity: ${Number(ctx.raw).toLocaleString('en', {minimumFractionDigits: 2})} ${allEquityPoints[ctx.dataIndex]?.currency || 'currency unverified'}` }
         }
       },
       scales: {
@@ -3224,7 +3231,7 @@ function renderDailyPnlChart(dailyPoints) {
           backgroundColor: isLight ? '#ffffff' : '#0d131f',
           borderColor: isLight ? '#e2e8f0' : '#1e293b',
           borderWidth: 1, padding: 10, displayColors: false,
-          callbacks: { label: (ctx) => ` PnL: ${ctx.raw >= 0 ? '+' : ''}$${Number(ctx.raw).toFixed(2)} USDT` }
+          callbacks: { label: (ctx) => ` PnL: ${ctx.raw >= 0 ? '+' : ''}${Number(ctx.raw).toFixed(2)} ${allDailyPnlPoints[ctx.dataIndex]?.currency || 'currency unverified'}` }
         }
       },
       scales: {
@@ -3236,9 +3243,15 @@ function renderDailyPnlChart(dailyPoints) {
 }
 
 function renderDynamicCalibrationChart(calData) {
-  const ctx = document.getElementById('calibrationChart')?.getContext('2d');
+  const canvas = document.getElementById('calibrationChart');
+  const ctx = canvas?.getContext('2d');
   if (!ctx) return;
-  if (calibrationChartInst) calibrationChartInst.destroy();
+  if (calibrationChartInst) { calibrationChartInst.destroy(); calibrationChartInst = null; }
+  if (!calData || !Array.isArray(calData.labels) || !Array.isArray(calData.target) || !Array.isArray(calData.live) ||
+      calData.labels.length !== calData.target.length || calData.labels.length !== calData.live.length) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
 
   const isLight = document.body.classList.contains('light-theme');
   const labelColor = isLight ? '#64748b' : '#94a3b8';
@@ -3283,53 +3296,6 @@ async function fetchLog() {
                : line.includes('WARNING')||line.includes('⚠️') ? 'wrn' : '';
     return `<div class="log-line ${cls}">${line}</div>`;
   }).join('');
-}
-
-async function triggerScan() {
-  const btn = document.getElementById('scanBtn');
-  if (scanRunning) return;
-  scanRunning = true;
-  btn.textContent = '⏳ Scanning...';
-  btn.disabled    = true;
-  try {
-    const r = await apiFetch('/api/scan', {ok:false}, {method:'POST'});
-    if (r && (r.ok || r.status === 'triggered')) {
-      btn.textContent = '✓ Triggered';
-      let pollCount = 0;
-      const logInterval = setInterval(async () => {
-        await fetchLog();
-        pollCount++;
-        if (pollCount >= 20) clearInterval(logInterval);
-      }, 2000);
-      setTimeout(() => { btn.textContent='▶ Scan'; btn.disabled=false; scanRunning=false; }, 4000);
-    } else {
-      btn.textContent = '✗ Failed';
-      setTimeout(() => { btn.textContent='▶ Scan'; btn.disabled=false; scanRunning=false; }, 2000);
-    }
-  } catch(e) {
-    btn.textContent = '✗ Failed';
-    btn.disabled    = false;
-    scanRunning     = false;
-  }
-}
-
-function openKillModal() { document.getElementById('killModal').classList.add('active'); }
-function closeKillModal() { document.getElementById('killModal').classList.remove('active'); }
-
-async function triggerKillSwitch() {
-  closeKillModal();
-  const btn = document.querySelector('.btn-kill');
-  btn.textContent = '⏳ FLATTENING...';
-  try {
-    const r = await apiFetch('/api/kill_switch', {ok:false}, {method:'POST'});
-    if (r && r.ok) {
-      alert(`✅ Kill Switch Success!\nCancelled: ${r.cancelled_orders} orders\nFlattened: ${r.flattened_positions} positions`);
-      refreshAll();
-    } else {
-      alert('🚨 Kill Switch Failed: ' + (r.error || 'Unknown Error'));
-    }
-  } catch(e) { alert('🚨 Execution Failed: ' + e.message); }
-  finally { btn.textContent = '🚨 Kill Switch'; }
 }
 
 function buildCoinChips() {
@@ -3427,7 +3393,10 @@ async function runMonitorChecks() {
   const info = (dot, val, text, warn) => { sd(dot, warn?'warn':'idle'); sv(val, text, warn?'var(--amber)':'var(--text3)'); };
 
   mark('d-conn','v-conn', ex.ok, ex.ok ? 'Connected' : ex.msg);
-  mark('d-bal','v-bal', !!ex.balance, ex.balance ? '$'+Number(ex.balance).toFixed(2) : 'Unavailable');
+  const monitorEquity = ex.balance != null ? Number(ex.balance) : Number(ex.risk_equity);
+  const monitorCurrency = ex.balance != null ? (ex.balance_currency || 'USD') : (ex.risk_equity_currency || '');
+  const monitorEquityValid = Number.isFinite(monitorEquity) && monitorEquity > 0 && !!monitorCurrency;
+  mark('d-bal','v-bal', monitorEquityValid, monitorEquityValid ? monitorEquity.toFixed(4)+' '+monitorCurrency : 'Unavailable');
   mark('d-binance','v-binance', mk.ok, mk.ok ? 'Online' : (mk.error||'Unreachable'));
   mark('d-btcpx','v-btcpx', !!mk.btc_price, mk.btc_price ? '$'+mk.btc_price.toLocaleString() : '—');
   mark('d-latency','v-latency', mk.latency_ms < 2000, mk.latency_ms+'ms');
@@ -3483,9 +3452,9 @@ function downloadCSVReport() {
   const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
   if (!data.length) { alert("No trades match your active filter!"); return; }
 
-  let csv = '#,Date_UTC,Symbol,Signal,Entry,Close,Qty,PnL_USDT,Close_Reason\n';
+  let csv = '#,Date_UTC,Symbol,Signal,Entry,Close,Qty,PnL,PnL_Currency,Close_Reason\n';
   data.forEach((t, idx) => {
-    csv += `${idx + 1},"${t.closed_at || t.opened_at || ''}","${t.symbol}","${t.signal || ''}",${t.entry || 0},${t.close_price || t.entry || 0},${t.qty || 0},${t.pnl || 0},"${t.close_reason || ''}"\n`;
+    csv += `${idx + 1},"${t.closed_at || t.opened_at || ''}","${t.symbol}","${t.signal || ''}",${t.entry || 0},${t.close_price || t.entry || 0},${t.qty || 0},${t.pnl || 0},"${t.pnl_currency || 'UNVERIFIED'}","${t.close_reason || ''}"\n`;
   });
 
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -3498,9 +3467,12 @@ function downloadCSVReport() {
 
 function buildReportPayload() {
   const data = getHistFiltered().filter(t => t.signal !== 'RECOVERED');
+  const reportCurrencies = [...new Set(data.map(t => String(t.pnl_currency || '').toUpperCase()))];
+  const reportPnlValid = data.length === 0 || (reportCurrencies.length === 1 && !!reportCurrencies[0]);
+  const reportPnlCurrency = reportPnlValid ? (reportCurrencies[0] || 'USDC') : null;
   let wins = 0, losses = 0, netPnL = 0, maxWin = 0, maxLoss = 0, grossP = 0, grossL = 0;
 
-  data.forEach(t => {
+  if (reportPnlValid) data.forEach(t => {
     const pnl = parseFloat(t.pnl || 0);
     netPnL += pnl;
     if (pnl > 0) { wins++; grossP += pnl; if (pnl > maxWin) maxWin = pnl; }
@@ -3513,8 +3485,12 @@ function buildReportPayload() {
 
   const summary = {
     total_trades: total, wins, losses, win_rate: winRate,
-    net_pnl: netPnL.toFixed(2), profit_factor: profitFactor,
-    max_win: maxWin.toFixed(2), max_loss: maxLoss.toFixed(2)
+    net_pnl: reportPnlValid ? netPnL.toFixed(2) : null,
+    pnl_currency: reportPnlCurrency,
+    pnl_aggregation_available: reportPnlValid,
+    profit_factor: reportPnlValid ? profitFactor : null,
+    max_win: reportPnlValid ? maxWin.toFixed(2) : null,
+    max_loss: reportPnlValid ? maxLoss.toFixed(2) : null
   };
 
   const sortVal = document.getElementById('histSortPick')?.value || 'all';
@@ -3564,50 +3540,7 @@ async function printPDFReport() {
   }
 }
 
-function openEmailModal() { 
-  const input = document.getElementById('emailRecipient');
-  if (input) input.value = '';
-  document.getElementById('emailModal').classList.add('active'); 
-}
-
-function closeEmailModal() { 
-  document.getElementById('emailModal').classList.remove('active'); 
-}
-
-const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-
-async function sendEmailReport() {
-  const emailInput = document.getElementById('emailRecipient');
-  const email = emailInput.value.trim();
-
-  if (!email || !EMAIL_REGEX.test(email)) {
-    alert("⚠️ Invalid email format!\nPlease enter a complete email address.");
-    emailInput.focus();
-    return;
-  }
-
-  const payload = { email, ...buildReportPayload() };
-  closeEmailModal();
-
-  try {
-    const r = await fetch('/api/send_report', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const body = await r.json().catch(() => ({}));
-
-    if (r.ok && body.ok) {
-      alert(`✅ Performance Report sent successfully to ${email}!`);
-    } else {
-      alert(`🚨 Email Sending Failed:\n${body.message || body.error || `HTTP ${r.status}`}`);
-    }
-  } catch (e) {
-    alert(`🚨 Connection Error: ${e.message}`);
-  } finally {
-    fetchEmailTracker();
-  }
-}
+// Report email dispatch is disabled in this monitoring-only build.
 
 async function fetchEmailTracker() {
   const logs = await apiFetch('/api/email_tracker', []);
@@ -3632,8 +3565,11 @@ async function fetchEmailTracker() {
 }
 
 initTheme();
+applyDashboardMode();
 refreshAll();
+fetchTestnetOverview();
 setInterval(refreshAll, 25000);
+setInterval(fetchTestnetOverview, 60000);
 setInterval(() => {
   const paperPage = document.getElementById('page-paper');
   if (paperPage && paperPage.classList.contains('active')) fetchPaperState();

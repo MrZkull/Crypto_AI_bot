@@ -1,0 +1,67 @@
+name: Deribit Testnet Daily Risk Baseline
+
+on:
+  schedule:
+    # Four independent opportunities inside the required first 20 UTC minutes.
+    - cron: '2,7,12,17 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Database fencing serializes capture; unique run IDs avoid GitHub dropping
+  # one of the four independent scheduled attempts as a pending same-group run.
+  group: deribit-daily-risk-baseline-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  capture-daily-baseline:
+    if: github.ref == 'refs/heads/main'
+    name: Capture read-only USDC opening equity checkpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: deribit-testnet-readonly
+    steps:
+      - name: Checkout reviewed main branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install read-only capture dependencies
+        run: |
+          python -m pip install --disable-pip-version-check requests
+          python -m pip install --disable-pip-version-check -r requirements-postgres.txt
+
+      - name: Compile baseline capture modules
+        run: |
+          python -m py_compile daily_risk_baseline_capture.py deribit_client.py postgres_execution_ledger.py
+
+      - name: Capture UTC opening baseline using read-only exchange credentials
+        env:
+          DERIBIT_TESTNET_READONLY_CLIENT_ID: ${{ secrets.DERIBIT_TESTNET_READONLY_CLIENT_ID }}
+          DERIBIT_TESTNET_READONLY_CLIENT_SECRET: ${{ secrets.DERIBIT_TESTNET_READONLY_CLIENT_SECRET }}
+          DERIBIT_EXECUTION_ACCOUNT_ID: ${{ secrets.DERIBIT_EXECUTION_ACCOUNT_ID || vars.DERIBIT_EXECUTION_ACCOUNT_ID }}
+          EXECUTION_LEDGER_RISK_CAPTURE_DSN: ${{ secrets.EXECUTION_LEDGER_RISK_CAPTURE_DSN }}
+          EXECUTION_LEDGER_RISK_CAPTURE_SSLMODE: require
+          MAX_DERIBIT_CLOCK_SKEW_MS: '5000'
+        run: python daily_risk_baseline_capture.py --evidence daily_risk_baseline_evidence.json
+
+      - name: Mark missed or failed capture as an operational error
+        if: failure()
+        run: echo "::error::Daily USDC opening baseline was not captured. New entries will fail closed for this UTC day. Check the read-only credentials, risk-capture database role, and clock evidence."
+
+      - name: Upload redacted baseline evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deribit-daily-risk-baseline-${{ github.run_id }}
+          path: daily_risk_baseline_evidence.json
+          if-no-files-found: warn
+          retention-days: 14

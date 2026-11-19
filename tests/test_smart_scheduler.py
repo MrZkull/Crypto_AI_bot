@@ -64,3 +64,12 @@ class TestDrawdownRatchet(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExecutionRiskMultiplierSeparation(unittest.TestCase):
+    def test_effective_strategy_risk_does_not_call_legacy_usdt_ratchet(self):
+        with patch.object(scheduler, "get_drawdown_ratchet", side_effect=AssertionError("legacy ratchet must not gate USDC entries")):
+            self.assertAlmostEqual(
+                scheduler.get_effective_risk({"risk_mult": 0.75}, {"risk_mult": 0.5}),
+                0.375,
+            )

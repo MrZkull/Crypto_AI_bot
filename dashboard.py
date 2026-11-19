@@ -49,6 +49,20 @@ log = logging.getLogger(__name__)
 # The browser uses HTTP Basic Auth; credentials are never shipped to JavaScript.
 _AUTH_REALM = "CryptoBot AI Dashboard"
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# This release is a monitoring surface only. No dashboard write control can be
+# enabled by a Render environment-variable mistake. A future control plane must
+# be a separately reviewed service integrated with the execution coordinator.
+DASHBOARD_MUTATIONS_ENABLED = False
+
+
+def _dashboard_read_only_response(operation: str):
+    """Defence-in-depth response for every non-PDF dashboard mutation route."""
+    return jsonify({
+        "ok": False,
+        "error": "dashboard_read_only",
+        "operation": str(operation),
+        "message": "This dashboard is monitoring-only; exchange and state mutations are disabled.",
+    }), 403
 
 
 def _canonical_origin(value: str, *, allow_path: bool = False):
@@ -160,6 +174,23 @@ def enforce_dashboard_auth():
                 "error": "cross_origin_request_rejected",
             }), 403
 
+    # Hard read-only boundary for the entire dashboard, independent of Render
+    # configuration. The only POST exceptions generate in-memory PDFs; they do
+    # not mutate trading, account, proposal, probation, or cooldown state.
+    if (
+        request.method in _UNSAFE_METHODS
+        and request.endpoint not in {
+            "api_download_report_pdf",
+            "api_download_paper_report_pdf",
+        }
+        and not DASHBOARD_MUTATIONS_ENABLED
+    ):
+        return jsonify({
+            "ok": False,
+            "error": "dashboard_read_only",
+            "message": "This dashboard is monitoring-only; use the separately approved control plane for operations.",
+        }), 403
+
     return None
 
 
@@ -173,7 +204,7 @@ def add_dashboard_security_headers(response):
         response.headers["Referrer-Policy"] = "same-origin"
     return response
 
-GH_TOKEN           = os.getenv("GH_PAT_TOKEN", "")
+GH_READ_TOKEN      = os.getenv("GH_READ_TOKEN", "")
 GH_REPO            = os.getenv("GITHUB_REPO",   "MrZkull/Crypto_AI_bot")
 GH_BRANCH          = os.getenv("GITHUB_BRANCH", "main")
 EMAIL_TRACKER_FILE = "email_tracker.json"
@@ -243,6 +274,35 @@ def get_live_config():
             "probation_offset": 10.0
         }
 
+
+def _currency_safe_pnl(trades):
+    """Aggregate PnL only when every record has one finite, declared currency."""
+    if not trades:
+        return 0.0, "USDC"
+    currencies = []
+    values = []
+    for item in trades:
+        if not isinstance(item, dict):
+            return None, None
+        currency = str(item.get("pnl_currency", "")).strip().upper()
+        if not currency:
+            return None, None
+        raw = item.get("pnl")
+        if raw is None or isinstance(raw, bool):
+            return None, None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError, OverflowError):
+            return None, None
+        if not math.isfinite(value):
+            return None, None
+        currencies.append(currency)
+        values.append(value)
+    if len(set(currencies)) != 1:
+        return None, None
+    return round(sum(values), 4), currencies[0]
+
+
 def get_model_metadata():
     perf = get(PERFORMANCE_FILE, {})
     scan_status = get(SCAN_STATUS_FILE, {})
@@ -302,27 +362,44 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     meta_text = f"<b>Scope:</b> {scope} | <b>Generated:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
     elements.append(Paragraph(meta_text, ParagraphStyle('Meta', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor('#475569'), spaceAfter=8)))
 
-    verified_trades = [t for t in trades if not t.get("pnl_unverified", False)]
-    
-    pnl_val = sum(float(t.get('pnl') or 0) for t in verified_trades)
+    verified_trades = [t for t in trades if isinstance(t, dict) and not t.get("pnl_unverified", False)]
+    pnl_val, pnl_currency = _currency_safe_pnl(verified_trades)
+    pnl_valid = pnl_val is not None
+    pnl_unit = pnl_currency if pnl_valid else "currency unverified"
+
     wins_val = sum(1 for t in verified_trades if float(t.get('pnl') or 0) > 0)
     losses_val = sum(1 for t in verified_trades if float(t.get('pnl') or 0) < 0)
     total_trades_val = len(verified_trades)
     win_rate_val = f"{(wins_val / total_trades_val * 100):.1f}%" if total_trades_val > 0 else "0.0%"
-    
-    win_pnls = [float(t.get('pnl') or 0) for t in verified_trades if float(t.get('pnl') or 0) > 0]
-    loss_pnls = [float(t.get('pnl') or 0) for t in verified_trades if float(t.get('pnl') or 0) < 0]
-    gross_p = sum(win_pnls)
-    gross_l = abs(sum(loss_pnls))
-    profit_factor_val = f"{(gross_p / gross_l):.2f}" if gross_l > 0 else f"{gross_p:.2f}"
-    max_win_val = max(win_pnls) if win_pnls else 0.0
-    max_loss_val = min(loss_pnls) if loss_pnls else 0.0
+
+    if pnl_valid:
+        win_pnls = [float(t.get('pnl') or 0) for t in verified_trades if float(t.get('pnl') or 0) > 0]
+        loss_pnls = [float(t.get('pnl') or 0) for t in verified_trades if float(t.get('pnl') or 0) < 0]
+        gross_p = sum(win_pnls)
+        gross_l = abs(sum(loss_pnls))
+        profit_factor_val = f"{(gross_p / gross_l):.2f}" if gross_l > 0 else f"{gross_p:.2f}"
+        max_win_val = max(win_pnls) if win_pnls else 0.0
+        max_loss_val = min(loss_pnls) if loss_pnls else 0.0
+        avg_win_val = (sum(win_pnls) / len(win_pnls)) if win_pnls else 0.0
+        avg_loss_val = (sum(loss_pnls) / len(loss_pnls)) if loss_pnls else 0.0
+        currency_pnl_text = f"{pnl_val:+.2f} {pnl_unit}"
+        currency_win_text = f"{max_win_val:+.2f} {pnl_unit}"
+        currency_loss_text = f"{max_loss_val:+.2f} {pnl_unit}"
+        currency_avg_text = f"{avg_win_val:+.2f} / {avg_loss_val:+.2f} {pnl_unit}"
+    else:
+        profit_factor_val = "N/A — mixed/unverified currency"
+        max_win_val = max_loss_val = 0.0
+        avg_win_val = avg_loss_val = 0.0
+        currency_pnl_text = "N/A — mixed/unverified currency"
+        currency_win_text = currency_loss_text = "N/A"
+        currency_avg_text = "N/A — mixed/unverified currency"
 
     durations_min, symbol_pnl = [], {}
     for t in verified_trades:
-        p = float(t.get('pnl') or 0)
-        sym = str(t.get('symbol') or '—')
-        symbol_pnl[sym] = symbol_pnl.get(sym, 0.0) + p
+        if pnl_valid:
+            p = float(t.get('pnl') or 0)
+            sym = str(t.get('symbol') or '—')
+            symbol_pnl[sym] = symbol_pnl.get(sym, 0.0) + p
         try:
             if t.get('opened_at') and t.get('closed_at'):
                 o = datetime.fromisoformat(str(t['opened_at']).replace('Z', '+00:00'))
@@ -330,8 +407,6 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
                 durations_min.append((c - o).total_seconds() / 60.0)
         except Exception: pass
 
-    avg_win_val = (sum(win_pnls) / len(win_pnls)) if win_pnls else 0.0
-    avg_loss_val = (sum(loss_pnls) / len(loss_pnls)) if loss_pnls else 0.0
     avg_hold_val = (sum(durations_min) / len(durations_min)) if durations_min else None
     best_symbol = max(symbol_pnl.items(), key=lambda kv: kv[1]) if symbol_pnl else None
     worst_symbol = min(symbol_pnl.items(), key=lambda kv: kv[1]) if symbol_pnl else None
@@ -342,27 +417,27 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
             Paragraph("<b>Win / Loss Split:</b>", cell_style), Paragraph(f"{wins_val} W / {losses_val} L ({win_rate_val})", cell_bold)
         ],
         [
-            Paragraph("<b>Net Realized PnL:</b>", cell_style), Paragraph(f"${pnl_val:+.2f}", cell_green if pnl_val >= 0 else cell_red),
+            Paragraph("<b>Net Realized PnL:</b>", cell_style), Paragraph(currency_pnl_text, cell_green if pnl_valid and pnl_val >= 0 else cell_style),
             Paragraph("<b>Profit Factor:</b>", cell_style), Paragraph(str(profit_factor_val), cell_bold)
         ],
         [
-            Paragraph("<b>Largest Win:</b>", cell_style), Paragraph(f"${max_win_val:+.2f}", cell_green),
-            Paragraph("<b>Largest Loss:</b>", cell_style), Paragraph(f"${max_loss_val:+.2f}", cell_red)
+            Paragraph("<b>Largest Win:</b>", cell_style), Paragraph(currency_win_text, cell_green if pnl_valid else cell_style),
+            Paragraph("<b>Largest Loss:</b>", cell_style), Paragraph(currency_loss_text, cell_red if pnl_valid else cell_style)
         ],
         [
             Paragraph("<b>Avg Win / Avg Loss:</b>", cell_style),
-            Paragraph(f"${avg_win_val:+.2f} / ${avg_loss_val:+.2f}", cell_style),
+            Paragraph(currency_avg_text, cell_style),
             Paragraph("<b>Avg Hold Time:</b>", cell_style),
             Paragraph(f"{avg_hold_val:.0f} min" if avg_hold_val is not None else "—", cell_style)
         ],
         [
             Paragraph("<b>Best Performing Symbol:</b>", cell_style),
-            Paragraph(f"{best_symbol[0]} (${best_symbol[1]:+.2f})" if best_symbol else "—", cell_green),
+            Paragraph(f"{best_symbol[0]} ({best_symbol[1]:+.2f} {pnl_unit})" if best_symbol else "—", cell_green),
             Paragraph("<b>Worst Performing Symbol:</b>", cell_style),
-            Paragraph(f"{worst_symbol[0]} (${worst_symbol[1]:+.2f})" if worst_symbol else "—", cell_red)
+            Paragraph(f"{worst_symbol[0]} ({worst_symbol[1]:+.2f} {pnl_unit})" if worst_symbol else "—", cell_red)
         ]
     ]
-    
+
     sum_table = Table(summary_table_data, colWidths=[110, 160, 110, 160])
     sum_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
@@ -375,7 +450,7 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
     elements.append(Spacer(1, 10))
 
     elements.append(Paragraph("Executed Trade Records", section_heading))
-    headers = ["#", "Date (UTC)", "Symbol", "Dir", "Entry", "Close", "Qty", "PnL (USDT)", "Reason"]
+    headers = ["#", "Date (UTC)", "Symbol", "Dir", "Entry", "Close", "Qty", "PnL (currency)", "Reason"]
     header_row = [Paragraph(h, header_cell) for h in headers]
     trade_rows = [header_row]
 
@@ -389,7 +464,8 @@ def generate_pdf_bytes(scope: str, summary: dict, trades: list) -> bytes:
         
         dir_style = cell_green if sig == 'BUY' else cell_red
         pnl_style = cell_red if unverified else (cell_green if pnl >= 0 else cell_red)
-        pnl_str = f"~${pnl:.4f} (Unverified)" if unverified else f"{pnl:+.4f}"
+        row_currency = str(t.get("pnl_currency") or "currency unverified").upper()
+        pnl_str = f"{pnl:+.4f} {row_currency} (unverified)" if unverified else f"{pnl:+.4f} {row_currency}"
 
         row = [
             Paragraph(str(idx), cell_style),
@@ -446,9 +522,9 @@ def check_deribit_health():
 _gh_sync_state = {"ok": True, "last_success_at": None, "last_error": None}
 
 def gh_fetch(filename: str):
-    if not GH_TOKEN or not GH_REPO:
+    if not GH_READ_TOKEN or not GH_REPO:
         return None
-    headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+    headers = {"Authorization": f"token {GH_READ_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     for path in [filename, f"data/{filename}"]:
         try:
             url = f"https://api.github.com/repos/{GH_REPO}/contents/{path}?ref={GH_BRANCH}"
@@ -470,25 +546,10 @@ def gh_fetch(filename: str):
     return None
 
 def gh_push(filename: str, content_dict, max_retries: int = 2) -> bool:
-    if not GH_TOKEN or not GH_REPO:
-        return False
-    headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-    url = f"https://api.github.com/repos/{GH_REPO}/contents/{filename}?ref={GH_BRANCH}"
-    for attempt in range(max_retries):
-        try:
-            r = requests.get(url, headers=headers, timeout=4)
-            sha = r.json().get("sha") if r.ok else None
-            payload = {
-                "message": f"Update {filename} state via Dashboard [skip ci]",
-                "content": base64.b64encode(json.dumps(content_dict, indent=2).encode('utf-8')).decode('utf-8'),
-                "branch": GH_BRANCH
-            }
-            if sha: payload["sha"] = sha
-            put_r = requests.put(url, headers=headers, json=payload, timeout=6)
-            if put_r.status_code in (200, 201):
-                return True
-        except Exception: pass
+    """Dashboard release is read-only: refuse all GitHub content writes."""
+    log.warning("Dashboard GitHub write refused in monitoring-only mode: %s", filename)
     return False
+
 
 def get(filename: str, default):
     now = time.time()
@@ -516,24 +577,32 @@ def bust(filename: str):
     _cache_ts[filename] = 0
 
 def deribit_client():
+    '''Return a strictly Testnet client authenticated with dashboard read-only credentials.
+
+    The Render dashboard intentionally does not fall back to generic execution
+    credentials. Its exchange key must be separately created with read-only
+    permissions in the Deribit Testnet account.
+    '''
     global _DERIBIT_CLIENT, _DERIBIT_CLIENT_KEY
-    cid = os.getenv("DERIBIT_CLIENT_ID", "")
-    secret = os.getenv("DERIBIT_CLIENT_SECRET", "")
+    cid = os.getenv("DERIBIT_TESTNET_READONLY_CLIENT_ID", "").strip()
+    secret = os.getenv("DERIBIT_TESTNET_READONLY_CLIENT_SECRET", "")
     if not cid or not secret:
         return None
 
-    client_key = (cid, secret)
+    client_key = (cid, secret, "testnet-readonly")
     with _DERIBIT_CLIENT_LOCK:
         if _DERIBIT_CLIENT is not None and _DERIBIT_CLIENT_KEY == client_key:
             return _DERIBIT_CLIENT
         try:
-            from deribit_client import DeribitClient
-            client = DeribitClient(cid, secret)
+            from deribit_client import DeribitClient, TESTNET_BASE
+            client = DeribitClient(cid, secret, testnet=True, auth_scope="trade:read account:read")
+            if getattr(client, "base", None) != TESTNET_BASE:
+                raise RuntimeError("Dashboard Deribit client is not pinned to the Testnet host")
             _DERIBIT_CLIENT = client
             _DERIBIT_CLIENT_KEY = client_key
             return client
         except Exception as e:
-            log.warning(f"Deribit client initialization failed: {e}")
+            log.warning("Deribit Testnet read-only client initialization failed: %s", type(e).__name__)
             return None
 
 def _log_email_attempt(recipient: str, scope: str, summary: dict, status: str):
@@ -574,7 +643,7 @@ def api_dashboard_state():
 
         real_trades = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
         wins = [h for h in real_trades if float(h.get("pnl") or 0) > 0]
-        tpnl = sum(float(h.get("pnl", 0) or 0) for h in real_trades)
+        tpnl, pnl_currency = _currency_safe_pnl(real_trades)
         win_rate = round(len(wins) / len(real_trades) * 100, 1) if real_trades else 0.0
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -649,7 +718,8 @@ def api_dashboard_state():
                 "last_scan_phase": scan_status.get("phase", "idle"),
                 "last_scan_completed_at": scan_status.get("completed_at", "Unknown"),
                 "win_rate": win_rate, "wins": len(wins), "losses": len(real_trades) - len(wins),
-                "total_pnl": round(tpnl, 4), "total_trades": len(real_trades),
+                "total_pnl": tpnl, "pnl_currency": pnl_currency,
+                "total_trades": len(real_trades),
                 "open_trades": len(open_trades_list),
                 "max_trades": cfg["max_open_trades"],
                 "total_monitored_pairs": len(cfg["symbols"]),
@@ -663,8 +733,21 @@ def api_dashboard_state():
             },
             "balance": {
                 "ok": True,
-                "usdt": round(float(balance.get("usdt", 0) or 0), 2),
-                "equity": round(float(balance.get("equity", 0) or 0), 2),
+                "usdt": (
+                    round(float(balance.get("account_equity_usd")), 2)
+                    if str(balance.get("equity_currency", "")).upper() == "USD"
+                    and _dashboard_number(balance.get("account_equity_usd")) is not None
+                    else None
+                ),
+                "equity": (
+                    round(float(balance.get("account_equity_usd")), 2)
+                    if str(balance.get("equity_currency", "")).upper() == "USD"
+                    and _dashboard_number(balance.get("account_equity_usd")) is not None
+                    else None
+                ),
+                "equity_currency": balance.get("equity_currency"),
+                "risk_equity": _dashboard_number(balance.get("risk_equity")),
+                "risk_equity_currency": balance.get("risk_equity_currency"),
                 "assets": balance.get("assets", [])
             },
             "trades": open_trades_list,
@@ -704,91 +787,9 @@ def api_dashboard_state():
 
 @app.route("/api/send_report", methods=["POST", "OPTIONS"])
 def api_send_report():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    data = request.get_json(silent=True) or {}
-    recipient = str(data.get("email") or "").strip()
-    scope = str(data.get("scope") or "Range: ALL | Result: ALL")
-    summary = data.get("summary") or {}
-    trades = data.get("trades") or []
-
-    if not recipient or not re.match(EMAIL_REGEX, recipient):
-        return jsonify({"ok": False, "error": "INVALID_FORMAT", "message": "Invalid email format."}), 400
-
-    report_url = None
-    pdf_bytes = None
-    if HAS_REPORTLAB:
-        try:
-            pdf_bytes = generate_pdf_bytes(scope, summary, trades)
-            rid = _store_report(pdf_bytes)
-            report_url = request.host_url.rstrip("/") + f"/api/report/{rid}.pdf"
-        except Exception as e:
-            log.warning(f"PDF pre-generation failed: {e}")
-
-    emailjs_service_id = os.getenv("EMAILJS_SERVICE_ID", "").strip()
-    emailjs_template_id = os.getenv("EMAILJS_TEMPLATE_ID", "").strip()
-    emailjs_public_key = os.getenv("EMAILJS_PUBLIC_KEY", "").strip()
-    emailjs_private_key = os.getenv("EMAILJS_PRIVATE_KEY", "").strip()
-    brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
-    brevo_sender = os.getenv("BREVO_SENDER_EMAIL", "").strip()
-    resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
-    resend_from = os.getenv("REPORT_FROM_EMAIL", os.getenv("RESEND_FROM", "CryptoBot AI <onboarding@resend.dev>"))
-
-    if emailjs_service_id and emailjs_template_id and emailjs_public_key:
-        try:
-            payload = {
-                "service_id": emailjs_service_id, "template_id": emailjs_template_id,
-                "user_id": emailjs_public_key, "accessToken": emailjs_private_key,
-                "template_params": {
-                    "to_email": recipient, "scope": scope,
-                    "net_pnl": summary.get('net_pnl', 0), "total_trades": summary.get('total_trades', 0),
-                    "wins": summary.get('wins', 0), "losses": summary.get('losses', 0),
-                    "win_rate": summary.get('win_rate', '0%'), "report_url": report_url or "PDF generated."
-                }
-            }
-            r = requests.post("https://api.emailjs.com/api/v1.0/email/send", headers={"Content-Type": "application/json"}, json=payload, timeout=12)
-            if r.ok or r.text.strip() == "OK":
-                _log_email_attempt(recipient, scope, summary, "SENT (EmailJS API)")
-                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
-        except Exception as api_err:
-            log.warning(f"EmailJS error: {api_err}")
-
-    if brevo_api_key and brevo_sender:
-        try:
-            pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8") if pdf_bytes else None
-            link_html = f'<p><a href="{report_url}">Download PDF</a></p>' if report_url else ''
-            brevo_payload = {
-                "sender": {"name": "CryptoBot AI", "email": brevo_sender}, "to": [{"email": recipient}],
-                "subject": f"📊 Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-                "htmlContent": f"<h3>CryptoBot AI Report</h3><p>Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
-            }
-            if pdf_b64:
-                brevo_payload["attachment"] = [{"name": f"Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf", "content": pdf_b64}]
-            r = requests.post("https://api.brevo.com/v3/smtp/email", headers={"api-key": brevo_api_key, "Content-Type": "application/json"}, json=brevo_payload, timeout=12)
-            if r.ok:
-                _log_email_attempt(recipient, scope, summary, "SENT (Brevo API)")
-                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
-        except Exception as e:
-            log.warning(f"Brevo error: {e}")
-
-    if resend_api_key:
-        try:
-            link_html = f'<p><a href="{report_url}">Download PDF</a></p>' if report_url else ''
-            payload = {
-                "from": resend_from, "to": [recipient],
-                "subject": f"📊 Performance Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-                "html": f"<p>Scope: {scope}</p><p>Net PnL: ${summary.get('net_pnl', 0)}</p>{link_html}"
-            }
-            if pdf_bytes:
-                payload["attachments"] = [{"filename": f"Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf", "content": base64.b64encode(pdf_bytes).decode("utf-8")}]
-            r = requests.post("https://api.resend.com/emails", headers={"Authorization": f"Bearer {resend_api_key}", "Content-Type": "application/json"}, json=payload, timeout=12)
-            if r.ok:
-                _log_email_attempt(recipient, scope, summary, "SENT (Resend API)")
-                return jsonify({"ok": True, "recipient": recipient, "message": f"Report shared with {recipient}", "report_url": report_url})
-        except Exception as e:
-            log.warning(f"Resend error: {e}")
-
-    _log_email_attempt(recipient, scope, summary, "FAILED: All Providers Exhausted")
-    return jsonify({"ok": False, "error": "DISPATCH_FAILED", "message": "Could not deliver report. Verify Render environment variables."}), 502
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    return _dashboard_read_only_response("api_send_report")
 
 @app.route("/api/report/<report_id>.pdf")
 def api_get_stored_report(report_id):
@@ -840,7 +841,7 @@ def api_status():
 
     real = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
     wins = [h for h in real if float(h.get("pnl") or 0) > 0]
-    tpnl = sum(float(h.get("pnl", 0) or 0) for h in real)
+    tpnl, pnl_currency = _currency_safe_pnl(real)
     win_rate = round(len(wins) / len(real) * 100, 1) if real else 0.0
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -856,7 +857,8 @@ def api_status():
         "last_scan_phase": scan_status.get("phase", "unknown"),
         "last_scan_completed_at": scan_status.get("completed_at", "Unknown"),
         "win_rate": win_rate, "wins": len(wins), "losses": len(real) - len(wins),
-        "total_pnl": round(tpnl, 4), "total_trades": len(real),
+        "total_pnl": tpnl, "pnl_currency": pnl_currency,
+        "total_trades": len(real),
         "open_trades": len([t for t in trades.values() if not t.get("closed")]),
         "max_trades": cfg["max_open_trades"],
         "total_monitored_pairs": len(cfg["symbols"]),
@@ -891,119 +893,353 @@ def api_config():
         "coin_tiers": cfg["coin_tiers"]
     })
 
+@app.route("/api/dashboard/mode")
+def api_dashboard_mode():
+    return jsonify({
+        "ok": True,
+        "read_only": True,
+        "execution_controls_enabled": False,
+        "control_plane": "separate_approved_execution_service",
+    })
+
+
+def _dashboard_account_snapshot(client):
+    response = client.get_account_summaries()
+    if not isinstance(response, dict) or not isinstance(response.get("summaries"), list):
+        raise ValueError("Malformed account summaries")
+
+    rows = response["summaries"]
+    if not rows or any(not isinstance(row, dict) for row in rows):
+        raise ValueError("Account summaries are empty or malformed")
+
+    assets = []
+    currencies = set()
+    margin_models = set()
+    usd_totals = []
+    usdc_equity = None
+    segregated_models = {"segregated_sm", "segregated_pm"}
+    cross_models = {"cross_sm", "cross_pm"}
+    for row in rows:
+        currency = str(row.get("currency", "")).strip().upper()
+        if not currency or currency in currencies:
+            raise ValueError("Account summaries contain missing or duplicate currencies")
+        currencies.add(currency)
+        margin_model = str(row.get("margin_model", "")).strip().lower()
+        if margin_model not in segregated_models | cross_models:
+            raise ValueError(f"Unknown or missing margin_model for {currency}")
+        margin_models.add(margin_model)
+        native_equity = _dashboard_number(row.get("equity"))
+        available = _dashboard_number(row.get("available_funds"))
+        if native_equity is None:
+            raise ValueError(f"Account equity is missing for {currency}")
+        assets.append({
+            "asset": currency,
+            "available": available,
+            "equity": native_equity,
+            "unit": currency,
+        })
+        if currency == "USDC":
+            usdc_equity = native_equity
+        # Only the explicit cross margin models expose a comparable account-wide
+        # USD amount. In segregated models this field may be a per-currency USD
+        # conversion and must not be treated as an account aggregate.
+        candidate = _dashboard_number(row.get("total_equity_usd"))
+        if margin_model in cross_models and candidate is not None:
+            usd_totals.append(candidate)
+
+    if len(margin_models) != 1:
+        raise ValueError("Account summaries disagree on active margin_model")
+    active_margin_model = next(iter(margin_models))
+    account_equity_usd = None
+    if active_margin_model in cross_models:
+        if not usd_totals:
+            raise ValueError("Cross-collateral account has no total_equity_usd")
+        canonical = usd_totals[0]
+        if any(not math.isclose(value, canonical, rel_tol=1e-9, abs_tol=1e-7) for value in usd_totals[1:]):
+            raise ValueError("Deribit returned inconsistent account-wide USD equity values")
+        account_equity_usd = canonical
+
+    return {
+        "assets": assets,
+        "account_equity_usd": account_equity_usd,
+        "account_equity_native": usdc_equity,
+        "account_equity_currency": "USDC" if usdc_equity is not None else None,
+        "margin_model": active_margin_model,
+        "balance_snapshot_complete": True,
+        "balance_currency_count": len(assets),
+    }
+
+
+@app.route("/api/testnet/overview")
+def api_testnet_overview():
+    """Read-only, host-pinned snapshot for the Deribit Testnet dashboard panel."""
+    checked_at = datetime.now(timezone.utc).isoformat()
+    client = deribit_client()
+    if client is None:
+        return jsonify({
+            "ok": False, "environment": "TESTNET", "connection": "NOT_CONFIGURED",
+            "read_only": True, "checked_at": checked_at,
+            "error": "testnet_readonly_credentials_missing",
+        }), 503
+
+    try:
+        from deribit_client import TESTNET_BASE, SYMBOL_MAP
+        instrument_to_symbol = {item["instrument"]: logical for logical, item in SYMBOL_MAP.items()}
+        if getattr(client, "base", None) != TESTNET_BASE:
+            raise RuntimeError("Deribit client host is not the pinned Testnet endpoint")
+
+        balance_snapshot = _dashboard_account_snapshot(client)
+        balances = balance_snapshot["assets"]
+        equity = balance_snapshot["account_equity_usd"]
+        positions_raw = client.get_positions()  # strict complete snapshot; errors fail this endpoint
+        if not isinstance(positions_raw, list):
+            raise ValueError("Malformed position snapshot")
+
+        positions = []
+        position_instruments = []
+        order_query_errors = []
+        order_checks = 0
+        max_order_checks = 4
+        for position in positions_raw:
+            instrument = str(position.get("instrument_name", ""))
+            if not instrument:
+                raise ValueError("Position is missing instrument_name")
+            contracts = float(position.get("size", 0) or 0)
+            quantity = float(position.get("size_currency", contracts) or 0)
+            if abs(contracts) <= 0.0005 and abs(quantity) <= 0.0005:
+                continue
+            symbol = instrument_to_symbol.get(instrument, instrument)
+            direction = str(position.get("direction", "unknown")).lower()
+            stop_status = "UNKNOWN"
+            open_order_count = None
+            if order_checks < max_order_checks:
+                order_checks += 1
+                try:
+                    orders = client.get_open_orders_by_instrument(instrument)
+                    open_order_count = len(orders)
+                    stop_found = any(
+                        isinstance(order, dict)
+                        and str(order.get("order_type", order.get("type", ""))).lower() == "stop_market"
+                        and str(order.get("trigger", "")).lower() == "mark_price"
+                        and order.get("reduce_only") is True
+                        and str(order.get("order_state", "open")).lower() in {"open", "untriggered"}
+                        and _dashboard_number(order.get("trigger_price")) is not None
+                        and _dashboard_number(order.get("trigger_price")) > 0
+                        for order in orders
+                    )
+                    # Presence is not proof that the stop quantity fully covers the position.
+                    stop_status = "PRESENT" if stop_found else "MISSING"
+                except Exception as order_exc:
+                    stop_status = "UNKNOWN"
+                    order_query_errors.append({"instrument_name": instrument, "error": type(order_exc).__name__})
+            elif order_checks >= max_order_checks:
+                stop_status = "NOT_CHECKED_SCOPE_LIMIT"
+            position_instruments.append(instrument)
+            positions.append({
+                "symbol": symbol,
+                "instrument_name": instrument,
+                "direction": direction,
+                "quantity": abs(quantity),
+                "contracts": abs(contracts),
+                "average_price": _dashboard_number(position.get("average_price")),
+                "mark_price": _dashboard_number(position.get("mark_price")),
+                "unrealized_pnl_usd": _dashboard_number(position.get("floating_profit_loss_usd")),
+                "stop_status": stop_status,
+                "open_orders_count": open_order_count,
+            })
+
+        journal = get("trade_history.json", [])
+        if not isinstance(journal, list):
+            journal = []
+        fill_instruments = []
+        for instrument in position_instruments:
+            if instrument not in fill_instruments:
+                fill_instruments.append(instrument)
+        for record in reversed(journal):
+            if not isinstance(record, dict):
+                continue
+            logical_symbol = str(record.get("symbol", "")).strip().upper()
+            mapping = SYMBOL_MAP.get(logical_symbol)
+            instrument = mapping.get("instrument") if isinstance(mapping, dict) else None
+            if instrument and instrument not in fill_instruments:
+                fill_instruments.append(instrument)
+            if len(fill_instruments) >= 4:
+                break
+
+        fills = []
+        fill_errors = []
+        for instrument in fill_instruments[:4]:
+            symbol = instrument_to_symbol.get(instrument, instrument)
+            try:
+                rows = client.get_trade_history_by_instrument_name(instrument, count=10, strict=True)
+                if not isinstance(rows, list):
+                    raise ValueError("Malformed exchange fills response")
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    raw_ts = row.get("timestamp")
+                    timestamp_utc = None
+                    try:
+                        if raw_ts is not None:
+                            ts = float(raw_ts)
+                            if ts > 10_000_000_000:
+                                ts /= 1000.0
+                            timestamp_utc = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                    except (TypeError, ValueError, OverflowError, OSError):
+                        timestamp_utc = None
+                    fills.append({
+                        "symbol": symbol,
+                        "instrument_name": instrument,
+                        "trade_id": row.get("trade_id"),
+                        "order_id": row.get("order_id"),
+                        "direction": row.get("direction"),
+                        "amount": _dashboard_number(row.get("amount")),
+                        "price": _dashboard_number(row.get("price")),
+                        "fee": _dashboard_number(row.get("fee")),
+                        "fee_currency": row.get("fee_currency"),
+                        "timestamp": raw_ts,
+                        "timestamp_utc": timestamp_utc,
+                    })
+            except Exception as exc:
+                fill_errors.append({"instrument_name": instrument, "error": type(exc).__name__})
+
+        fills.sort(key=lambda item: _dashboard_number(item.get("timestamp")) or 0.0, reverse=True)
+        assets = balances
+        return jsonify({
+            "ok": True,
+            "environment": "TESTNET",
+            "connection": "AUTHENTICATED",
+            "verified_host": "test.deribit.com",
+            "read_only": True,
+            "checked_at": checked_at,
+            "account_equity_usd": round(equity, 4) if equity is not None else None,
+            "account_equity_native": balance_snapshot["account_equity_native"],
+            "account_equity_currency": balance_snapshot["account_equity_currency"],
+            "margin_model": balance_snapshot["margin_model"],
+            "balance_snapshot_complete": balance_snapshot["balance_snapshot_complete"],
+            "balance_currency_count": balance_snapshot["balance_currency_count"],
+            "balances": assets,
+            "positions": positions,
+            "order_query_errors": order_query_errors,
+            "order_check_scope_limit": max_order_checks,
+            "order_checks_completed": order_checks,
+            "fills": fills[:100],
+            "fills_scope_symbols": [instrument_to_symbol.get(item, item) for item in fill_instruments[:4]],
+            "fills_scope_instruments": fill_instruments[:4],
+            "fills_complete_for_scope": not fill_errors,
+            "fill_query_errors": fill_errors,
+            "bot_journal": {
+                "source": "GitHub trade_history.json",
+                "record_count": len(journal),
+                "recent_records": journal[-10:],
+            },
+        })
+    except Exception as exc:
+        log.error("Testnet overview failed closed: %s", type(exc).__name__)
+        return jsonify({
+            "ok": False, "environment": "TESTNET", "connection": "UNVERIFIED",
+            "read_only": True, "checked_at": checked_at,
+            "error": "testnet_private_snapshot_failed",
+        }), 503
+
+
 @app.route("/api/balance")
 def api_balance():
     client = deribit_client()
-    if client:
-        try:
-            total = client.get_total_equity_usd()
-            bals = client.get_all_balances()
-            assets = [{"asset": c, "free": str(i.get("available", 0)), "total": str(i.get("equity_usd", 0))} for c, i in bals.items()]
-            return jsonify({"ok": True, "usdt": round(total, 2), "equity": round(total, 2), "assets": assets, "exchange": "Deribit Testnet"})
-        except Exception: pass
-    bal = get("balance.json", {})
-    return jsonify({**bal, "ok": True})
+    if client is None:
+        return jsonify({
+            "ok": False,
+            "exchange": "Deribit Testnet",
+            "source": "unavailable",
+            "error": "testnet_readonly_credentials_missing",
+        }), 503
+    try:
+        from deribit_client import TESTNET_BASE
+        if getattr(client, "base", None) != TESTNET_BASE:
+            raise RuntimeError("Deribit host verification failed")
+        snapshot = _dashboard_account_snapshot(client)
+        total_usd = snapshot["account_equity_usd"]
+        assets = [
+            {
+                "asset": item["asset"],
+                "free": str(item["available"] if item["available"] is not None else "N/A"),
+                "total": str(item["equity"]),
+                "unit": item["unit"],
+            }
+            for item in snapshot["assets"]
+        ]
+        return jsonify({
+            "ok": True,
+            "usdt": round(total_usd, 2) if total_usd is not None else None,
+            "equity": round(total_usd, 2) if total_usd is not None else None,
+            "equity_currency": "USD" if total_usd is not None else None,
+            "native_equity": snapshot["account_equity_native"],
+            "native_equity_currency": snapshot["account_equity_currency"],
+            "margin_model": snapshot["margin_model"],
+            "assets": assets,
+            "exchange": "Deribit Testnet",
+            "source": "deribit_private_get_account_summaries",
+            "balance_snapshot_complete": snapshot["balance_snapshot_complete"],
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as exc:
+        log.warning("Testnet balance query failed: %s", type(exc).__name__)
+        return jsonify({
+            "ok": False, "exchange": "Deribit Testnet", "source": "unavailable",
+            "error": "testnet_balance_query_failed",
+        }), 503
 
 @app.route("/api/trades/open")
 def api_open_trades():
     ai_data = get("trades.json", {})
+    # Preserve legacy metadata when the root ledger is empty.
+    if not isinstance(ai_data, dict) or not ai_data:
+        legacy_data = get("data/trades.json", {})
+        ai_data = legacy_data if isinstance(legacy_data, dict) else {}
     client = deribit_client()
-    if client:
-        try:
-            positions = client.get_positions()
-            result = []
-            for p in positions:
-                size = float(p.get("size", 0))
-                if abs(size) <= 0.0005: continue
-                inst = p.get("instrument_name", "")
-                base = inst.split("_")[0] if "_" in inst else inst.split("-")[0]
-                symbol = f"{base}USDT"
-                t = ai_data.get(symbol, {})
-                result.append({
-                    "symbol": symbol,
-                    "signal": t.get("signal", "BUY" if size > 0 else "SELL"),
-                    "entry": round(float(p.get("average_price", 0) or 0), 4),
-                    "live_price": round(float(p.get("mark_price", 0) or 0), 4),
-                    "stop": float(t.get("stop", 0) or 0),
-                    "tp1": float(t.get("tp1", 0) or 0),
-                    "tp2": float(t.get("tp2", 0) or 0),
-                    "qty": abs(size),
-                    "unrealised": round(float(p.get("floating_profit_loss_usd") or 0), 4),
-                    "confidence": t.get("confidence", 50.0),
-                    "score": t.get("score", 5),
-                    "opened_at": t.get("opened_at", datetime.now(timezone.utc).isoformat())
-                })
-            return jsonify(result)
-        except Exception as e:
-            log.error(f"api_open_trades error: {e}")
-    return jsonify([])
+    if client is None:
+        return jsonify({"ok": False, "error": "testnet_positions_unavailable",
+                        "message": "Exchange positions are not verified; this is not a flat-account confirmation."}), 503
+    try:
+        positions = client.get_positions()
+        from deribit_client import SYMBOL_MAP
+        instrument_to_symbol = {item["instrument"]: logical for logical, item in SYMBOL_MAP.items()}
+        result = []
+        for position in positions:
+            contracts = float(position.get("size", 0) or 0)
+            quantity = float(position.get("size_currency", contracts) or 0)
+            if abs(contracts) <= 0.0005 and abs(quantity) <= 0.0005:
+                continue
+            instrument = str(position.get("instrument_name", ""))
+            symbol = instrument_to_symbol.get(instrument, instrument)
+            local = ai_data.get(symbol, {}) if symbol != instrument and isinstance(ai_data, dict) else {}
+            direction = str(position.get("direction", "")).lower()
+            result.append({
+                "symbol": symbol,
+                "signal": local.get("signal", "BUY" if direction == "buy" else "SELL"),
+                "entry": round(float(position.get("average_price", 0) or 0), 4),
+                "live_price": round(float(position.get("mark_price", 0) or 0), 4),
+                "stop": float(local.get("stop", 0) or 0),
+                "tp1": float(local.get("tp1", 0) or 0),
+                "tp2": float(local.get("tp2", 0) or 0),
+                "qty": abs(quantity),
+                "unrealised": round(float(position.get("floating_profit_loss_usd") or 0), 4),
+                "confidence": local.get("confidence"),
+                "score": local.get("score"),
+                "opened_at": local.get("opened_at"),
+                "source": "deribit_testnet_positions",
+            })
+        return jsonify(result)
+    except Exception as exc:
+        log.error("api_open_trades exchange snapshot failed: %s", type(exc).__name__)
+        return jsonify({"ok": False, "error": "testnet_positions_unavailable",
+                        "message": "Exchange positions are not verified; this is not a flat-account confirmation."}), 503
 
 @app.route("/api/trades/heal", methods=["POST", "OPTIONS"])
 def api_trades_heal():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    data = request.get_json(silent=True) or {}
-    symbol = str(data.get("symbol", "")).strip().upper()
-    if not symbol: return jsonify({"ok": False, "error": "Symbol is required"}), 400
-
-    client = deribit_client()
-    if not client: return jsonify({"ok": False, "error": "Deribit client unavailable"}), 500
-
-    real_pos = client.get_position_size(symbol)
-    if abs(real_pos) <= 0.0005:
-        return jsonify({"ok": False, "error": f"No actionable position found for {symbol}"}), 404
-
-    cfg = get_live_config()
-    live_p = client.get_live_price(symbol)
-    if live_p <= 0: return jsonify({"ok": False, "error": f"Could not fetch live price for {symbol}."}), 502
-
-    fresh_atr = live_p * 0.015
-    try:
-        r = requests.get(f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit=20", timeout=4)
-        if r.ok:
-            kd = [{"h": float(d[2]), "l": float(d[3]), "c": float(d[4])} for d in r.json()]
-            trs = [kd[i]["h"] - kd[i]["l"] if i == 0 else max(kd[i]["h"] - kd[i]["l"], abs(kd[i]["h"] - kd[i-1]["c"]), abs(kd[i]["l"] - kd[i-1]["c"])) for i in range(len(kd))]
-            fresh_atr = sum(trs[-14:]) / 14
-    except Exception: pass
-
-    is_long = real_pos > 0
-    sl_side = "SELL" if is_long else "BUY"
-    tp_side = "SELL" if is_long else "BUY"
-    total_q = client.round_amount(symbol, abs(real_pos))
-
-    stop_p = client.round_price(symbol, live_p - fresh_atr * cfg["atr_stop_mult"] if is_long else live_p + fresh_atr * cfg["atr_stop_mult"])
-    tp1_p  = client.round_price(symbol, live_p + fresh_atr * cfg["atr_target1_mult"] if is_long else live_p - fresh_atr * cfg["atr_target1_mult"])
-    tick = client.get_tick_size(symbol)
-    sl_limit = client.round_price(symbol, stop_p - (tick * 3) if is_long else stop_p + (tick * 3))
-
-    order_ids = {}
-    try:
-        sl_res = client.place_limit_order(symbol, sl_side, total_q, sl_limit, stop_price=stop_p, use_reduce_only=True)
-        sl_o = sl_res.get("order", sl_res)
-        order_ids["stop_loss"] = str(sl_o.get("order_id", ""))
-        tp_res = client.place_limit_order(symbol, tp_side, total_q, tp1_p, use_reduce_only=True)
-        tp_o = tp_res.get("order", tp_res)
-        order_ids["tp1"] = str(tp_o.get("order_id", ""))
-    except Exception as e:
-        log.error(f"Failed to place repair bracket orders on Deribit: {e}")
-        return jsonify({"ok": False, "error": f"Exchange order placement failed: {e}"}), 502
-
-    trades = get("trades.json", {})
-    trades[symbol] = {
-        "symbol": symbol, "signal": "BUY" if is_long else "SELL",
-        "entry": live_p, "stop": stop_p, "tp1": tp1_p, "tp2": 0,
-        "qty": total_q, "order_ids": order_ids, "opened_at": datetime.now(timezone.utc).isoformat(),
-        "tp1_hit": False, "closed": False, "confidence": 50.0, "score": 5, "reasons": ["Dashboard Heal Bracket"]
-    }
-    for p in [Path("trades.json"), Path("data/trades.json")]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(trades, indent=2))
-        except Exception: pass
-    _cache["trades.json"] = trades
-    gh_push("trades.json", trades)
-    bust("trades.json")
-
-    return jsonify({"ok": True, "symbol": symbol, "message": f"Attached SL @ ${stop_p} and TP1 @ ${tp1_p}", "stop": stop_p, "tp1": tp1_p})
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    return _dashboard_read_only_response("api_trades_heal")
 
 @app.route("/api/trades/history")
 def api_trade_history():
@@ -1041,44 +1277,15 @@ def api_probation():
 
 @app.route("/api/probation/release", methods=["POST", "OPTIONS"])
 def api_probation_release():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    data = request.get_json(silent=True) or {}
-    symbol = str(data.get("symbol", "")).strip().upper()
-    rel = get(RELIABILITY_FILE, {})
-    if symbol not in rel or not rel[symbol].get("is_benched", False):
-        return jsonify({"ok": False, "error": f"{symbol} is not on probation."}), 404
-    rel[symbol]["is_benched"] = False
-    rel[symbol]["benched_at"] = 0
-    rel[symbol]["probation_wins"] = 0
-    rel[symbol]["probation_consecutive_losses"] = 0
-    for p in [Path(RELIABILITY_FILE), Path("data") / RELIABILITY_FILE]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(rel, indent=2))
-        except Exception: pass
-    gh_push(RELIABILITY_FILE, rel)
-    return jsonify({"ok": True, "symbol": symbol, "status": "released"})
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    return _dashboard_read_only_response("api_probation_release")
 
 @app.route("/api/probation/bench", methods=["POST", "OPTIONS"])
 def api_probation_bench():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    data = request.get_json(silent=True) or {}
-    symbol = str(data.get("symbol", "")).strip().upper()
-    rel = get(RELIABILITY_FILE, {})
-    if symbol not in rel:
-        rel[symbol] = {"is_benched": True, "benched_at": time.time(), "probation_wins": 0, "probation_consecutive_losses": 0}
-    else:
-        rel[symbol]["is_benched"] = True
-        rel[symbol]["benched_at"] = time.time()
-        rel[symbol]["probation_wins"] = 0
-        rel[symbol]["probation_consecutive_losses"] = 0
-    for p in [Path(RELIABILITY_FILE), Path("data") / RELIABILITY_FILE]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(rel, indent=2))
-        except Exception: pass
-    gh_push(RELIABILITY_FILE, rel)
-    return jsonify({"ok": True, "symbol": symbol, "status": "benched"})
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    return _dashboard_read_only_response("api_probation_bench")
 
 @app.route("/api/cooldown")
 def api_cooldown():
@@ -1098,19 +1305,9 @@ def api_cooldown():
 
 @app.route("/api/cooldown/release", methods=["POST", "OPTIONS"])
 def api_cooldown_release():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    data = request.get_json(silent=True) or {}
-    symbol = str(data.get("symbol", "")).strip().upper()
-    cd = get(COOLDOWN_FILE, {})
-    if symbol not in cd: return jsonify({"ok": False, "error": f"{symbol} has no cooldown."}), 404
-    cd.pop(symbol, None)
-    for p in [Path(COOLDOWN_FILE), Path("data") / COOLDOWN_FILE]:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(cd, indent=2))
-        except Exception: pass
-    gh_push(COOLDOWN_FILE, cd)
-    return jsonify({"ok": True, "symbol": symbol, "status": "released"})
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    return _dashboard_read_only_response("api_cooldown_release")
 
 @app.route("/api/predictions")
 def api_predictions():
@@ -1153,27 +1350,15 @@ def api_adaptation_proposals():
 
 @app.route("/api/adaptation_proposals/<proposal_id>/approve", methods=["POST", "OPTIONS"])
 def api_approve_proposal(proposal_id):
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    proposals = get(PROPOSALS_FILE, [])
-    target = next((p for p in proposals if p.get("id") == proposal_id), None)
-    if not target or target.get("status") != "pending": return jsonify({"ok": False}), 404
-    now_iso = datetime.now(timezone.utc).isoformat()
-    target["status"] = "approved"
-    overrides = get(OVERRIDES_FILE, {})
-    overrides.setdefault(target["symbol"], {})[target["param"]] = {"reason_tag": target["tag"], "applied_at": now_iso}
-    gh_push(PROPOSALS_FILE, proposals)
-    gh_push(OVERRIDES_FILE, overrides)
-    return jsonify({"ok": True})
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    return _dashboard_read_only_response("api_approve_proposal")
 
 @app.route("/api/adaptation_proposals/<proposal_id>/reject", methods=["POST", "OPTIONS"])
 def api_reject_proposal(proposal_id):
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    proposals = get(PROPOSALS_FILE, [])
-    target = next((p for p in proposals if p.get("id") == proposal_id), None)
-    if not target or target.get("status") != "pending": return jsonify({"ok": False}), 404
-    target["status"] = "rejected"
-    gh_push(PROPOSALS_FILE, proposals)
-    return jsonify({"ok": True})
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    return _dashboard_read_only_response("api_reject_proposal")
 
 @app.route("/api/market")
 def api_market():
@@ -1229,90 +1414,244 @@ def api_monitor():
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return jsonify({
         "ok": True,
-        "deribit": {"ok": deribit["status"] == "ONLINE", "msg": deribit["msg"], "balance": bal.get("usdt"), "open_positions": len(open_trades)},
+        "deribit": {
+            "ok": deribit["status"] == "ONLINE",
+            "msg": deribit["msg"],
+            "balance": (
+                _dashboard_number(bal.get("account_equity_usd"))
+                if str(bal.get("equity_currency", "")).upper() == "USD"
+                else None
+            ),
+            "balance_currency": "USD" if str(bal.get("equity_currency", "")).upper() == "USD" else None,
+            "risk_equity": _dashboard_number(bal.get("risk_equity")),
+            "risk_equity_currency": bal.get("risk_equity_currency"),
+            "open_positions": len(open_trades),
+        },
         "market": {"ok": True, "btc_price": 0, "latency_ms": 50},
-        "bot": {"signals_today": len([s for s in signals if str(s.get("generated_at","")).startswith(today)]), "gh_token_configured": bool(GH_TOKEN)},
+        "bot": {"signals_today": len([s for s in signals if str(s.get("generated_at","")).startswith(today)]), "gh_read_token_configured": bool(GH_READ_TOKEN)},
         "integrity": {"open_slots": f"{len(open_trades)}/{cfg['max_open_trades']}", "sltp_missing": sum(1 for t in trades.values() if not t.get("stop") or not t.get("tp1"))}
     })
+
+def _dashboard_number(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _measured_value(record, keys):
+    for key in keys:
+        if key in record:
+            value = _dashboard_number(record.get(key))
+            if value is not None:
+                return value
+    return None
+
 
 @app.route("/api/execution")
 def api_execution():
     history = get("trade_history.json", [])
-    real = [h for h in history if h.get("signal") != "RECOVERED" and not h.get("pnl_unverified", False)]
-    gross_pnl = sum(float(t.get("pnl", 0)) for t in real)
-    fees = round(len(real) * 0.45, 2)
-    return jsonify({"ok": True, "gross_pnl": round(gross_pnl, 2), "total_fees": fees, "net_pnl": round(gross_pnl - fees, 2), "avg_duration_h": 2.4, "total_volume_traded_usd": 12500, "avg_slippage_pct": 0.02})
+    if not isinstance(history, list):
+        history = []
+    completed = [
+        item for item in history
+        if isinstance(item, dict)
+        and item.get("signal") != "RECOVERED"
+        and not item.get("pnl_unverified", False)
+        and (item.get("closed") is True or item.get("closed_at"))
+    ]
+    gross_pnl, pnl_currency = _currency_safe_pnl(completed)
+    pnl_valid = gross_pnl is not None
+
+    fee_values = []
+    fee_currencies = []
+    for item in completed:
+        if item.get("fees_usd") is not None or item.get("fee_usd") is not None or item.get("commission_usd") is not None:
+            fee = _measured_value(item, ("fees_usd", "fee_usd", "commission_usd"))
+            fee_currency = "USD"
+        else:
+            fee = _measured_value(item, ("fees", "fee", "commission"))
+            fee_currency = str(item.get("fee_currency", "")).strip().upper()
+        fee_values.append(fee)
+        fee_currencies.append(fee_currency)
+    fees_complete = (
+        bool(completed)
+        and pnl_valid
+        and all(value is not None for value in fee_values)
+        and all(currency == pnl_currency for currency in fee_currencies)
+    )
+    total_fees = round(sum(value for value in fee_values if value is not None), 4) if fees_complete else None
+
+    durations = []
+    for item in completed:
+        try:
+            opened = datetime.fromisoformat(str(item["opened_at"]).replace("Z", "+00:00"))
+            closed = datetime.fromisoformat(str(item["closed_at"]).replace("Z", "+00:00"))
+            duration = (closed - opened).total_seconds() / 3600.0
+            if math.isfinite(duration) and duration >= 0:
+                durations.append(duration)
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    volume_values = [_measured_value(item, ("volume_traded_usd", "notional_usd", "volume_usd")) for item in completed]
+    volume_complete = bool(completed) and all(value is not None for value in volume_values)
+    slip_values = [_measured_value(item, ("slippage_pct", "avg_slippage_pct")) for item in completed]
+    slippage_complete = bool(completed) and all(value is not None for value in slip_values)
+
+    return jsonify({
+        "ok": True,
+        "gross_pnl": gross_pnl if pnl_valid else None,
+        "pnl_currency": pnl_currency if pnl_valid else None,
+        "total_fees": total_fees,
+        "fee_currency": pnl_currency if fees_complete else None,
+        "net_pnl": round(gross_pnl - total_fees, 4) if fees_complete and gross_pnl is not None else None,
+        "avg_duration_h": round(sum(durations) / len(durations), 4) if durations else None,
+        "total_volume_traded_usd": round(sum(volume_values), 4) if volume_complete else None,
+        "avg_slippage_pct": round(sum(slip_values) / len(slip_values), 6) if slippage_complete else None,
+        "measured_trade_count": len(completed),
+        "fee_coverage_complete": fees_complete,
+        "volume_coverage_complete": volume_complete,
+        "slippage_coverage_complete": slippage_complete,
+        "source": "trade_history.json; unavailable fields are null, not estimates",
+    })
+
 
 @app.route("/api/model_health")
 def api_model_health():
     model_meta = get_model_metadata()
+    performance = get(PERFORMANCE_FILE, {})
+    if not isinstance(performance, dict):
+        performance = {}
+    accuracy = performance.get("test_accuracy", performance.get("accuracy"))
+    if isinstance(accuracy, (int, float)) and not isinstance(accuracy, bool):
+        accuracy = f"{float(accuracy):.1f}%"
+    if not accuracy:
+        accuracy = "N/A"
+    calibration = performance.get("calibration")
+    if not (
+        isinstance(calibration, dict)
+        and isinstance(calibration.get("labels"), list)
+        and isinstance(calibration.get("target"), list)
+        and isinstance(calibration.get("live"), list)
+        and len(calibration["labels"]) == len(calibration["target"]) == len(calibration["live"])
+    ):
+        calibration = None
     return jsonify({
-        "ok": True, "ensemble_name": model_meta["model_name"], "test_accuracy": "73.1%",
-        "rec_buy_threshold": model_meta["rec_buy_conf"], "rec_sell_threshold": model_meta["rec_sell_conf"],
-        "calibration": {"labels": ['45-55% Conf', '55-65% Conf', '65-75% Conf', '75%+ Conf'], "target": [55, 65, 75, 85], "live": [58, 64, 72, 81]}
+        "ok": True,
+        "ensemble_name": model_meta["model_name"],
+        "test_accuracy": accuracy,
+        "rec_buy_threshold": model_meta["rec_buy_conf"],
+        "rec_sell_threshold": model_meta["rec_sell_conf"],
+        "calibration": calibration,
+        "accuracy_source": "model_performance.json" if accuracy != "N/A" else "unavailable",
     })
 
 @app.route("/api/analytics")
 def api_analytics():
     history = get("trade_history.json", [])
-    real_trades = [t for t in history if t.get("signal") != "RECOVERED" and not t.get("pnl_unverified", False)]
-    pnls = [float(t.get("pnl", 0) or 0) for t in real_trades]
-    wins = [p for p in pnls if p > 0]
-    losses = [p for p in pnls if p <= 0]
-    total_trades = len(pnls)
-    win_rate = (len(wins) / total_trades * 100) if total_trades > 0 else 0.0
-    avg_win = (sum(wins) / len(wins)) if wins else 0.0
-    avg_loss = (abs(sum(losses)) / len(losses)) if losses else 0.0
+    if not isinstance(history, list):
+        history = []
+    real_trades = [
+        item for item in history
+        if isinstance(item, dict)
+        and item.get("signal") != "RECOVERED"
+        and not item.get("pnl_unverified", False)
+    ]
+    pnl_total, pnl_currency = _currency_safe_pnl(real_trades)
+    pnl_valid = pnl_total is not None
+    pnls = [float(item.get("pnl", 0) or 0) for item in real_trades] if pnl_valid else []
+    wins = [value for value in pnls if value > 0]
+    losses = [value for value in pnls if value <= 0]
+    total_trades = len(real_trades)
+    win_rate = (len(wins) / total_trades * 100) if pnl_valid and total_trades else None
+    avg_win = (sum(wins) / len(wins)) if wins else None
+    avg_loss = (abs(sum(losses)) / len(losses)) if losses else None
     gross_profit = sum(wins)
     gross_loss = abs(sum(losses))
-    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (round(gross_profit, 2) if gross_profit > 0 else 0.0)
-    expectancy = round((win_rate / 100.0 * avg_win) - ((1.0 - win_rate / 100.0) * avg_loss), 4)
+    profit_factor = (
+        round(gross_profit / gross_loss, 2) if gross_loss > 0
+        else (round(gross_profit, 2) if gross_profit > 0 else 0.0)
+    ) if pnl_valid else None
+    expectancy = (
+        round((win_rate / 100.0 * (avg_win or 0.0)) -
+              ((1.0 - win_rate / 100.0) * (avg_loss or 0.0)), 4)
+        if pnl_valid and win_rate is not None else None
+    )
 
-    sharpe, sortino, max_dd = 0.0, 0.0, 0.0
-    if len(pnls) > 3:
+    sharpe = sortino = max_dd = None
+    if pnl_valid and len(pnls) > 3:
         mean_pnl = sum(pnls) / len(pnls)
-        variance = sum((x - mean_pnl)**2 for x in pnls) / len(pnls)
+        variance = sum((value - mean_pnl) ** 2 for value in pnls) / len(pnls)
         std_dev = math.sqrt(variance) if variance > 0 else 0.001
-        downside_vars = [x**2 for x in losses]
+        downside_vars = [value ** 2 for value in losses]
         downside_std = math.sqrt(sum(downside_vars) / len(pnls)) if downside_vars else 0.001
         sharpe = round((mean_pnl / std_dev) * math.sqrt(365), 2)
         sortino = round((mean_pnl / downside_std) * math.sqrt(365), 2)
-        cum_pnl, peak = 0.0, 0.0
-        dds = []
-        for p in pnls:
-            cum_pnl += p
-            if cum_pnl > peak: peak = cum_pnl
-            dds.append(peak - cum_pnl)
-        max_dd = round(max(dds), 2) if dds else 0.0
+        cumulative = peak = 0.0
+        drawdowns = []
+        for value in pnls:
+            cumulative += value
+            peak = max(peak, cumulative)
+            drawdowns.append(peak - cumulative)
+        max_dd = round(max(drawdowns), 4) if drawdowns else 0.0
 
     daily_pnl_map = {}
-    for t in real_trades:
-        day = (t.get("closed_at") or t.get("opened_at") or "")[:10]
-        if day:
-            daily_pnl_map[day] = round(daily_pnl_map.get(day, 0) + float(t.get("pnl", 0) or 0), 2)
-    daily_points = [{"date": d, "pnl": p} for d, p in sorted(daily_pnl_map.items())]
+    if pnl_valid:
+        for item in real_trades:
+            day = (item.get("closed_at") or item.get("opened_at") or "")[:10]
+            if day:
+                daily_pnl_map[day] = round(
+                    daily_pnl_map.get(day, 0.0) + float(item.get("pnl", 0) or 0), 4
+                )
+    daily_points = [
+        {"date": day, "pnl": value, "currency": pnl_currency}
+        for day, value in sorted(daily_pnl_map.items())
+    ]
 
     bal_data = get("balance.json", {})
-    current_bal = float(bal_data.get("usdt", 100000.0) or 100000.0)
-    running = current_bal - sum(pnls)
+    risk_currency = str(bal_data.get("risk_equity_currency", "")).upper()
+    current_bal = _dashboard_number(bal_data.get("risk_equity"))
     equity_points = []
-    for t in real_trades[-50:]:
-        running += float(t.get("pnl", 0) or 0)
-        time_str = (t.get("closed_at") or t.get("opened_at") or "")[:10]
-        equity_points.append({"time": time_str, "equity": round(running, 2)})
+    curve_currency_valid = (
+        pnl_valid
+        and pnl_currency == risk_currency
+        and risk_currency in {"USDC", "USD"}
+        and current_bal is not None
+        and current_bal > 0
+    )
+    if curve_currency_valid:
+        running = current_bal - sum(float(item.get("pnl", 0) or 0) for item in real_trades)
+        for item in real_trades[-50:]:
+            running += float(item.get("pnl", 0) or 0)
+            time_str = (item.get("closed_at") or item.get("opened_at") or "")[:10]
+            equity_points.append({
+                "time": time_str,
+                "equity": round(running, 4),
+                "currency": risk_currency,
+            })
 
     return jsonify({
         "ok": True,
         "sharpe_ratio": sharpe,
         "sortino_ratio": sortino,
         "profit_factor": profit_factor,
+        "expectancy": expectancy,
+        "max_drawdown": max_dd,
+        "pnl_currency": pnl_currency if pnl_valid else None,
+        "pnl_metrics_available": pnl_valid,
+        # Deprecated aliases retained for older clients; they are not USD/USDT claims.
         "expectancy_usdt": expectancy,
         "max_drawdown_usdt": max_dd,
-        "win_rate": round(win_rate, 1),
-        "avg_win": round(avg_win, 4),
-        "avg_loss": round(avg_loss, 4),
+        "win_rate": round(win_rate, 1) if win_rate is not None else None,
+        "avg_win": round(avg_win, 4) if avg_win is not None else None,
+        "avg_loss": round(avg_loss, 4) if avg_loss is not None else None,
         "equity_curve": equity_points,
-        "daily_pnl": daily_points
+        "equity_curve_currency": risk_currency if curve_currency_valid else None,
+        "equity_curve_available": curve_currency_valid,
+        "daily_pnl": daily_points,
     })
 
 @app.route("/api/log")
@@ -1323,162 +1662,21 @@ def api_log():
 
 @app.route("/api/scan", methods=["POST", "OPTIONS"])
 def api_scan():
-    if request.method == "OPTIONS": return jsonify({"ok": True}), 200
-    if not GH_TOKEN or not GH_REPO: return jsonify({"error": "GH_PAT_TOKEN not configured"}), 400
-    headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github.v3+json", "Content-Type": "application/json"}
-    for wf in ["crypto_bot.yml", "crypto_bot.yaml", "main.yml"]:
-        try:
-            r = requests.post(f"https://api.github.com/repos/{GH_REPO}/actions/workflows/{wf}/dispatches", headers=headers, json={"ref": GH_BRANCH}, timeout=10)
-            if r.status_code in (200, 204):
-                for f in ["trades.json","balance.json","signals.json","bot.log","scan_status.json"]: bust(f)
-                return jsonify({"status": "triggered", "message": "Scan dispatched."})
-        except Exception: pass
-    return jsonify({"error": "Could not trigger workflow"}), 500
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    return _dashboard_read_only_response("api_scan")
 
 @app.route("/api/kill_switch", methods=["POST", "OPTIONS"])
 def api_kill_switch():
     if request.method == "OPTIONS":
         return jsonify({"ok": True}), 200
-
-    client = deribit_client()
-    if not client:
-        return jsonify({"ok": False, "error": "Deribit client unavailable"}), 500
-
-    try:
-        positions = client.get_positions()
-        cancelled = 0
-        flattened = 0
-        unverified = []
-        ignored = []
-
-        for position in positions:
-            instrument = position.get("instrument_name", "")
-            if (
-                not isinstance(instrument, str)
-                or not instrument.endswith("_USDC-PERPETUAL")
-            ):
-                ignored.append(instrument if isinstance(instrument, str) and instrument else "unknown")
-                continue
-
-            base = instrument.split("_", 1)[0]
-            symbol = f"{base}USDT"
-            if client.get_instrument_name(symbol) != instrument:
-                ignored.append(instrument)
-                continue
-
-            signed_size = client.position_size_from_record(position)
-            if abs(signed_size) <= 1e-8:
-                continue
-
-            amount = client.round_amount(symbol, abs(signed_size))
-            if amount <= 0:
-                unverified.append(symbol)
-                continue
-
-            close_side = "SELL" if signed_size > 0 else "BUY"
-            client.place_market_order(
-                symbol, close_side, amount, reduce_only=True
-            )
-
-            try:
-                remaining = client.get_position_size(symbol)
-            except Exception:
-                unverified.append(symbol)
-                continue
-
-            if abs(remaining) > 1e-8:
-                unverified.append(symbol)
-                continue
-
-            flattened += 1
-
-            # Cancel resting protection only after the close is verified.
-            try:
-                for order in client.get_open_orders(symbol):
-                    order_id = str(order.get("order_id", ""))
-                    if order_id:
-                        client.cancel_order(order_id)
-                        cancelled += 1
-            except Exception:
-                unverified.append(symbol)
-
-        unverified = sorted(set(unverified))
-        ignored = sorted(set(ignored))
-        success = not unverified and not ignored
-        return jsonify({
-            "ok": success,
-            "cancelled_orders": cancelled,
-            "flattened_positions": flattened,
-            "unverified_positions": unverified,
-            "ignored_unmanaged_positions": ignored,
-        }), (200 if success else 409)
-
-    except Exception as exc:
-        app.logger.error("Kill switch failed (%s)", type(exc).__name__)
-        return jsonify({
-            "ok": False,
-            "error": "Kill switch failed; exchange state requires manual inspection",
-        }), 500
+    return _dashboard_read_only_response("api_kill_switch")
 
 @app.route("/api/close_trade", methods=["POST", "OPTIONS"])
 def api_close_trade():
     if request.method == "OPTIONS":
         return jsonify({"ok": True}), 200
-
-    data = request.get_json(silent=True) or {}
-    symbol = str(data.get("symbol", "")).strip().upper()
-    if not symbol:
-        return jsonify({"ok": False, "error": "Symbol is required"}), 400
-
-    client = deribit_client()
-    if not client:
-        return jsonify({"ok": False, "error": "Client unavailable"}), 500
-
-    try:
-        position = client.get_position_size(symbol)
-        if abs(position) > 1e-8:
-            amount = client.round_amount(symbol, abs(position))
-            if amount <= 0:
-                return jsonify({
-                    "ok": False,
-                    "error": "No actionable close quantity; trade record retained",
-                }), 409
-
-            side = "SELL" if position > 0 else "BUY"
-            client.place_market_order(symbol, side, amount, reduce_only=True)
-
-            try:
-                remaining = client.get_position_size(symbol)
-            except Exception:
-                return jsonify({
-                    "ok": False,
-                    "error": "Close submitted, but flatness is unverified; trade record retained",
-                }), 503
-
-            if abs(remaining) > 1e-8:
-                return jsonify({
-                    "ok": False,
-                    "error": "Position remains after close attempt; trade record retained",
-                }), 409
-
-        # Do not remove local tracking before verified flatness and order cleanup.
-        for order in client.get_open_orders(symbol):
-            order_id = str(order.get("order_id", ""))
-            if order_id:
-                client.cancel_order(order_id)
-
-        trades = get("trades.json", {})
-        trades.pop(symbol, None)
-        gh_push("trades.json", trades)
-        bust("trades.json")
-        return jsonify({"ok": True, "status": "closed", "pnl": 0.0}), 200
-
-    except Exception as exc:
-        app.logger.error("Close trade failed (%s)", type(exc).__name__)
-        return jsonify({
-            "ok": False,
-            "error": "Close failed; exchange state requires inspection",
-        }), 500
+    return _dashboard_read_only_response("api_close_trade")
 
 @app.route("/api/paper/state")
 def api_paper_state():

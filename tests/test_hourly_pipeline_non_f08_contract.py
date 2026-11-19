@@ -36,9 +36,14 @@ def test_non_f08_state_sync_is_preserved():
         "/tmp/cryptobot_research/adaptation_proposals.json",
         "git add predictions.json", "git add coin_dossier.json",
         "git add trade_history.json", "git add adaptation_proposals.json",
-        "git add data/",
     ):
         assert token in content, f"Required non-F08 state sync missing: {token}"
+    for mirror in (
+        "data/predictions.json", "data/coin_dossier.json",
+        "data/trade_history.json", "data/adaptation_proposals.json",
+    ):
+        assert mirror in content, f"Required auxiliary mirror missing from allowlist: {mirror}"
+    assert 'if [ -f "$path" ]; then git add -- "$path"; fi' in content
 
 
 def test_commit_message_scopes_the_sync():

@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: crypto-bot-audit
+  group: cryptobot-state-writers
+  queue: max
   cancel-in-progress: false
 
 permissions:

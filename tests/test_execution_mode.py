@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
 import trade_executor
 
 
@@ -303,8 +304,7 @@ def test_manage_only_bypasses_scheduler_and_runs_management():
 
         def fake_env(key, default=""):
             values = {
-                "DERIBIT_CLIENT_ID": "test-client-id",
-                "DERIBIT_CLIENT_SECRET": "test-client-secret",
+                "DERIBIT_TESTNET_MUTATIONS_ENABLED": "true",
             }
             return values.get(key, default)
 
@@ -313,7 +313,28 @@ def test_manage_only_bypasses_scheduler_and_runs_management():
         def fake_save_json(path, payload):
             status_writes.append((str(path), dict(payload)))
 
-        with patch.object(
+        with patch.dict(
+            trade_executor.os.environ,
+            {
+                "DERIBIT_ENVIRONMENT": "TESTNET",
+                "DERIBIT_BASE_URL": "https://test.deribit.com/api/v2",
+                "DERIBIT_TESTNET_CLIENT_ID": "test-client-id",
+                "DERIBIT_TESTNET_CLIENT_SECRET": "test-client-secret",
+                "DERIBIT_TESTNET_MUTATIONS_ENABLED": "true",
+                "DERIBIT_TESTNET_MUTATION_ACK": "I_ACKNOWLEDGE_DERIBIT_TESTNET_ONLY",
+                "DERIBIT_CLIENT_ID": "",
+                "DERIBIT_CLIENT_SECRET": "",
+                "DERIBIT_MAINNET_CLIENT_ID": "",
+                "DERIBIT_MAINNET_CLIENT_SECRET": "",
+                "DERIBIT_PRODUCTION_CLIENT_ID": "",
+                "DERIBIT_PRODUCTION_CLIENT_SECRET": "",
+            },
+            clear=False,
+        ), patch.object(
+            trade_executor,
+            "ORDER_LIFECYCLE_COORDINATOR_INTEGRATED",
+            True,
+        ), patch.object(
             trade_executor,
             "should_scan",
             side_effect=AssertionError(
@@ -379,6 +400,10 @@ def test_manage_only_bypasses_scheduler_and_runs_management():
         deribit_ctor.assert_called_once_with(
             "test-client-id",
             "test-client-secret",
+            testnet=True,
+            auth_scope="trade:read_write account:read",
+            allow_mutations=True,
+            require_execution_gateway=True,
         )
         deribit.test_connection.assert_called_once()
 
@@ -485,12 +510,24 @@ def test_manual_workflow_can_select_manage_only_without_enabling_entries():
     try:
         trade_executor.config.EXECUTION_MODE = "PREDICT_ONLY"
 
-        with patch.dict(
+        with patch.object(trade_executor, "ORDER_LIFECYCLE_COORDINATOR_INTEGRATED", True), patch.dict(
             trade_executor.os.environ,
             {
                 "GITHUB_ACTIONS": "true",
                 "GITHUB_EVENT_NAME": "workflow_dispatch",
                 "EXECUTION_MODE_OVERRIDE": "MANAGE_ONLY",
+                "DERIBIT_ENVIRONMENT": "TESTNET",
+                "DERIBIT_BASE_URL": "https://test.deribit.com/api/v2",
+                "DERIBIT_TESTNET_CLIENT_ID": "test-client-id",
+                "DERIBIT_TESTNET_CLIENT_SECRET": "test-client-secret",
+                "DERIBIT_TESTNET_MUTATIONS_ENABLED": "true",
+                "DERIBIT_TESTNET_MUTATION_ACK": "I_ACKNOWLEDGE_DERIBIT_TESTNET_ONLY",
+                "DERIBIT_CLIENT_ID": "",
+                "DERIBIT_CLIENT_SECRET": "",
+                "DERIBIT_MAINNET_CLIENT_ID": "",
+                "DERIBIT_MAINNET_CLIENT_SECRET": "",
+                "DERIBIT_PRODUCTION_CLIENT_ID": "",
+                "DERIBIT_PRODUCTION_CLIENT_SECRET": "",
             },
             clear=False,
         ):
@@ -614,3 +651,69 @@ def test_manual_workflow_rejects_invalid_override():
             raise AssertionError(
                 "Invalid manual override was accepted"
             )
+
+
+def test_testnet_mutations_remain_blocked_until_order_coordinator_is_wired():
+    original = getattr(trade_executor.config, "EXECUTION_MODE", None)
+    try:
+        with patch.object(trade_executor, "ORDER_LIFECYCLE_COORDINATOR_INTEGRATED", False), patch.dict(
+            trade_executor.os.environ,
+            {"DERIBIT_TESTNET_MUTATIONS_ENABLED": "true", "GITHUB_ACTIONS": "", "GITHUB_EVENT_NAME": "", "EXECUTION_MODE_OVERRIDE": ""},
+            clear=False,
+        ):
+            trade_executor.config.EXECUTION_MODE = "MANAGE_ONLY"
+            assert trade_executor._deribit_testnet_mutations_enabled() is False
+            assert trade_executor._execution_allows_management() is False
+    finally:
+        if original is None:
+            try:
+                delattr(trade_executor.config, "EXECUTION_MODE")
+            except AttributeError:
+                pass
+        else:
+            trade_executor.config.EXECUTION_MODE = original
+
+
+def test_manage_only_scan_does_not_construct_exchange_without_coordinator(monkeypatch):
+    monkeypatch.setattr(trade_executor.config, "EXECUTION_MODE", "MANAGE_ONLY", raising=False)
+    monkeypatch.setattr(trade_executor, "ORDER_LIFECYCLE_COORDINATOR_INTEGRATED", False)
+    monkeypatch.setattr(trade_executor, "DeribitClient", lambda *a, **k: (_ for _ in ()).throw(AssertionError("client must not be constructed")))
+    writes = []
+    monkeypatch.setattr(trade_executor, "save_json", lambda path, payload: writes.append(dict(payload)))
+    with patch.dict(trade_executor.os.environ, {
+        "GITHUB_ACTIONS": "", "GITHUB_EVENT_NAME": "", "EXECUTION_MODE_OVERRIDE": "",
+        "DERIBIT_TESTNET_MUTATIONS_ENABLED": "true",
+    }, clear=False):
+        trade_executor._run_execution_scan_locked()
+    final = [row for row in writes if row.get("phase") == "completed"][-1]
+    assert final["skip_reason"] == "DERIBIT_ORDER_COORDINATOR_NOT_INTEGRATED"
+    assert final["management_ran"] is False
+    assert final["exchange_mutations_enabled"] is False
+
+
+def test_run_execution_scan_releases_gateway_lease_even_when_scan_raises(monkeypatch):
+    class _FakeClient:
+        closed = False
+
+        def close_execution_gateway(self):
+            self.closed = True
+
+    client = _FakeClient()
+    released = []
+    monkeypatch.setattr(trade_executor, "_acquire_scan_lock", lambda: True)
+    monkeypatch.setattr(trade_executor, "_release_scan_lock", lambda: released.append(True))
+
+    def _raise_after_gateway_created():
+        trade_executor._ACTIVE_DERIBIT_CLIENT = client
+        raise RuntimeError("simulated scanner failure")
+
+    monkeypatch.setattr(trade_executor, "_run_execution_scan_locked", _raise_after_gateway_created)
+    trade_executor._ACTIVE_DERIBIT_CLIENT = None
+    try:
+        with pytest.raises(RuntimeError, match="simulated scanner failure"):
+            trade_executor.run_execution_scan()
+        assert client.closed is True
+        assert released == [True]
+        assert trade_executor._ACTIVE_DERIBIT_CLIENT is None
+    finally:
+        trade_executor._ACTIVE_DERIBIT_CLIENT = None

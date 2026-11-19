@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, asdict
-from decimal import Decimal, ROUND_DOWN, InvalidOperation
+from decimal import Decimal, ROUND_DOWN, ROUND_CEILING, InvalidOperation
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional, Protocol, Sequence
@@ -361,9 +361,13 @@ class RiskLimits:
     max_notional_fraction: Decimal = Decimal("0.05")
     tier_cap: Optional[Decimal] = None
     taker_fee_rate: Decimal = Decimal("0.0005")
+    available_funds_reserve_fraction: Decimal = Decimal("0")
 
     def __post_init__(self) -> None:
-        for key in ("risk_fraction", "max_notional_fraction", "taker_fee_rate"):
+        for key in (
+            "risk_fraction", "max_notional_fraction", "taker_fee_rate",
+            "available_funds_reserve_fraction",
+        ):
             value = _decimal(getattr(self, key), key)
             if value < 0:
                 raise ValueError(f"{key} cannot be negative")
@@ -372,6 +376,8 @@ class RiskLimits:
             raise ValueError("risk_fraction must be in (0, 0.05]")
         if not (Decimal("0") < self.max_notional_fraction <= Decimal("1")):
             raise ValueError("max_notional_fraction must be in (0, 1]")
+        if self.available_funds_reserve_fraction >= Decimal("1"):
+            raise ValueError("available_funds_reserve_fraction must be in [0, 1)")
         if self.tier_cap is not None:
             cap = _decimal(self.tier_cap, "tier_cap")
             if cap <= 0:
@@ -391,6 +397,31 @@ class SizeResult:
     reason: str
 
 
+def round_price_to_tick(price: Any, tick_size: Any, *, rounding: str = "DOWN") -> Decimal:
+    """Round a positive price to an exchange tick using explicit direction.
+
+    DOWN is conservative for a long protective stop (farther from entry) and
+    UP is conservative for a short protective stop. Values are returned as
+    Decimal so callers do not reintroduce binary-float precision drift.
+    """
+    value = _decimal(price, "price")
+    tick = _decimal(tick_size, "tick_size")
+    if value <= 0 or tick <= 0:
+        raise ValueError("price and tick_size must be positive")
+    mode = str(rounding or "").upper()
+    if mode == "DOWN":
+        rounding_mode = ROUND_DOWN
+    elif mode == "UP":
+        rounding_mode = ROUND_CEILING
+    else:
+        raise ValueError("rounding must be DOWN or UP")
+    steps = (value / tick).to_integral_value(rounding=rounding_mode)
+    rounded = steps * tick
+    if rounded <= 0:
+        raise ValueError("rounded price is not positive")
+    return rounded
+
+
 def calculate_position_size(
     capital: RiskCapital,
     instrument: InstrumentSpec,
@@ -399,6 +430,7 @@ def calculate_position_size(
     stop_price: Any,
     limits: RiskLimits,
     risk_multiplier: Any = Decimal("1"),
+    side: Optional[str] = None,
 ) -> SizeResult:
     """Calculate linear-contract quantity, rejecting minimum-lot risk overruns.
 
@@ -415,6 +447,13 @@ def calculate_position_size(
     multiplier = _decimal(risk_multiplier, "risk_multiplier")
     if entry <= 0 or stop <= 0 or multiplier <= 0 or entry == stop:
         raise ValueError("Entry, stop and risk multiplier must define valid geometry")
+    normalized_side = str(side or "").upper()
+    if normalized_side and normalized_side not in {"BUY", "SELL"}:
+        raise ValueError("side must be BUY or SELL when supplied")
+    if normalized_side == "BUY" and stop >= entry:
+        raise ValueError("A BUY protective stop must be below entry")
+    if normalized_side == "SELL" and stop <= entry:
+        raise ValueError("A SELL protective stop must be above entry")
     if capital.available_funds <= 0:
         return SizeResult(False, Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), capital.currency, "NO_AVAILABLE_MARGIN")
 
@@ -422,16 +461,21 @@ def calculate_position_size(
     risk_budget = sizing_equity * limits.risk_fraction * multiplier
     # Do not assume leverage: bound notional by both the strategy ceiling and
     # exchange-reported available collateral.
+    usable_available_funds = capital.available_funds * (
+        Decimal("1") - limits.available_funds_reserve_fraction
+    )
     max_notional = min(
         sizing_equity * limits.max_notional_fraction,
-        capital.available_funds,
+        usable_available_funds,
     )
     move = abs(entry - stop)
     contract_value = instrument.contract_value_base
     fee_rate = limits.taker_fee_rate
 
-    # Worst-case stop movement plus conservative entry+exit taker fees per unit.
-    risk_per_unit = (move * contract_value) + (Decimal("2") * entry * contract_value * fee_rate)
+    # Entry fee uses entry notional; stop-exit fee uses adverse stop notional.
+    # This is materially important for short stops above entry.
+    fee_per_unit = (entry + stop) * contract_value * fee_rate
+    risk_per_unit = (move * contract_value) + fee_per_unit
     if risk_per_unit <= 0 or risk_budget <= 0:
         return SizeResult(False, Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), capital.currency, "ZERO_RISK_BUDGET")
 
@@ -448,7 +492,7 @@ def calculate_position_size(
 
     notional = qty * contract_value * entry
     stop_risk = qty * contract_value * move
-    fees = qty * contract_value * entry * fee_rate * Decimal("2")
+    fees = qty * contract_value * (entry + stop) * fee_rate
     total_risk = stop_risk + fees
 
     if instrument.min_notional and notional < instrument.min_notional:
@@ -607,6 +651,30 @@ class ExecutionLedger:
                 );
                 CREATE INDEX IF NOT EXISTS idx_execution_protection_active
                     ON execution_protection_links(protective_intent_id, active);
+                CREATE TABLE IF NOT EXISTS account_risk_snapshots (
+                    exchange TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    observed_at REAL NOT NULL,
+                    equity TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    PRIMARY KEY(exchange, environment, account_id, currency, observed_at)
+                );
+                CREATE INDEX IF NOT EXISTS idx_account_risk_snapshots_lookup
+                    ON account_risk_snapshots(exchange, environment, account_id, currency, observed_at DESC);
+                CREATE TABLE IF NOT EXISTS daily_risk_halts (
+                    exchange TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    utc_day TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    baseline_equity TEXT NOT NULL,
+                    current_equity TEXT NOT NULL,
+                    loss_fraction TEXT NOT NULL,
+                    observed_at REAL NOT NULL,
+                    PRIMARY KEY(exchange, environment, account_id, utc_day)
+                );
                 CREATE TABLE IF NOT EXISTS run_leases (
                     lease_key TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
@@ -1251,6 +1319,123 @@ class ExecutionLedger:
                 "SELECT * FROM order_events WHERE intent_id=? ORDER BY event_id", (intent_id,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def record_account_risk_snapshot(
+        self, *, exchange: str, environment: str, account_id: str,
+        currency: str, equity: Any, observed_at: Optional[float] = None,
+        source: str = "exchange_account_snapshot",
+    ) -> dict:
+        """Append an immutable account-equity checkpoint for daily risk baselines."""
+        scope = (
+            str(exchange or "").strip().upper(),
+            str(environment or "").strip().lower(),
+            str(account_id or "").strip(),
+            str(currency or "").strip().upper(),
+        )
+        if not all(scope):
+            raise ValueError("Risk snapshot exchange, environment, account and currency are required")
+        amount = _decimal(equity, "equity")
+        stamp = float(time.time() if observed_at is None else observed_at)
+        if amount <= 0 or not math.isfinite(stamp) or stamp <= 0:
+            raise ValueError("Risk snapshot equity and timestamp must be positive and finite")
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR IGNORE INTO account_risk_snapshots
+                (exchange,environment,account_id,currency,observed_at,equity,source)
+                VALUES(?,?,?,?,?,?,?)""",
+                (*scope, stamp, str(amount), str(source or "exchange_account_snapshot")),
+            )
+            row = self._conn.execute(
+                """SELECT exchange,environment,account_id,currency,observed_at,equity,source
+                FROM account_risk_snapshots
+                WHERE exchange=? AND environment=? AND account_id=? AND currency=? AND observed_at=?""",
+                (*scope, stamp),
+            ).fetchone()
+        if row is None:
+            raise ReliabilityError("Account risk snapshot could not be persisted")
+        return dict(row)
+
+    def latest_account_risk_snapshot_before(
+        self, *, exchange: str, environment: str, account_id: str,
+        currency: str, cutoff: float,
+    ) -> Optional[dict]:
+        stamp = float(cutoff)
+        if not math.isfinite(stamp) or stamp <= 0:
+            raise ValueError("Risk snapshot cutoff must be positive and finite")
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT exchange,environment,account_id,currency,observed_at,equity,source
+                FROM account_risk_snapshots
+                WHERE exchange=? AND environment=? AND account_id=? AND currency=? AND observed_at<=?
+                ORDER BY observed_at DESC LIMIT 1""",
+                (str(exchange).upper(), str(environment).lower(), str(account_id), str(currency).upper(), stamp),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def first_account_risk_snapshot_between(
+        self, *, exchange: str, environment: str, account_id: str,
+        currency: str, start: float, end: float,
+    ) -> Optional[dict]:
+        """Return the earliest immutable snapshot in a bounded time window."""
+        start_value, end_value = float(start), float(end)
+        if (not math.isfinite(start_value) or not math.isfinite(end_value)
+                or start_value <= 0 or end_value < start_value):
+            raise ValueError("Risk snapshot window is invalid")
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT exchange,environment,account_id,currency,observed_at,equity,source
+                FROM account_risk_snapshots
+                WHERE exchange=? AND environment=? AND account_id=? AND currency=?
+                  AND observed_at>=? AND observed_at<=?
+                ORDER BY observed_at ASC LIMIT 1""",
+                (str(exchange).upper(), str(environment).lower(), str(account_id),
+                 str(currency).upper(), start_value, end_value),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_daily_risk_halt(
+        self, *, exchange: str, environment: str, account_id: str, utc_day: str,
+    ) -> Optional[dict]:
+        from datetime import date
+        date.fromisoformat(str(utc_day))
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT * FROM daily_risk_halts
+                WHERE exchange=? AND environment=? AND account_id=? AND utc_day=?""",
+                (str(exchange).upper(), str(environment).lower(), str(account_id), str(utc_day)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def latch_daily_risk_halt(
+        self, *, exchange: str, environment: str, account_id: str, utc_day: str,
+        reason: str, baseline_equity: Any, current_equity: Any,
+        loss_fraction: Any, observed_at: Optional[float] = None,
+    ) -> dict:
+        """Persist a sticky per-UTC-day entry halt; it cannot be overwritten by recovery."""
+        from datetime import date
+        date.fromisoformat(str(utc_day))
+        amount0 = _decimal(baseline_equity, "baseline_equity")
+        amount1 = _decimal(current_equity, "current_equity")
+        fraction = _decimal(loss_fraction, "loss_fraction")
+        stamp = float(time.time() if observed_at is None else observed_at)
+        if amount0 <= 0 or amount1 < 0 or fraction < 0 or not math.isfinite(stamp) or stamp <= 0:
+            raise ValueError("Daily risk halt values are invalid")
+        scope = (str(exchange).upper(), str(environment).lower(), str(account_id), str(utc_day))
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR IGNORE INTO daily_risk_halts
+                (exchange,environment,account_id,utc_day,reason,baseline_equity,current_equity,loss_fraction,observed_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (*scope, str(reason or "DAILY_RISK_LIMIT"), str(amount0), str(amount1), str(fraction), stamp),
+            )
+            row = self._conn.execute(
+                """SELECT * FROM daily_risk_halts
+                WHERE exchange=? AND environment=? AND account_id=? AND utc_day=?""",
+                scope,
+            ).fetchone()
+        if row is None:
+            raise ReliabilityError("Daily risk halt could not be persisted")
+        return dict(row)
 
 
 class ReadOnlyExchangeAdapter(Protocol):

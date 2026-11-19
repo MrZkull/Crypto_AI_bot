@@ -41,6 +41,7 @@ class DeribitClientUnitTests(unittest.TestCase):
         self.client._get = MagicMock(return_value={
             "instrument_name": "TEST_USDC-PERPETUAL",
             "is_active": True,
+            "state": "open",
             "instrument_type": "reversed",
             "kind": "future",
             "settlement_period": "perpetual",
@@ -57,6 +58,7 @@ class DeribitClientUnitTests(unittest.TestCase):
         self.client._get = MagicMock(return_value={
             "instrument_name": "TEST_USDC-PERPETUAL",
             "is_active": True,
+            "state": "open",
             "instrument_type": "linear",
             "kind": "future",
             "settlement_period": "month",
@@ -73,6 +75,7 @@ class DeribitClientUnitTests(unittest.TestCase):
         payload = {
             "instrument_name": "TEST_USDC-PERPETUAL",
             "is_active": True,
+            "state": "open",
             "instrument_type": "linear",
             "kind": "future",
             "settlement_period": "perpetual",
@@ -90,6 +93,7 @@ class DeribitClientUnitTests(unittest.TestCase):
             payload = {
                 "instrument_name": "TEST_USDC-PERPETUAL",
                 "is_active": True,
+            "state": "open",
                 "instrument_type": "linear",
                 "kind": "future",
                 "settlement_period": "perpetual",
@@ -108,6 +112,34 @@ class DeribitClientUnitTests(unittest.TestCase):
         self.assertEqual(self.client.split_amount("TEST", 0.002), (0.001, 0.001))
         # total 0.001 cannot be halved without dropping below min_lot 0.001 -> Single TP mode
         self.assertEqual(self.client.split_amount("TEST", 0.001), (0.001, 0.0))
+
+    def test_verify_instrument_contract_rejects_non_open_state(self):
+        self.client.get_instrument_name = MagicMock(return_value="TEST_USDC-PERPETUAL")
+        payload = {
+            "instrument_name": "TEST_USDC-PERPETUAL",
+            "is_active": True,
+            "state": "settlement",
+            "instrument_type": "linear",
+            "kind": "future",
+            "settlement_period": "perpetual",
+            "settlement_currency": "USDC",
+            "contract_size": 0.001,
+            "min_trade_amount": 0.001,
+            "tick_size": 0.0005,
+        }
+        self.client._get = MagicMock(return_value=payload)
+        with self.assertRaisesRegex(ValueError, "state"):
+            self.client.verify_instrument_contract("TEST")
+
+    def test_contract_sizing_caps_notional_at_one_times_available_funds(self):
+        self.client.get_max_trade_amount = MagicMock(return_value=1000.0)
+        self.client.round_amount = MagicMock(side_effect=lambda symbol, qty: qty)
+        qty = self.client.calc_contracts(
+            "ETHUSDT", 1000.0, 100.0, 90.0, 0.01,
+            available_funds=20.0,
+        )
+        self.assertAlmostEqual(qty, 0.2)
+
 
 
 if __name__ == "__main__":

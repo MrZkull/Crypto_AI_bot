@@ -326,17 +326,10 @@ def get_mode_thresholds(mode: dict) -> dict:
 
 
 def get_effective_risk(mode: dict, vol: dict) -> float:
-    """FIX: the previous `max(combined, 0.25)` floor actively fought the
-    volatility de-risking it sits downstream of. In extreme volatility
-    (vol.risk_mult=0.25) during quiet hours (mode.risk_mult=0.5), the intended
-    combined multiplier of 0.125 was being forced back UP to 0.25 — i.e. risk
-    was doubled relative to what check_btc_volatility() explicitly asked for,
-    exactly in the scenario (extreme vol) where de-risking matters most.
-    check_btc_volatility() and get_scan_mode() already carry their own
-    internal floors (0.25 and 0.5 respectively) — an extra outer floor on top
-    of both was redundant at best. The only real halt condition is the
-    drawdown ratchet hitting 0, which is preserved below."""
-    ratchet = get_drawdown_ratchet()
-    if ratchet <= 0:
-        return 0.0
-    return mode.get("risk_mult", 1.0) * vol.get("risk_mult", 1.0) * ratchet
+    """Combine strategy and volatility multipliers only.
+
+    The legacy JSON/USDT drawdown ratchet is retained for historical reporting
+    and its unit tests, but it is not an execution safety source. The actual
+    entry path enforces the durable, exchange-equity USDC daily-risk gate.
+    """
+    return mode.get("risk_mult", 1.0) * vol.get("risk_mult", 1.0)
