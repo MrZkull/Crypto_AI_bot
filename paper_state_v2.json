@@ -357,6 +357,10 @@
       "status": "DIRECTION_LIMIT",
       "timestamp_ms": 1794821221393
     },
+    "FILUSDT_1795226533441": {
+      "status": "OPENED",
+      "timestamp_ms": 1795253824350
+    },
     "HBARUSDT_1793138294963": {
       "status": "OPENED",
       "timestamp_ms": 1793144601440
@@ -8383,6 +8387,137 @@
       "total_fees_usd": 41.547724287130976,
       "tp1": 0.867855373667554,
       "tp2": 0.855690086430473
+    },
+    "FILUSDT_1795226533441": {
+      "ambiguous_barrier": true,
+      "atr_ref": 0.003409214364322556,
+      "bars_processed": 6,
+      "entry_bar_close_time_ms": 1795228199999,
+      "entry_bar_observation_identity": [
+        "FILUSDT",
+        1795227300000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_bar_open_time_ms": 1795227300000,
+      "entry_fee_usd": 11.222761584134883,
+      "entry_observation_close_time": 1795226399999,
+      "entry_observation_identity": [
+        "FILUSDT",
+        1795225500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "entry_observation_open_time": 1795225500000,
+      "entry_price": 0.5314,
+      "entry_price_source": "NEXT_BAR_OPEN",
+      "entry_ref": 0.5314,
+      "execution_mode": "PAPER_ONLY",
+      "exit_price": null,
+      "exit_reason": "AMBIGUOUS_BARRIER",
+      "expires_at_ms": 1795248900000,
+      "final_exit_fee_usd": 0.0,
+      "generated_at": "2026-11-21T02:02:13.441996+00:00",
+      "generated_at_ms": 1795226533441,
+      "initial_risk_usd": 300.0,
+      "interval": "15m",
+      "last_observation_close_time": 1795232699999,
+      "last_observation_identity": [
+        "FILUSDT",
+        1795231800000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "last_observation_open_time": 1795231800000,
+      "last_processed_candle_close_time": 1795232699999,
+      "live_was_executed_at_signal": false,
+      "logical_symbol": "FILUSDT",
+      "model_version": "2026-08-23T19:30:12.136077+00:00",
+      "net_r": null,
+      "next_candle_open_time_ms": 1795232700000,
+      "observation_contract": {
+        "btc_source": {
+          "close_time": 1795226399999,
+          "interval": "15m",
+          "logical_symbol": "BTCUSDT",
+          "observation_market": "BINANCE_SPOT",
+          "observation_source": {
+            "exchange": "binance",
+            "market_type": "spot"
+          },
+          "open_time": 1795225500000
+        },
+        "close_time": 1795226399999,
+        "contract_version": "1.0",
+        "execution_instrument": null,
+        "htf_sources": {
+          "1h": {
+            "close_time": 1795226399999,
+            "interval": "1h",
+            "logical_symbol": "FILUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1795222800000
+          },
+          "4h": {
+            "close_time": 1795219199999,
+            "interval": "4h",
+            "logical_symbol": "FILUSDT",
+            "observation_market": "BINANCE_SPOT",
+            "observation_source": {
+              "exchange": "binance",
+              "market_type": "spot"
+            },
+            "open_time": 1795204800000
+          }
+        },
+        "interval": "15m",
+        "logical_symbol": "FILUSDT",
+        "observation_market": "BINANCE_SPOT",
+        "observation_source": {
+          "exchange": "binance",
+          "market_type": "spot"
+        },
+        "open_time": 1795225500000,
+        "retrieved_at_ms": 1795226532594
+      },
+      "observation_identity": [
+        "FILUSDT",
+        1795225500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "open_time": 1795225500000,
+      "opened_at_ms": 1795227300000,
+      "paper_policy_version": "stage2e-v2",
+      "pred_id": "FILUSDT_1795226533441",
+      "qty": 35198.72532974183,
+      "realized_gross_pnl": null,
+      "remaining_qty": 35198.72532974183,
+      "resolved_at_ms": 1795253824781,
+      "resolved_candle_close_time": 1795232699999,
+      "side": "SELL",
+      "signal_observation_identity": [
+        "FILUSDT",
+        1795225500000,
+        "15m",
+        "binance",
+        "spot"
+      ],
+      "simulated_entry": 0.5314,
+      "state": "CLOSED",
+      "status": "CLOSED",
+      "stop": 0.5399230359108064,
+      "symbol": "FILUSDT",
+      "tp1": 0.5194677497248711,
+      "tp2": 0.5058308922675808
     },
     "HBARUSDT_1793138294963": {
       "atr_ref": 0.00036963298402393645,
