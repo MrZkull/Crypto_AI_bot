@@ -6,7 +6,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: crypto-bot-hourly-research
+  # Shared lock for scanner and historical auditor state writes.
+  # Queued signals still require independent stale-signal checks.
+  group: cryptobot-state-writers
+  queue: max
   cancel-in-progress: false
 
 permissions:
@@ -264,7 +267,11 @@ jobs:
           git add coin_dossier.json
           git add trade_history.json
           git add adaptation_proposals.json
-          git add data/
+          # Stage only existing auxiliary state mirrors owned by this workflow.
+          # Never stage the entire data/ directory.
+          for path in data/predictions.json data/coin_dossier.json data/trade_history.json data/adaptation_proposals.json; do
+            if [ -f "$path" ]; then git add -- "$path"; fi
+          done
 
           if ! git diff --cached --quiet; then
             git commit               -m "chore(research): hourly auxiliary state sync [skip ci]"

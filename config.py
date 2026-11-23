@@ -116,6 +116,31 @@ ATR_TARGET1_MULT            = 3.5    # TP1 = entry ± 3.5 × ATR (50% position e
 ATR_TARGET2_MULT            = 7.5    # TP2 = entry ± 7.5 × ATR (50% runner exit)
 PROBATION_CONFIDENCE_OFFSET = 10.0   # +10.0% confidence hurdle for benched coins
 
+# ── Explicit Capital Governance ──────────────────────────────────────
+# Only T0_TESTNET is configured/enabled. Real-capital tiers are deliberately
+# absent and must not be inferred from deposits or account equity.
+CAPITAL_TIER_ACTIVE = "T0_TESTNET"
+CAPITAL_TIER_POLICIES = {
+    "T0_TESTNET": {
+        "enabled": True,
+        "environment": "testnet",
+        "allowed_symbols": tuple(SYMBOLS),
+        "capital_cap_usdc": None,  # Testnet-only; live tiers require reviewed caps.
+        "max_positions": 8,
+        "risk_fraction": str(RISK_PER_TRADE),
+        "max_notional_fraction": "0.05",
+        "max_daily_loss_fraction": "0.02",
+        "max_daily_loss_usdc": None,
+        "max_portfolio_risk_fraction": "0.02",
+        "max_portfolio_risk_usdc": None,
+        "available_funds_reserve_fraction": "0.20",
+        "max_dust_position_notional_usdc": "0.10",
+        "dust_reserve_per_position_usdc": "0.10",
+        "max_total_dust_reserve_usdc": "0.25",
+    },
+}
+MAX_DERIBIT_CLOCK_SKEW_MS = 5000
+
 # ── Stale Position Circuit Breakers (Two-Tier Horizon) ────────────────
 MAX_TRADE_AGE_HOURS_PRE_TP1  = 12   # Stale exit for unproven trades (edge decay cutoff)
 MAX_TRADE_AGE_HOURS_POST_TP1 = 48   # Extended runway for risk-free TP2 runners (7.5x ATR)

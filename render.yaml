@@ -16,13 +16,14 @@ services:
         sync: false
       - key: DASHBOARD_PUBLIC_ORIGIN
         sync: false
-      - key: TELEGRAM_TOKEN
+      # Fine-grained token with Contents: read only. No dashboard write token.
+      - key: GH_READ_TOKEN
         sync: false
-      - key: TELEGRAM_CHAT_ID
+      - key: GITHUB_REPO
+        value: MrZkull/Crypto_AI_bot
+      - key: GITHUB_BRANCH
+        value: main
+      - key: DERIBIT_TESTNET_READONLY_CLIENT_ID
         sync: false
-      - key: BINANCE_API_KEY
-        sync: false
-      - key: BINANCE_SECRET
-        sync: false
-      - key: CRYPTOPANIC_KEY
+      - key: DERIBIT_TESTNET_READONLY_CLIENT_SECRET
         sync: false

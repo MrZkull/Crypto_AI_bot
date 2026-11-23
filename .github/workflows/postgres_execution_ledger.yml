@@ -5,14 +5,31 @@ on:
     branches: [main]
     paths:
       - 'exchange_reliability.py'
+      - 'daily_risk_control.py'
+      - '.github/workflows/deribit_daily_risk_baseline.yml'
+      - 'tests/test_capital_tier_policy.py'
+      - 'tests/test_dust_residual_policy.py'
+      - 'tests/test_daily_risk_baseline_capture.py'
+      - 'tests/test_risk_capture_postgres_integration.py'
+      - 'dust_residual_policy.py'
+      - 'daily_risk_baseline_capture.py'
+      - 'trade_executor.py'
+      - 'capital_feasibility.py'
       - 'execution_storage.py'
       - 'postgres_execution_ledger.py'
       - 'requirements-postgres.txt'
       - 'scripts/migrate_execution_ledger.py'
       - 'tests/test_postgres_execution_ledger.py'
+      - 'tests/test_daily_risk_control.py'
+      - 'tests/test_capital_feasibility.py'
       - 'tests/test_execution_storage.py'
       - '.github/workflows/postgres_execution_ledger.yml'
       - 'docs/NEON_POSTGRESQL_OPERATIONS.md'
+      - 'deribit_execution_gateway.py'
+      - 'execution_coordinator.py'
+      - 'tests/test_deribit_execution_gateway.py'
+      - 'tests/test_execution_coordinator.py'
+      - 'tests/test_deribit_execution_postgres_integration.py'
   workflow_dispatch:
 
 permissions:
@@ -46,6 +63,8 @@ jobs:
       EXECUTION_LEDGER_MIGRATION_DSN: postgresql://cryptobot_admin:cryptobot_admin_ci_only@127.0.0.1:5432/cryptobot_test
       EXECUTION_LEDGER_TEST_MIGRATION_DSN: postgresql://cryptobot_admin:cryptobot_admin_ci_only@127.0.0.1:5432/cryptobot_test
       EXECUTION_LEDGER_TEST_DSN: postgresql://cryptobot_writer:cryptobot_writer_ci_only@127.0.0.1:5432/cryptobot_test
+      EXECUTION_LEDGER_RISK_CAPTURE_TEST_DSN: postgresql://cryptobot_risk_capture_writer:cryptobot_risk_capture_writer_ci_only@127.0.0.1:5432/cryptobot_test
+      EXECUTION_LEDGER_RISK_CAPTURE_TEST_SSLMODE: disable
       EXECUTION_LEDGER_SSLMODE: disable
       EXECUTION_LEDGER_TEST_SSLMODE: disable
       EXECUTION_LEDGER_TEST_EXPECT_DML_ONLY: 'true'
@@ -68,7 +87,7 @@ jobs:
 
       - name: Compile PostgreSQL execution modules
         run: |
-          python -m py_compile exchange_reliability.py postgres_execution_ledger.py execution_storage.py scripts/migrate_execution_ledger.py
+          python -m py_compile exchange_reliability.py postgres_execution_ledger.py daily_risk_control.py daily_risk_baseline_capture.py dust_residual_policy.py capital_feasibility.py trade_executor.py smart_scheduler.py execution_storage.py scripts/migrate_execution_ledger.py deribit_execution_gateway.py execution_coordinator.py
 
       - name: Apply schema using migration owner
         run: python scripts/migrate_execution_ledger.py
@@ -84,18 +103,28 @@ jobs:
             order_intents, run_leases, execution_mutations, execution_protection_links
             TO cryptobot_writer;
           GRANT SELECT, INSERT ON TABLE
+            account_risk_snapshots, daily_risk_halts
+            TO cryptobot_writer;
+          GRANT SELECT, INSERT ON TABLE
             order_events, execution_mutation_events TO cryptobot_writer;
           GRANT SELECT ON TABLE execution_ledger_schema TO cryptobot_writer;
           GRANT USAGE, SELECT ON SEQUENCE
             order_events_event_id_seq, execution_mutation_events_event_id_seq
             TO cryptobot_writer;
+
+          CREATE ROLE cryptobot_risk_capture_writer LOGIN PASSWORD 'cryptobot_risk_capture_writer_ci_only';
+          GRANT CONNECT ON DATABASE cryptobot_test TO cryptobot_risk_capture_writer;
+          GRANT USAGE ON SCHEMA public TO cryptobot_risk_capture_writer;
+          GRANT SELECT ON TABLE execution_ledger_schema TO cryptobot_risk_capture_writer;
+          GRANT SELECT, INSERT ON TABLE account_risk_snapshots TO cryptobot_risk_capture_writer;
+          GRANT SELECT, INSERT, UPDATE ON TABLE risk_capture_leases TO cryptobot_risk_capture_writer;
           SQL
 
       - name: Run PostgreSQL integration tests (skips are failures)
         shell: bash
         run: |
           set -euo pipefail
-          python -m pytest -q -rs tests/test_postgres_execution_ledger.py tests/test_execution_storage.py | tee postgres-ledger-pytest.log
+          python -m pytest -q -rs tests/test_postgres_execution_ledger.py tests/test_execution_storage.py tests/test_deribit_execution_gateway.py tests/test_execution_coordinator.py tests/test_deribit_execution_postgres_integration.py tests/test_daily_risk_control.py tests/test_daily_risk_baseline_capture.py tests/test_risk_capture_postgres_integration.py tests/test_dust_residual_policy.py tests/test_capital_tier_policy.py tests/test_capital_feasibility.py | tee postgres-ledger-pytest.log
           if grep -Eq '[0-9]+ skipped' postgres-ledger-pytest.log; then
             echo "PostgreSQL CI must execute every database integration test; skipped tests are not accepted." >&2
             exit 1

@@ -13,10 +13,14 @@ on:
         options:
           - PREDICT_ONLY
           - MANAGE_ONLY
-  repository_dispatch: {}
 
 concurrency:
-  group: crypto-bot-scan
+  # Scanner, research auditor and manual audit all write overlapping state.
+  # They share one state-writer group; this is not an order-execution approval.
+  # Queue pending runs instead of silently replacing an older pending scan.
+  # Stale signals must still expire; queueing is not permission to chase them.
+  group: cryptobot-state-writers
+  queue: max
   cancel-in-progress: false
 
 permissions:
@@ -46,6 +50,8 @@ jobs:
       - name: Resolve execution mode
         env:
           EXECUTION_MODE_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.execution_mode || '' }}
+          # No write credentials are exposed before coordinator approval.
+          DERIBIT_TESTNET_MUTATIONS_ENABLED: 'false'
         run: |
           set -euo pipefail
 
@@ -56,6 +62,7 @@ jobs:
           mode = trade_executor.get_execution_mode()
           new_entries = trade_executor._execution_allows_new_entries()
           management = trade_executor._execution_allows_management()
+          mutations_opted_in = trade_executor._deribit_testnet_mutations_enabled()
 
           print(f"EXECUTION_MODE={mode}")
           print(f"new_entries={new_entries}")
@@ -65,8 +72,8 @@ jobs:
               "Execution-mode preflight failed: new entries must remain blocked"
           )
 
-          assert management == (mode == "MANAGE_ONLY"), (
-              f"Unexpected management permission for {mode}"
+          assert management == (mode == "MANAGE_ONLY" and mutations_opted_in), (
+              f"Unexpected management permission for {mode}; mutations_opted_in={mutations_opted_in}"
           )
 
           with open(
@@ -104,10 +111,11 @@ jobs:
           [ -f cooldown.json ]           || echo '{}' > cooldown.json
           mkdir -p data
 
+      # MANAGE_ONLY: skipping Historical Auditor trigger. Auditor dispatch remains manual-only.
       - name: Run Trading Scanner
         env:
-          DERIBIT_CLIENT_ID: ${{ secrets.DERIBIT_CLIENT_ID }}
-          DERIBIT_CLIENT_SECRET: ${{ secrets.DERIBIT_CLIENT_SECRET }}
+          # No write credentials are exposed before coordinator approval.
+          DERIBIT_TESTNET_MUTATIONS_ENABLED: 'false'
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GH_PAT_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
@@ -197,25 +205,11 @@ jobs:
           git add predictions.json       || true
           git add reliability.json       || true
           git add cooldown.json          || true
-          git add data/                  || true
+          # Stage only existing runtime mirrors owned by this scanner.
+          # Never stage the entire data/ directory.
+          for path in data/trades.json data/trade_history.json data/signals.json data/scan_mode.json data/balance.json data/orphan_candidates.json data/scan_status.json data/predictions.json data/reliability.json data/cooldown.json; do
+            if [ -f "$path" ]; then git add -- "$path"; fi
+          done
 
           git diff --cached --quiet || git commit -m "Update Bot State & Sync Predictions [skip ci]"
           git push origin main
-
-      # ── 6. Trigger Historical Auditor automatically after successful scan ──
-      - name: Trigger Auditor Workflow
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
-        run: |
-          if [ "${EFFECTIVE_EXECUTION_MODE}" = "MANAGE_ONLY" ]; then
-            echo "MANAGE_ONLY: skipping Historical Auditor trigger."
-            exit 0
-          fi
-
-          echo "Triggering audit_workflow.yml..."
-          curl -s -X POST \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/workflows/audit_workflow.yml/dispatches \
-            -d '{"ref":"main"}' || true

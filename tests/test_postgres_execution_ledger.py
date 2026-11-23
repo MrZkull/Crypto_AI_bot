@@ -33,11 +33,17 @@ class _FakeCursor:
     def execute(self, sql, params=None):
         self.connection.statements.append((" ".join(sql.split()), params))
         if "SELECT MAX(version)" in sql:
-            self._row = {"version": 4}
+            self._row = {"version": 6}
+        elif "RETURNING risk_capture_leases.fencing_token" in sql:
+            self._row = {"fencing_token": 9}
         elif "RETURNING fencing_token" in sql or "RETURNING run_leases.fencing_token" in sql:
             self._row = {"fencing_token": 7}
+        elif "RETURNING risk_capture_leases.lease_key" in sql:
+            self._row = {"lease_key": "risk-unit-lease"}
         elif "RETURNING run_leases.lease_key" in sql:
             self._row = {"lease_key": "unit-lease"}
+        elif "SELECT lease_key FROM risk_capture_leases" in sql:
+            self._row = {"lease_key": "risk-unit-lease"}
         elif "SELECT lease_key FROM run_leases" in sql:
             self._row = {"lease_key": "unit-lease"}
         return self
@@ -98,7 +104,7 @@ def test_explicit_migration_applies_idempotent_ddl_under_migration_connection(mo
     monkeypatch.setitem(sys.modules, "psycopg", fake_driver)
     monkeypatch.setitem(sys.modules, "psycopg.rows", fake_rows)
 
-    assert apply_schema_migrations("postgresql://migration-role@db.invalid/test", sslmode="require") == 4
+    assert apply_schema_migrations("postgresql://migration-role@db.invalid/test", sslmode="require") == 6
     executed = [sql for sql, _ in fake_driver.connections[0].statements]
     assert executed[0].startswith("SELECT pg_advisory_xact_lock")
     assert len(executed) == len(_SCHEMA_STATEMENTS) + 2
@@ -286,6 +292,9 @@ def test_schema_v2_migrates_existing_run_leases_with_monotonic_generation():
     assert "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (2" in joined
     assert "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (3" in joined
     assert "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (4" in joined
+    assert "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (5" in joined
+    assert "INSERT INTO execution_ledger_schema(version, applied_at) VALUES (6" in joined
+    assert "CREATE TABLE IF NOT EXISTS risk_capture_leases" in joined
 
 def test_schema_v4_persists_control_mutation_events_and_unresolved_index():
     joined = " ".join(" ".join(statement.split()) for statement in _SCHEMA_STATEMENTS)
@@ -430,3 +439,72 @@ def test_fenced_write_rejects_missing_or_invalid_lease_context():
         ledger._assert_fenced_lease(
             _FakeConnection().cursor(), lease_key=None, lease_owner_id=None, fencing_token=None
         )
+
+
+def test_schema_v5_persists_daily_account_risk_state():
+    joined = " ".join(" ".join(statement.split()) for statement in _SCHEMA_STATEMENTS)
+    assert "CREATE TABLE IF NOT EXISTS account_risk_snapshots" in joined
+    assert "CREATE TABLE IF NOT EXISTS daily_risk_halts" in joined
+    source = open(os.path.join(os.path.dirname(__file__), "..", "postgres_execution_ledger.py"), encoding="utf-8").read()
+    assert "def record_account_risk_snapshot(" in source
+    assert "def first_account_risk_snapshot_between(" in source
+    assert "def latch_daily_risk_halt(" in source
+
+
+@pytest.mark.skipif(not POSTGRES_DSN, reason="Set EXECUTION_LEDGER_TEST_DSN to run real PostgreSQL integration tests")
+def test_real_postgres_daily_risk_state_is_durable_and_fenced():
+    ledger = _integration_ledger(require_fenced_writes=True)
+    key = "risk-ledger-" + uuid.uuid4().hex
+    owner = "risk-owner-" + uuid.uuid4().hex[:10]
+    account = "risk-account-" + uuid.uuid4().hex[:10]
+    token = None
+    try:
+        token = ledger.acquire_fenced_run_lease(key, owner, ttl_seconds=30)
+        assert token is not None
+        from datetime import datetime, timezone
+        day_start = datetime(2026, 11, 18, tzinfo=timezone.utc).timestamp()
+        ledger.record_account_risk_snapshot(
+            exchange="DERIBIT", environment="testnet", account_id=account,
+            currency="USDC", equity="1000", observed_at=day_start + 60,
+            source="integration-test", lease_key=key, lease_owner_id=owner,
+            fencing_token=token,
+        )
+        row = ledger.first_account_risk_snapshot_between(
+            exchange="DERIBIT", environment="testnet", account_id=account,
+            currency="USDC", start=day_start, end=day_start + 120,
+        )
+        assert row is not None and row["equity"] == "1000"
+        halt = ledger.latch_daily_risk_halt(
+            exchange="DERIBIT", environment="testnet", account_id=account,
+            utc_day="2026-11-18", reason="TEST_HALT", baseline_equity="1000",
+            current_equity="980", loss_fraction="0.02", observed_at=day_start + 300,
+            lease_key=key, lease_owner_id=owner, fencing_token=token,
+        )
+        assert halt["reason"] == "TEST_HALT"
+        assert ledger.get_daily_risk_halt(
+            exchange="DERIBIT", environment="testnet", account_id=account,
+            utc_day="2026-11-18",
+        )["reason"] == "TEST_HALT"
+    finally:
+        if token is not None:
+            ledger.release_fenced_run_lease(key, owner, token)
+        ledger.close()
+
+
+
+def test_risk_capture_lease_uses_a_separate_table_and_never_run_leases():
+    source = open(os.path.join(os.path.dirname(__file__), "..", "postgres_execution_ledger.py"), encoding="utf-8").read()
+    assert "CREATE TABLE IF NOT EXISTS risk_capture_leases" in source
+    assert "def acquire_fenced_risk_capture_lease" in source
+    assert "def renew_fenced_risk_capture_lease" in source
+    assert "def release_fenced_risk_capture_lease" in source
+    method = source.split("def _assert_fenced_risk_capture_lease", 1)[1].split("def record_account_risk_snapshot(", 1)[0]
+    assert "FROM risk_capture_leases" in method
+    assert "FROM run_leases" not in method
+    assert "record_account_risk_snapshot_with_capture_lease" in method
+
+
+def test_schema_version_is_six_and_includes_risk_capture_lease_table():
+    source = open(os.path.join(os.path.dirname(__file__), "..", "postgres_execution_ledger.py"), encoding="utf-8").read()
+    assert 'VALUES (6, EXTRACT(EPOCH FROM NOW()))' in source
+    assert "risk_capture_leases" in source

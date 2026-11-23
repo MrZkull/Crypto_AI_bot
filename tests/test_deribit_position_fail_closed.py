@@ -329,21 +329,24 @@ def test_tp2_does_not_remove_trade_when_flatness_is_unverified():
     assert "retaining trade tracking" in source
 
 
-def test_dashboard_kill_switch_uses_mapped_linear_positions_and_verifies():
+def test_dashboard_kill_switch_is_disabled_at_route_level_in_read_only_release():
     source = _function_source("dashboard.py", "api_kill_switch")
-    assert 'endswith("_USDC-PERPETUAL")' in source
-    assert "client.position_size_from_record(position)" in source
-    assert "remaining = client.get_position_size(symbol)" in source
-    assert "unverified_positions" in source
-    assert "ignored_unmanaged_positions" in source
+    assert "_dashboard_read_only_response(\"api_kill_switch\")" in source
+    for forbidden in (
+        "cancel_all_by_currency(", "place_market_order(",
+        "client.close_position(", "deribit_client(",
+    ):
+        assert forbidden not in source
 
 
-def test_dashboard_close_trade_verifies_flatness_before_deleting_tracker():
+def test_dashboard_close_trade_is_disabled_at_route_level_in_read_only_release():
     source = _function_source("dashboard.py", "api_close_trade")
-    verify = source.find("remaining = client.get_position_size(symbol)")
-    delete = source.find("trades.pop(symbol, None)")
-    assert verify >= 0 and delete > verify
-    assert "trade record retained" in source
+    assert "_dashboard_read_only_response(\"api_close_trade\")" in source
+    for forbidden in (
+        "place_market_order(", "cancel_order(", "get_position_size(",
+        "trades.pop(", "deribit_client(",
+    ):
+        assert forbidden not in source
 
 
 def test_flatness_verification_uses_base_quantity_epsilon():
@@ -356,10 +359,9 @@ def test_flatness_verification_uses_base_quantity_epsilon():
     assert "tolerance: float = 1e-8" in verify_source
     assert "abs(actual_pos) <= 1e-8" in close_source
     assert "real_pos_size <= 1e-8" in open_source
-    assert "abs(signed_size) <= 1e-8" in kill_source
-    assert "abs(remaining) > 1e-8" in kill_source
-    assert "abs(position) > 1e-8" in close_trade_source
-    assert "abs(remaining) > 1e-8" in close_trade_source
+    # The dashboard mutation handlers are intentionally inert in this release.
+    assert "_dashboard_read_only_response" in kill_source
+    assert "_dashboard_read_only_response" in close_trade_source
 
 
 def test_orphan_reconciler_uses_the_verified_snapshot_row_without_requery():
@@ -450,7 +452,7 @@ def test_cancel_open_orders_helper_fails_when_final_read_is_unavailable():
 def test_emergency_close_helper_retains_tracking_unless_flat_and_orders_are_verified():
     source = _function_source("trade_executor.py", "_emergency_close_and_verify")
     assert "flat_verified and orders_cleared" in source
-    assert "_verify_actually_closed(deribit, symbol)" in source
+    assert "_verify_actually_closed(deribit, symbol, tolerance=1e-12)" in source
     assert "_cancel_all_open_orders_for_symbol(deribit, symbol)" in source
     assert "_retain_emergency_recovery_record(" in source
 
